@@ -47,3 +47,23 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Decision:** The backtest module runs the exact strategy code the live engine runs.
 - **Why:** Backtest results then reflect what the live code actually does.
 - **Date:** initial
+
+## D-08 The GUI never handles Binance API keys
+
+- **Decision:** Binance API keys live only in the engine. The GUI — main and renderer process alike — has no keys and makes no Binance calls; it gets positions, PnL, and logs from the engine over WebSocket.
+- **Why:** All exchange access already goes through the engine (D-02), so the GUI has no use for keys. Keeping secrets in one process leaves one place to protect.
+- **Date:** 2026-10-02
+- **Consequence:** Dropped the roadmap item "GUI: move API key handling to the main process".
+
+## D-09 Engine toolchain: uv, pytest, ruff
+
+- **Decision:** The engine uses `uv` for the virtualenv, dependencies, lock file, and Python version; `pytest` for tests; `ruff` for lint and formatting.
+- **Why:** One tool covers environment and dependencies, and `uv.lock` pins exact versions so the engine runs the same everywhere. `ruff` plays the role ESLint + Prettier play in the GUI.
+- **Date:** 2026-10-02
+
+## D-10 Own thin async Binance client on httpx + websockets
+
+- **Decision:** The engine talks to Binance through a small in-house client built on `httpx` (REST) and `websockets` (streams), using asyncio. No ccxt, no Binance SDK.
+- **Why:** The engine needs only a handful of endpoints. Writing them directly keeps every safety-relevant parameter (`reduceOnly`, stop order types, `recvWindow`) visible in our own code instead of behind a library, and the client is easy to mock in tests. asyncio fits running the market stream, the user data stream, and the GUI/bot WebSocket server in one process.
+- **Alternatives:** ccxt — a multi-exchange abstraction we don't need (Binance only). Official Binance SDK — reconsider if keeping up with API changes by hand becomes a burden.
+- **Date:** 2026-10-02

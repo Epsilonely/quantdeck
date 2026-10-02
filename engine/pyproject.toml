@@ -1,0 +1,37 @@
+[project]
+name = "quantdeck-engine"
+version = "0.1.0"
+description = "QuantDeck trading engine for Binance USDⓈ-M Futures"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+quantdeck-engine = "quantdeck_engine:main"
+
+[build-system]
+requires = ["uv_build>=0.12.22,<0.13.0"]
+build-backend = "uv_build"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",     # pycodestyle errors
+    "W",     # pycodestyle warnings
+    "F",     # pyflakes
+    "I",     # import sorting
+    "B",     # bugbear
+    "UP",    # pyupgrade
+    "ASYNC", # asyncio pitfalls
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.10",
+]

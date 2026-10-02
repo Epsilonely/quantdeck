@@ -8,7 +8,8 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 |---|---|---|
 | GUI | Electron, React, TypeScript, electron-vite, electron-builder | Scaffolded (template) |
 | Charts | lightweight-charts | Planned, not installed |
-| Engine | Python 3.12+ | Not started |
+| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Scaffolded |
+| Binance client | In-house, asyncio on httpx + websockets (D-10) | Not started |
 | Discord bot | Undecided | Not started |
 | Storage | SQLite (trades, orders, logs), Parquet (historical candles) | Planned |
 | Engine ↔ clients | WebSocket on localhost | Planned |
@@ -25,7 +26,7 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 ```
 quantdeck/
 ├─ gui/      Electron + React + TypeScript app (electron-vite)
-├─ engine/   Python trading engine — not created yet
+├─ engine/   Python trading engine — uv project, src layout, package `quantdeck_engine`
 ├─ bot/      Discord bot — not created yet
 └─ docs/     Design docs and this memory bank
 ```
@@ -36,7 +37,7 @@ Defined in the root `.env` (gitignored); names are listed in `.env.example`. Nev
 
 | Variable | Used by | Notes |
 |---|---|---|
-| `BINANCE_API_KEY`, `BINANCE_API_SECRET` | Engine (GUI main process only if needed — see `activeContext.md`) | No withdrawal permission; IP whitelist where possible |
+| `BINANCE_API_KEY`, `BINANCE_API_SECRET` | Engine only (D-08) | No withdrawal permission; IP whitelist where possible |
 | `BINANCE_TESTNET` | Engine | `true` by default; mainnet only through an explicit config change |
 | `DISCORD_BOT_TOKEN` | Bot | Optional |
 | `DISCORD_ALLOWED_USER_ID` | Bot | Commands from any other user are ignored |
@@ -47,4 +48,4 @@ Not designed yet. Once defined, record the message types, their direction, and p
 
 ## GUI notes
 
-- `BrowserWindow` is created with `sandbox: false` (the electron-vite template default). Revisit this before any secret-handling code lands in the main or preload process.
+- `BrowserWindow` is created with `sandbox: false` (the electron-vite template default). Revisit when hardening the GUI.

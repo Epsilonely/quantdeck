@@ -33,7 +33,7 @@ Read the others when the task touches their area:
 
 These apply to all code in this repo. If a task would break one, stop and ask the user first. They mirror the 안전 원칙 section in README.md — change both together.
 
-1. API keys are handled only by the engine and the Electron main process. Never pass them to the renderer or include them in the bundle.
+1. Binance API keys are handled only by the engine. Never pass them to the GUI (main or renderer) or the Discord bot, and never include them in a bundle.
 2. API keys never get withdrawal permission; use an IP whitelist where possible.
 3. Testnet is the default. Switching to mainnet requires an explicit config change.
 4. Only the engine decides on and places orders. The GUI and Discord bot only send commands to the engine.
@@ -59,4 +59,12 @@ GUI — run in `gui/`:
 - `npm run build` — typecheck, then electron-vite build
 - `npm run build:win` — Windows installer via electron-builder
 
-Engine and bot: not implemented yet.
+Engine — run in `engine/`:
+
+- `uv sync` — create `.venv` and install the locked dependencies
+- `uv run pytest` — tests
+- `uv run ruff check .` — lint
+- `uv run ruff format .` — format
+- `uv add <pkg>` / `uv add --dev <pkg>` — add a dependency (updates `uv.lock`; commit both files)
+
+Bot: not implemented yet.

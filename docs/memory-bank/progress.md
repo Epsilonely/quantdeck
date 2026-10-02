@@ -5,7 +5,8 @@ Current state of each area. This is not a changelog — history lives in git.
 ## Current state
 
 - **GUI:** unmodified electron-vite React + TypeScript template (logo page, `Versions` component, a `ping` IPC test). No QuantDeck features yet.
-- **Engine, bot:** `engine/` and `bot/` don't exist yet.
+- **Engine:** `engine/` is scaffolded (uv project, one smoke test, ruff config). No trading code yet.
+- **Bot:** `bot/` doesn't exist yet.
 - **Strategy:** none chosen.
 
 ## Roadmap
@@ -14,7 +15,6 @@ Keep in sync with the roadmap section of README.md.
 
 - [x] Repository and GUI scaffold
 - [x] Memory bank and project docs (CLAUDE.md, `docs/memory-bank/`)
-- [ ] GUI: move API key handling to the main process — see the open question in `activeContext.md`
 - [ ] Engine: Binance testnet connection, market data stream, position and balance queries
 - [ ] Engine: order execution (entry, `reduceOnly` close, exchange-side stop orders)
 - [ ] Engine: risk management (max position, daily loss limit, kill switch)
