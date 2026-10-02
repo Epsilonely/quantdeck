@@ -67,3 +67,10 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Why:** The engine needs only a handful of endpoints. Writing them directly keeps every safety-relevant parameter (`reduceOnly`, stop order types, `recvWindow`) visible in our own code instead of behind a library, and the client is easy to mock in tests. asyncio fits running the market stream, the user data stream, and the GUI/bot WebSocket server in one process.
 - **Alternatives:** ccxt — a multi-exchange abstraction we don't need (Binance only). Official Binance SDK — reconsider if keeping up with API changes by hand becomes a burden.
 - **Date:** 2026-10-02
+
+## D-11 HMAC API keys for now; reconsider Ed25519 before mainnet
+
+- **Decision:** Use Binance's system-generated HMAC keys (API key + secret). The settings loader and request signing assume HMAC.
+- **Why:** Simplest to set up and sign, and enough for testnet with virtual funds.
+- **Revisit:** Before creating the mainnet key. With a self-generated Ed25519 key, Binance stores only the public key, so the private key never leaves this machine. That would need a private-key setting in place of `BINANCE_API_SECRET` and a different signing function.
+- **Date:** 2026-10-02

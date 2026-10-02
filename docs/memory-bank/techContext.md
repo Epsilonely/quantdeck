@@ -8,17 +8,17 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 |---|---|---|
 | GUI | Electron, React, TypeScript, electron-vite, electron-builder | Scaffolded (template) |
 | Charts | lightweight-charts | Planned, not installed |
-| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Scaffolded |
+| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings loader and read-only connection |
 | Binance client | In-house, asyncio on httpx + websockets (D-10) | Read-only REST and kline stream |
 | Discord bot | Undecided | Not started |
 | Storage | SQLite (trades, orders, logs), Parquet (historical candles) | Planned |
 | Engine ↔ clients | WebSocket on localhost | Planned |
-| Exchange | Binance USDⓈ-M Futures | Planned |
+| Exchange | Binance USDⓈ-M Futures, HMAC keys (D-11) | Testnet connected, read-only |
 
 ## Requirements
 
 - Node.js 22+, npm 11+
-- Python 3.12+ (engine)
+- Python 3.12+ and uv (engine). On the development machine uv was installed with winget; a shell opened before that install needs a restart to find `uv`.
 - Development machine: Windows 11
 
 ## Layout

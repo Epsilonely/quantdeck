@@ -1,6 +1,6 @@
 # QuantDeck
 
-Personal automated trading system for Binance USDⓈ-M Futures. A Python engine (planned) makes every trading decision; the Electron GUI (`gui/`) and a Discord bot (planned) only monitor the engine and send it commands. README.md has the full overview.
+Personal automated trading system for Binance USDⓈ-M Futures. A Python engine (`engine/`) makes every trading decision; the Electron GUI (`gui/`) and a Discord bot (planned) only monitor the engine and send it commands. README.md has the full overview.
 
 ## Memory bank
 
@@ -46,6 +46,7 @@ These apply to all code in this repo. If a task would break one, stop and ask th
 ## Working rules
 
 - Engine code gets settings only from `quantdeck_engine.config` (`load_settings()` at startup). Never read `os.environ` elsewhere, and keep keys wrapped in `Secret` until the moment they're used.
+- Prices, quantities, balances, and PnL are `Decimal`, never `float`. Binance sends them as strings; parse them with `Decimal(str_value)`. Float rounding breaks tick/step-size checks and order sizing.
 - Never print, log, or commit values from `.env`. `.env.example` lists the variable names; when adding a variable, add it there too with an empty value.
 - For Binance API details, check `docs/memory-bank/binanceNotes.md` and the official docs instead of relying on memory — the API changes.
 - Talk to the user in their language (usually Korean). This doesn't change the English-only rule for the memory bank.
