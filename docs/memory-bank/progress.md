@@ -5,7 +5,7 @@ Current state of each area. This is not a changelog — history lives in git.
 ## Current state
 
 - **GUI:** unmodified electron-vite React + TypeScript template (logo page, `Versions` component, a `ping` IPC test). No QuantDeck features yet.
-- **Engine:** uv project with a settings loader (`config.py`: `.env` parsing, testnet-by-default, masked secrets, endpoint selection) and its tests. No exchange connection yet; `quantdeck-engine` loads settings and exits.
+- **Engine:** settings loader (testnet by default, masked secrets) and a read-only Binance client: signed REST queries (server time, exchange info, account config, balances, positions) and a reconnecting kline stream. `quantdeck-engine check` exercises all of it against the configured network. No orders, no user data stream, no trading loop yet.
 - **Bot:** `bot/` doesn't exist yet.
 - **Strategy:** none chosen.
 
@@ -15,7 +15,7 @@ Keep in sync with the roadmap section of README.md.
 
 - [x] Repository and GUI scaffold
 - [x] Memory bank and project docs (CLAUDE.md, `docs/memory-bank/`)
-- [ ] Engine: Binance testnet connection, market data stream, position and balance queries
+- [x] Engine: Binance testnet connection, market data stream, position and balance queries
 - [ ] Engine: order execution (entry, `reduceOnly` close, exchange-side stop orders)
 - [ ] Engine: risk management (max position, daily loss limit, kill switch)
 - [ ] Engine ↔ GUI WebSocket connection
@@ -27,4 +27,4 @@ Keep in sync with the roadmap section of README.md.
 
 ## Known issues
 
-None.
+- Kline updates sent while the stream is reconnecting are lost. Before strategies rely on closed candles, backfill the gap from REST klines after each reconnect.

@@ -70,7 +70,7 @@ quantdeck/
 
 - Node.js 22 이상
 - npm 11 이상
-- Python 3.12 이상 (엔진 구현 시)
+- Python 3.12 이상, [uv](https://docs.astral.sh/uv/) (엔진)
 
 ### GUI 실행
 
@@ -83,7 +83,15 @@ npm run dev
 
 ### 엔진 실행
 
-엔진 구현 후 작성 예정입니다.
+매매 루프는 아직 구현되지 않았습니다. 지금은 바이낸스 연결을 확인하는 조회 전용 점검만 동작하며, 주문은 내지 않습니다. 먼저 아래 [환경 설정](#환경-설정)대로 `.env`를 준비하세요.
+
+```bash
+cd quantdeck/engine
+uv sync
+uv run quantdeck-engine check
+```
+
+서버 시간, 심볼 정보, 포지션 모드, 잔고, 포지션을 조회하고 캔들 스트림을 몇 개 받은 뒤 종료합니다.
 
 ## 환경 설정
 
@@ -124,7 +132,7 @@ DISCORD_ALLOWED_USER_ID=
 
 - [x] 레포지토리 및 GUI 뼈대 구성
 - [x] memory-bank 및 프로젝트 문서 작성
-- [ ] Engine: 바이낸스 테스트넷 연결, 시세 수신, 포지션·잔고 조회
+- [x] Engine: 바이낸스 테스트넷 연결, 시세 수신, 포지션·잔고 조회
 - [ ] Engine: 주문 실행 모듈 (진입, `reduceOnly` 청산, 거래소 손절 주문)
 - [ ] Engine: 리스크 관리 (최대 포지션, 일일 손실 한도, 킬 스위치)
 - [ ] 엔진 ↔ GUI WebSocket 연결

@@ -66,6 +66,7 @@ Engine — run in `engine/`:
 - `uv run pytest` — tests
 - `uv run ruff check .` — lint
 - `uv run ruff format .` — format
+- `uv run quantdeck-engine check` — read-only connection check against the configured network (places no orders)
 - `uv add <pkg>` / `uv add --dev <pkg>` — add a dependency (updates `uv.lock`; commit both files)
 
 Bot: not implemented yet.

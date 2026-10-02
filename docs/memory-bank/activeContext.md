@@ -4,7 +4,7 @@ _Last updated: 2026-10-02_
 
 ## Current focus
 
-The engine settings loader is done. Next is the first engine milestone: a read-only connection to Binance testnet, using the in-house client approach from D-10.
+The read-only testnet connection works end to end (`quantdeck-engine check`). Next is the order execution milestone: entry, `reduceOnly` close, and exchange-side stop orders. Seeing fills reliably needs the user data stream first.
 
 ## Open questions
 
@@ -13,5 +13,6 @@ The engine settings loader is done. Next is the first engine milestone: a read-o
 
 ## Next steps
 
-1. Get Binance Futures testnet API keys into `.env` (the user does this). `uv run quantdeck-engine` reports missing keys until then.
-2. Engine: read-only testnet connection — `exchangeInfo`, balance, positions, a kline stream (`/market` route). Verify `binanceNotes.md` items along the way.
+1. User data stream: `listenKey` lifecycle and the `/private` route; parse `ORDER_TRADE_UPDATE` and `ACCOUNT_UPDATE`. Verify the related `binanceNotes.md` items first.
+2. Order execution on testnet: entry, `reduceOnly` close, and exchange-side stop orders (algo orders). Round prices and quantities to the symbol filters.
+3. Backfill klines missed during stream reconnects (see Known issues in `progress.md`).
