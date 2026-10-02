@@ -3,7 +3,9 @@ name = "quantdeck-engine"
 version = "0.1.0"
 description = "QuantDeck trading engine for Binance USDⓈ-M Futures"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "python-dotenv>=1.2.4",
+]
 
 [project.scripts]
 quantdeck-engine = "quantdeck_engine:main"

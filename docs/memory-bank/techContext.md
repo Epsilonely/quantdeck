@@ -33,12 +33,12 @@ quantdeck/
 
 ## Environment variables
 
-Defined in the root `.env` (gitignored); names are listed in `.env.example`. Never record values here.
+Defined in the root `.env` (gitignored); names are listed in `.env.example`. Never record values here. Real environment variables override `.env`. The engine reads them only through `quantdeck_engine.config`.
 
 | Variable | Used by | Notes |
 |---|---|---|
 | `BINANCE_API_KEY`, `BINANCE_API_SECRET` | Engine only (D-08) | No withdrawal permission; IP whitelist where possible |
-| `BINANCE_TESTNET` | Engine | `true` by default; mainnet only through an explicit config change |
+| `BINANCE_TESTNET` | Engine | Unset or `true` → testnet; exactly `false` → mainnet; any other value (even `True`) stops the engine |
 | `DISCORD_BOT_TOKEN` | Bot | Optional |
 | `DISCORD_ALLOWED_USER_ID` | Bot | Commands from any other user are ignored |
 

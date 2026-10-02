@@ -5,7 +5,7 @@ Current state of each area. This is not a changelog — history lives in git.
 ## Current state
 
 - **GUI:** unmodified electron-vite React + TypeScript template (logo page, `Versions` component, a `ping` IPC test). No QuantDeck features yet.
-- **Engine:** `engine/` is scaffolded (uv project, one smoke test, ruff config). No trading code yet.
+- **Engine:** uv project with a settings loader (`config.py`: `.env` parsing, testnet-by-default, masked secrets, endpoint selection) and its tests. No exchange connection yet; `quantdeck-engine` loads settings and exits.
 - **Bot:** `bot/` doesn't exist yet.
 - **Strategy:** none chosen.
 
