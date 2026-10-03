@@ -28,3 +28,4 @@ Keep in sync with the roadmap section of README.md.
 ## Known issues
 
 - Kline updates sent while the stream is reconnecting are lost. Before strategies rely on closed candles, backfill the gap from REST klines after each reconnect.
+- Closing a stream takes 5–7 s on testnet (`websockets` default `close_timeout`), which slows `check` and will slow shutdown; see `binanceNotes.md`.

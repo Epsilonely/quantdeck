@@ -4,7 +4,7 @@ _Last updated: 2026-10-03_
 
 ## Current focus
 
-The engine connects to testnet read-only, logs to `engine/logs/`, and receives the user data stream (GitHub issue #2). Next is the order execution milestone: entry, `reduceOnly` close, and exchange-side stop orders. Work items are tracked as GitHub issues.
+The engine connects to testnet read-only, logs to `engine/logs/`, and receives the user data stream (GitHub issue #2). Order-execution design is settled (D-14 to D-22); the risk-limit decisions it depends on come next, then the order execution milestone. Work items are tracked as GitHub issues.
 
 ## Open questions
 
@@ -20,5 +20,6 @@ Order-execution design was settled on 2026-10-03 (D-14 to D-22). Still open, rou
 
 ## Next steps
 
-1. Order execution on testnet: entry, `reduceOnly` close, and exchange-side stop orders (algo orders). Round prices and quantities to the symbol filters. Keep local order/position state from user data events, resyncing from REST on every `UserStreamConnected` (D-13), and check real event payloads against `binanceNotes.md`. Parse `ALGO_UPDATE` along with the stop orders.
-2. Backfill klines missed during stream reconnects (see Known issues in `progress.md`). A GitHub issue for this was drafted but the user put filing it on hold (2026-10-03).
+1. Settle the risk-limit decisions (first item under Open questions). Order sizing (D-22), the emergency stop (D-19), and the leverage setting (D-16) need their values.
+2. Order execution on testnet: entry, `reduceOnly` close, and exchange-side stop orders (algo orders). Round prices and quantities to the symbol filters. Keep local order/position state from user data events, resyncing from REST on every `UserStreamConnected` (D-13), and check real event payloads against `binanceNotes.md`. Parse `ALGO_UPDATE` along with the stop orders.
+3. Backfill klines missed during stream reconnects (see Known issues in `progress.md`). A GitHub issue for this was drafted but the user put filing it on hold (2026-10-03).

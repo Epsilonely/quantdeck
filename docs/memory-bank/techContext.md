@@ -8,10 +8,10 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 |---|---|---|
 | GUI | Electron, React, TypeScript, electron-vite, electron-builder | Scaffolded (template) |
 | Charts | lightweight-charts | Planned, not installed |
-| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings loader and read-only connection |
+| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, read-only Binance access; no orders yet |
 | Binance client | In-house, asyncio on httpx + websockets (D-10) | Read-only REST, kline stream, user data stream |
 | Discord bot | Undecided | Not started |
-| Storage | SQLite (trades, orders, logs), Parquet (historical candles) | Planned |
+| Storage | SQLite (trades, orders, logs), Parquet (historical candles) | Planned; diagnostic logs already go to files (D-12) |
 | Engine ↔ clients | WebSocket on localhost | Planned |
 | Exchange | Binance USDⓈ-M Futures, HMAC keys (D-11) | Testnet connected, read-only |
 

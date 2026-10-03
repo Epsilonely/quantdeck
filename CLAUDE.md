@@ -51,6 +51,7 @@ These apply to all code in this repo. If a task would break one, stop and ask th
 - Never print, log, or commit values from `.env`. `.env.example` lists the variable names; when adding a variable, add it there too with an empty value.
 - For Binance API details, check `docs/memory-bank/binanceNotes.md` and the official docs instead of relying on memory — the API changes.
 - Talk to the user in their language (usually Korean). This doesn't change the English-only rule for the memory bank.
+- Track work as GitHub issues (`gh`). Write issue titles and bodies in Korean, keeping code identifiers, API names, and paths verbatim. The repo is public: never put balances, keys, or raw log contents in an issue.
 
 ## Commands
 

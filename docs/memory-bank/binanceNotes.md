@@ -50,6 +50,7 @@ Source: [Connect](https://developers.binance.com/docs/derivatives/usds-margined-
 - The server sends a ping frame every 3 minutes; no pong within 10 minutes → disconnected.
 - Max 10 incoming messages per second per connection.
 - Max 1024 streams per connection.
+- Observed on testnet (2026-10-03): when the client closes a stream, the close handshake completes (code 1000) but `websockets` still waits 5–7 s before the connection is gone, up to its `close_timeout` (default 10 s). With `close_timeout=2` the close took 2 s.
 
 ### Signed requests (2026-10-02)
 
@@ -132,5 +133,5 @@ Check each item while implementing the related feature:
 - [ ] Signed requests: the error code returned when the timestamp is outside `recvWindow`.
 - [ ] Exchange-side stops on testnet (D-18): place a `STOP_MARKET` with `closePosition=true` and `MARK_PRICE`; the error when the trigger price is already crossed (docs mention `-2021` "Order would immediately trigger" for trailing stops); whether a `closePosition` stop can be placed with no open position; and whether it is cancelled or expired automatically when the position closes.
 - [ ] Real `ORDER_TRADE_UPDATE`, `ACCOUNT_UPDATE`, and `ALGO_UPDATE` payloads on testnet, compared with the documented fields.
-- [ ] State restore on restart: which endpoint returns open orders, including algo orders.
+- [ ] State restore on restart: response shapes of Current All Open Orders and Current All Algo Open Orders on testnet.
 - [ ] Margin type and leverage (D-16): the endpoints that set them, how to read the current values per symbol, and the error returned when changing margin type while a position or open orders exist.

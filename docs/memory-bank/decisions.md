@@ -29,6 +29,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Decision:** Trades, orders, and logs go in SQLite. Historical candle data goes in Parquet files.
 - **Why:** _not recorded_
 - **Date:** initial
+- **Note:** The engine's diagnostic logs go to rolling files (D-12); whether log lines are also stored in SQLite is still open.
 
 ## D-05 One-way position mode
 
