@@ -37,7 +37,7 @@ These apply to all code in this repo. If a task would break one, stop and ask th
 2. API keys never get withdrawal permission; use an IP whitelist where possible.
 3. Testnet is the default. Switching to mainnet requires an explicit config change.
 4. Only the engine decides on and places orders. The GUI and Discord bot only send commands to the engine.
-5. Close orders always use `reduceOnly` (one-way position mode), so a close can never open a reverse position.
+5. Close orders always use `reduceOnly`, and exchange-side stops use `closePosition` (one-way position mode), so a close can never open a reverse position.
 6. Stop-loss orders are placed on the exchange up front, so they fire even if the engine is down.
 7. Kill switch: when the daily loss limit is exceeded, cancel all orders, close all positions, and stop the engine.
 8. The exchange is the source of truth for positions and balances. On restart, restore state from Binance, not from local records.

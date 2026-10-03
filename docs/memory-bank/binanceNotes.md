@@ -103,6 +103,26 @@ Source: [User Data Streams](https://developers.binance.com/en/docs/products/deri
 - `ACCOUNT_UPDATE` is pushed only when balances, positions, or margin type change (not for unfilled or cancelled orders), with only the changed symbols in `P`. `a.m` gives the reason (`ORDER`, `FUNDING_FEE`, ...).
 - Not yet seen on testnet: real `ORDER_TRADE_UPDATE` / `ACCOUNT_UPDATE` / `ALGO_UPDATE` payloads (they need orders). Older docs said `ORDER_TRADE_UPDATE` omits `N` and `n` when there is no commission; the parser tolerates that.
 
+### Algo (conditional) orders (2026-10-03)
+
+Source: [Trade — New Algo Order](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/trade). Docs only; nothing placed on testnet yet.
+
+- `POST /fapi/v1/algoOrder` (TRADE, signed) with `algoType=CONDITIONAL`. Types: `STOP_MARKET`, `TAKE_PROFIT_MARKET`, `STOP`, `TAKE_PROFIT`, `TRAILING_STOP_MARKET`. Costs 1 on the 10 s and 1 min order-count limits and 0 IP weight. Related: Query Algo Order, Cancel Algo Order, Cancel All Algo Open Orders.
+- `triggerPrice` sets the trigger. `STOP_MARKET` SELL triggers when the price falls to it, BUY when the price rises to it.
+- `workingType`: `MARK_PRICE` or `CONTRACT_PRICE` (last price); default `CONTRACT_PRICE`.
+- `closePosition=true` (`STOP_MARKET`/`TAKE_PROFIT_MARKET` only) closes the whole current position on trigger: a long if SELL, a short if BUY. It cannot be combined with `quantity` or `reduceOnly`.
+- `priceProtect=true` (default false): at trigger time, the mark/last price difference must not exceed the symbol's `triggerProtect` from `exchangeInfo`.
+- `clientAlgoId`: unique among open orders, `^[\.A-Z\:/a-z0-9_-]{1,36}$`, generated if not sent.
+- The response carries `algoId`, `clientAlgoId`, and `algoStatus` (`NEW` on placement); status changes then arrive as `ALGO_UPDATE` on the user data stream.
+
+### Order IDs and lookups (2026-10-03)
+
+Source: [Trade](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/trade). Docs only.
+
+- `newClientOrderId` follows the same pattern as `clientAlgoId` (above). Both are unique among **open** orders only, so a filled or cancelled order's ID can be sent again.
+- `GET /fapi/v1/order` (weight 1) takes `symbol` plus `orderId` or `origClientOrderId`; `GET /fapi/v1/algoOrder` (weight 1) takes `algoId` or `clientAlgoId`. Neither finds an order cancelled or expired without fills more than 3 days ago, or any order older than 90 days.
+- Other Trade endpoints relevant later: Current All Open Orders, Current All Algo Open Orders, Query All Algo Orders, Change Initial Leverage, Change Margin Type, Modify Isolated Position Margin.
+
 ## To verify
 
 Check each item while implementing the related feature:
@@ -110,6 +130,7 @@ Check each item while implementing the related feature:
 - [ ] Position mode: how `reduceOnly` behaves in one-way vs hedge mode.
 - [ ] Symbol filters: how orders that violate them are rejected (error codes).
 - [ ] Signed requests: the error code returned when the timestamp is outside `recvWindow`.
-- [ ] Exchange-side stop orders: the docs list TP/SL and trailing stops as algo (conditional) orders with their own endpoints (e.g. `GET /fapi/v1/allAlgoOrders`). Check how to place one, `closePosition` vs `reduceOnly`, and the trigger price source (mark vs last price). Their status changes arrive as `ALGO_UPDATE` on the user data stream.
+- [ ] Exchange-side stops on testnet (D-18): place a `STOP_MARKET` with `closePosition=true` and `MARK_PRICE`; the error when the trigger price is already crossed (docs mention `-2021` "Order would immediately trigger" for trailing stops); whether a `closePosition` stop can be placed with no open position; and whether it is cancelled or expired automatically when the position closes.
 - [ ] Real `ORDER_TRADE_UPDATE`, `ACCOUNT_UPDATE`, and `ALGO_UPDATE` payloads on testnet, compared with the documented fields.
 - [ ] State restore on restart: which endpoint returns open orders, including algo orders.
+- [ ] Margin type and leverage (D-16): the endpoints that set them, how to read the current values per symbol, and the error returned when changing margin type while a position or open orders exist.
