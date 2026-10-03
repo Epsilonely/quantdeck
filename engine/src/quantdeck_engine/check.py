@@ -16,6 +16,10 @@ STREAM_TIMEOUT_SECONDS = 30
 SHOWN_FILTERS = ("PRICE_FILTER", "LOT_SIZE", "MIN_NOTIONAL")
 
 
+class CheckFailed(Exception):
+    """The check ran but found a problem."""
+
+
 async def run_check(settings: Settings, symbol: str, interval: str, count: int) -> None:
     network = "testnet" if settings.testnet else "MAINNET"
     print(f"Network: {network} ({settings.endpoints.rest})")
@@ -27,7 +31,7 @@ async def run_check(settings: Settings, symbol: str, interval: str, count: int) 
         info = await client.exchange_info()
         symbol_info = next((s for s in info["symbols"] if s["symbol"] == symbol), None)
         if symbol_info is None:
-            raise SystemExit(f"{symbol} is not in exchangeInfo")
+            raise CheckFailed(f"{symbol} is not in exchangeInfo")
         print(f"{symbol}: status {symbol_info['status']}")
         for f in symbol_info["filters"]:
             if f["filterType"] in SHOWN_FILTERS:
@@ -70,6 +74,6 @@ async def run_check(settings: Settings, symbol: str, interval: str, count: int) 
                     if received >= count:
                         break
     except TimeoutError:
-        raise SystemExit(f"No kline updates within {STREAM_TIMEOUT_SECONDS}s") from None
+        raise CheckFailed(f"No kline updates within {STREAM_TIMEOUT_SECONDS}s") from None
 
     print("Check passed.")

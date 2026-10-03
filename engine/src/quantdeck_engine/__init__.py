@@ -3,14 +3,16 @@
 import argparse
 import asyncio
 import logging
-import sys
 
 import httpx
 from websockets.exceptions import WebSocketException
 
 from quantdeck_engine.binance.rest import BinanceAPIError
-from quantdeck_engine.check import run_check
+from quantdeck_engine.check import CheckFailed, run_check
 from quantdeck_engine.config import ConfigError, load_settings
+from quantdeck_engine.logs import setup_logging
+
+logger = logging.getLogger(__name__)
 
 
 def main() -> None:
@@ -22,22 +24,32 @@ def main() -> None:
     check.add_argument("--count", type=int, default=3, help="kline updates to wait for")
     args = parser.parse_args()
 
-    logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(name)s: %(message)s")
+    log_file = setup_logging()
 
     try:
         settings = load_settings()
     except ConfigError as e:
-        print(f"Config error: {e}", file=sys.stderr)
+        logger.error("Config error: %s", e)
         raise SystemExit(1) from None
+    logging.getLogger().setLevel(settings.log_level)
+
+    network = "testnet" if settings.testnet else "MAINNET"
+    logger.info(
+        "Starting %s on %s (%s), log level %s, log file %s",
+        args.command or "engine",
+        network,
+        settings.endpoints.rest,
+        logging.getLevelName(settings.log_level),
+        log_file,
+    )
 
     if args.command == "check":
         try:
             asyncio.run(run_check(settings, args.symbol.upper(), args.interval, args.count))
-        except (BinanceAPIError, httpx.HTTPError, WebSocketException, OSError) as e:
-            print(f"Check failed: {e}", file=sys.stderr)
+        except (CheckFailed, BinanceAPIError, httpx.HTTPError, WebSocketException, OSError) as e:
+            logger.error("Check failed: %s", e)
             raise SystemExit(1) from None
         return
 
-    network = "testnet" if settings.testnet else "MAINNET"
     print(f"QuantDeck engine: settings loaded ({network}, {settings.endpoints.rest}).")
     print("The trading loop is not implemented yet. Run `quantdeck-engine check`.")

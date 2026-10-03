@@ -77,6 +77,25 @@ def test_reveal_returns_the_real_value() -> None:
     assert settings.api_secret.reveal() == "test-secret-456"
 
 
+def test_log_level_defaults_to_info() -> None:
+    assert parse_settings(KEYS).log_level == logging.INFO
+    assert parse_settings({**KEYS, "ENGINE_LOG_LEVEL": "  "}).log_level == logging.INFO
+
+
+@pytest.mark.parametrize(
+    ("raw", "level"),
+    [("DEBUG", logging.DEBUG), ("debug", logging.DEBUG), (" warning ", logging.WARNING)],
+)
+def test_log_level_is_case_insensitive(raw: str, level: int) -> None:
+    assert parse_settings({**KEYS, "ENGINE_LOG_LEVEL": raw}).log_level == level
+
+
+@pytest.mark.parametrize("raw", ["VERBOSE", "TRACE", "10"])
+def test_unknown_log_level_is_rejected(raw: str) -> None:
+    with pytest.raises(ConfigError, match="ENGINE_LOG_LEVEL"):
+        parse_settings({**KEYS, "ENGINE_LOG_LEVEL": raw})
+
+
 def test_load_reads_env_file(tmp_path: Path) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text("BINANCE_API_KEY=file-key\nBINANCE_API_SECRET=file-secret\n")

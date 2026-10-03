@@ -31,4 +31,4 @@ Out of scope:
 
 - Personal learning and research project. Not investment advice; the user carries all risk.
 - Leveraged futures can lose more than the principal quickly, so every feature is validated on testnet before it touches a real account.
-- Private project, all rights reserved.
+- Public GitHub repository with no license: all rights reserved. Never commit secrets, balances, or account details — anyone can read the repo and its issues.

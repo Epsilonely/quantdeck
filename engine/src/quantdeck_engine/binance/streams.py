@@ -60,6 +60,7 @@ async def kline_stream(ws_root: str, symbol: str, interval: str) -> AsyncIterato
     url = kline_stream_url(ws_root, symbol, interval)
     async for ws in connect(url):
         async with ws:
+            logger.info("Kline stream %s connected", url)
             try:
                 async for message in ws:
                     yield parse_kline(message)

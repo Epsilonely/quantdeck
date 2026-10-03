@@ -93,6 +93,8 @@ uv run quantdeck-engine check
 
 서버 시간, 심볼 정보, 포지션 모드, 잔고, 포지션을 조회하고 캔들 스트림을 몇 개 받은 뒤 종료합니다.
 
+실행 로그는 콘솔과 `engine/logs/`에 함께 남습니다. 파일 이름은 시작 시각(UTC)과 번호로 정해지고(`engine_2026-10-03_14-30-05_000.log`), 10MB를 넘거나 날짜가 바뀌면 새 파일로 넘어갑니다. 30일 지난 로그는 엔진을 시작할 때 지웁니다. 요청 단위 로그를 보려면 `.env`에 `ENGINE_LOG_LEVEL=DEBUG`를 넣으세요.
+
 ## 환경 설정
 
 루트의 `.env.example`을 복사해 `.env`를 만들고 값을 채웁니다.
@@ -106,6 +108,9 @@ cp .env.example .env
 BINANCE_API_KEY=
 BINANCE_API_SECRET=
 BINANCE_TESTNET=true
+
+# Engine (선택: DEBUG, INFO, WARNING, ERROR. 비우면 INFO)
+ENGINE_LOG_LEVEL=
 
 # Discord (선택)
 DISCORD_BOT_TOKEN=
@@ -144,4 +149,4 @@ DISCORD_ALLOWED_USER_ID=
 
 ## 라이선스
 
-All rights reserved. 별도의 라이선스가 지정되지 않은 비공개 프로젝트입니다.
+All rights reserved. 저장소는 공개되어 있지만 별도의 라이선스를 지정하지 않았으므로, 저작권자의 허락 없이 코드를 복제·수정·배포할 수 없습니다.

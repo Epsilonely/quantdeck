@@ -7,6 +7,7 @@ Endpoint details are recorded in docs/memory-bank/binanceNotes.md.
 
 import hashlib
 import hmac
+import logging
 import time
 from collections.abc import Callable, Mapping
 from typing import Any, Self
@@ -18,6 +19,8 @@ from quantdeck_engine.config import Settings
 
 RECV_WINDOW_MS = 5000
 TIMEOUT_SECONDS = 10.0
+
+logger = logging.getLogger(__name__)
 
 
 class BinanceAPIError(Exception):
@@ -111,8 +114,18 @@ class BinanceRestClient:
             query = f"{query}&signature={sign(query, self._settings.api_secret.reveal())}"
             headers["X-MBX-APIKEY"] = self._settings.api_key.reveal()
 
+        started = time.perf_counter()
         response = await self._http.get(f"{path}?{query}" if query else path, headers=headers)
+        elapsed_ms = (time.perf_counter() - started) * 1000
         self._record_weight(response)
+        # Path only: a signed request's query string carries the signature.
+        logger.debug(
+            "GET %s -> HTTP %d in %.0f ms, weight 1m: %s",
+            path,
+            response.status_code,
+            elapsed_ms,
+            self.used_weight_1m,
+        )
         if response.is_error:
             raise _api_error(response, path)
         return response.json()

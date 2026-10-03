@@ -50,6 +50,13 @@ class Endpoints:
 MAINNET = Endpoints(rest="https://fapi.binance.com", ws="wss://fstream.binance.com")
 TESTNET = Endpoints(rest="https://demo-fapi.binance.com", ws="wss://demo-fstream.binance.com")
 
+LOG_LEVELS = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+}
+
 
 @dataclass(frozen=True)
 class Settings:
@@ -57,6 +64,7 @@ class Settings:
     endpoints: Endpoints
     api_key: Secret
     api_secret: Secret
+    log_level: int
 
 
 def load_settings(
@@ -72,6 +80,7 @@ def load_settings(
 
 def parse_settings(values: Mapping[str, str | None]) -> Settings:
     testnet = _parse_testnet(values.get("BINANCE_TESTNET"))
+    log_level = _parse_log_level(values.get("ENGINE_LOG_LEVEL"))
 
     api_key = _non_blank(values.get("BINANCE_API_KEY"))
     api_secret = _non_blank(values.get("BINANCE_API_SECRET"))
@@ -91,6 +100,7 @@ def parse_settings(values: Mapping[str, str | None]) -> Settings:
         endpoints=TESTNET if testnet else MAINNET,
         api_key=Secret(api_key),
         api_secret=Secret(api_secret),
+        log_level=log_level,
     )
 
 
@@ -103,6 +113,15 @@ def _parse_testnet(raw: str | None) -> bool:
     if value == "false":
         return False
     raise ConfigError(f"BINANCE_TESTNET must be 'true' or 'false', got {value!r}")
+
+
+def _parse_log_level(raw: str | None) -> int:
+    value = (raw or "").strip().upper()
+    if not value:
+        return logging.INFO
+    if value not in LOG_LEVELS:
+        raise ConfigError(f"ENGINE_LOG_LEVEL must be one of {', '.join(LOG_LEVELS)}, got {raw!r}")
+    return LOG_LEVELS[value]
 
 
 def _non_blank(raw: str | None) -> str | None:
