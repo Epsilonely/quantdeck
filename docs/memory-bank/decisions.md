@@ -81,3 +81,9 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Why:** The stdlib `RotatingFileHandler` and `TimedRotatingFileHandler` roll over by renaming the active file, and on Windows a rename fails while another program (an editor, a log viewer) has the file open. Start-time names also make it easy to find what happened on a given day. The user chose the name format, including index `000` on the first file.
 - **Relation to D-04:** These are diagnostic logs. SQLite remains the plan for trade and order records; whether log lines also go to SQLite is decided with the GUI log view.
 - **Date:** 2026-10-03
+
+## D-13 User data stream: fresh listenKey per connection, never deleted, resync after every connect
+
+- **Decision:** Before every connection the engine fetches the `listenKey` with `POST` (which returns the active key) instead of reusing a stored one, keeps it alive every 30 minutes, and never sends `DELETE`. Every (re)connect is reported to the consumer, which must then refresh positions, balances, and open orders from REST.
+- **Why:** A nonexistent key connects silently, so a stale key would look healthy while delivering nothing. The key is shared by every process on the account, so a `DELETE` from a short-lived process (such as `check`) would cut off a running engine; an unused key expires on its own after 60 minutes. Events sent while disconnected are lost, and the exchange is the source of truth (D-06).
+- **Date:** 2026-10-03

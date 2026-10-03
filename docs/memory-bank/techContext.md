@@ -9,7 +9,7 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 | GUI | Electron, React, TypeScript, electron-vite, electron-builder | Scaffolded (template) |
 | Charts | lightweight-charts | Planned, not installed |
 | Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings loader and read-only connection |
-| Binance client | In-house, asyncio on httpx + websockets (D-10) | Read-only REST and kline stream |
+| Binance client | In-house, asyncio on httpx + websockets (D-10) | Read-only REST, kline stream, user data stream |
 | Discord bot | Undecided | Not started |
 | Storage | SQLite (trades, orders, logs), Parquet (historical candles) | Planned |
 | Engine ↔ clients | WebSocket on localhost | Planned |

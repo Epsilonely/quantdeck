@@ -1,8 +1,9 @@
 """Async REST client for Binance USDⓈ-M Futures.
 
-Covers only the endpoints the engine uses. Every call goes through `_get`, which signs
-USER_DATA calls, records rate-limit usage, and turns error responses into `BinanceAPIError`.
-Endpoint details are recorded in docs/memory-bank/binanceNotes.md.
+Covers only the endpoints the engine uses. Every call goes through `_request`, which signs
+USER_DATA calls, sends the API key header with USER_STREAM calls, records rate-limit usage,
+and turns error responses into `BinanceAPIError`. Endpoint details are recorded in
+docs/memory-bank/binanceNotes.md.
 """
 
 import hashlib
@@ -15,7 +16,7 @@ from urllib.parse import urlencode
 
 import httpx
 
-from quantdeck_engine.config import Settings
+from quantdeck_engine.config import Secret, Settings
 
 RECV_WINDOW_MS = 5000
 TIMEOUT_SECONDS = 10.0
@@ -66,7 +67,7 @@ class BinanceRestClient:
     # Public endpoints
 
     async def server_time(self) -> int:
-        data = await self._get("/fapi/v1/time")
+        data = await self._request("GET", "/fapi/v1/time")
         return int(data["serverTime"])
 
     async def sync_time(self) -> int:
@@ -81,27 +82,44 @@ class BinanceRestClient:
         return self._time_offset_ms
 
     async def exchange_info(self) -> dict[str, Any]:
-        return await self._get("/fapi/v1/exchangeInfo")
+        return await self._request("GET", "/fapi/v1/exchangeInfo")
 
     # Signed (USER_DATA) endpoints
 
     async def account_config(self) -> dict[str, Any]:
-        return await self._get("/fapi/v1/accountConfig", signed=True)
+        return await self._request("GET", "/fapi/v1/accountConfig", signed=True)
 
     async def balances(self) -> list[dict[str, Any]]:
-        return await self._get("/fapi/v3/balance", signed=True)
+        return await self._request("GET", "/fapi/v3/balance", signed=True)
 
     async def positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
         """Only symbols with a position or open orders are returned."""
         params = {"symbol": symbol} if symbol else {}
-        return await self._get("/fapi/v3/positionRisk", params, signed=True)
+        return await self._request("GET", "/fapi/v3/positionRisk", params, signed=True)
 
-    async def _get(
+    # User data stream (USER_STREAM: API key header, no signature)
+
+    async def start_user_stream(self) -> Secret:
+        """Return the account's listenKey, creating one if none is active.
+
+        An account has one listenKey: while it is active, this returns it again and extends
+        it by 60 minutes.
+        """
+        data = await self._request("POST", "/fapi/v1/listenKey", api_key=True)
+        return Secret(data["listenKey"])
+
+    async def keepalive_user_stream(self) -> None:
+        """Extend the active listenKey by 60 minutes. Code -1125: no listenKey is active."""
+        await self._request("PUT", "/fapi/v1/listenKey", api_key=True)
+
+    async def _request(
         self,
+        method: str,
         path: str,
         params: Mapping[str, str | int] | None = None,
         *,
         signed: bool = False,
+        api_key: bool = False,
     ) -> Any:
         query_params: dict[str, str | int] = dict(params or {})
         headers: dict[str, str] = {}
@@ -112,15 +130,18 @@ class BinanceRestClient:
         if signed:
             # The signature must cover the query string exactly as sent.
             query = f"{query}&signature={sign(query, self._settings.api_secret.reveal())}"
+        if signed or api_key:
             headers["X-MBX-APIKEY"] = self._settings.api_key.reveal()
 
         started = time.perf_counter()
-        response = await self._http.get(f"{path}?{query}" if query else path, headers=headers)
+        url = f"{path}?{query}" if query else path
+        response = await self._http.request(method, url, headers=headers)
         elapsed_ms = (time.perf_counter() - started) * 1000
         self._record_weight(response)
         # Path only: a signed request's query string carries the signature.
         logger.debug(
-            "GET %s -> HTTP %d in %.0f ms, weight 1m: %s",
+            "%s %s -> HTTP %d in %.0f ms, weight 1m: %s",
+            method,
             path,
             response.status_code,
             elapsed_ms,

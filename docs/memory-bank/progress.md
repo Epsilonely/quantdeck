@@ -5,7 +5,7 @@ Current state of each area. This is not a changelog — history lives in git.
 ## Current state
 
 - **GUI:** unmodified electron-vite React + TypeScript template (logo page, `Versions` component, a `ping` IPC test). No QuantDeck features yet.
-- **Engine:** settings loader (testnet by default, masked secrets), logging to the console and rolling files (D-12), and a read-only Binance client: signed REST queries (server time, exchange info, account config, balances, positions) and a reconnecting kline stream. `quantdeck-engine check` exercises all of it against the configured network. No orders, no user data stream, no trading loop yet.
+- **Engine:** settings loader (testnet by default, masked secrets), logging to the console and rolling files (D-12), and a read-only Binance client: signed REST queries (server time, exchange info, account config, balances, positions), a reconnecting kline stream, and a user data stream that parses `ORDER_TRADE_UPDATE` and `ACCOUNT_UPDATE` (D-13). `quantdeck-engine check` exercises all of it against the configured network. No orders, no local order/position state, no trading loop yet.
 - **Bot:** `bot/` doesn't exist yet.
 - **Strategy:** none chosen.
 

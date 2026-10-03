@@ -1,6 +1,7 @@
 """`quantdeck-engine check`: a read-only connection check against Binance.
 
-Places no orders and changes no account settings.
+Places no orders and changes no account settings. The user data stream part reuses the
+account's listenKey (or creates one, which expires on its own 60 minutes later).
 """
 
 import asyncio
@@ -10,6 +11,7 @@ from decimal import Decimal
 
 from quantdeck_engine.binance.rest import BinanceRestClient
 from quantdeck_engine.binance.streams import kline_stream
+from quantdeck_engine.binance.user_stream import UserStreamConnected, user_data_stream
 from quantdeck_engine.config import Settings
 
 STREAM_TIMEOUT_SECONDS = 30
@@ -75,5 +77,21 @@ async def run_check(settings: Settings, symbol: str, interval: str, count: int) 
                         break
     except TimeoutError:
         raise CheckFailed(f"No kline updates within {STREAM_TIMEOUT_SECONDS}s") from None
+
+    print("Connecting to the user data stream...")
+    async with BinanceRestClient(settings) as client:
+        try:
+            async with asyncio.timeout(STREAM_TIMEOUT_SECONDS):
+                async with aclosing(user_data_stream(client, settings.endpoints.ws)) as stream:
+                    async for event in stream:
+                        if isinstance(event, UserStreamConnected):
+                            break
+        except TimeoutError:
+            raise CheckFailed(
+                f"User data stream did not connect within {STREAM_TIMEOUT_SECONDS}s"
+            ) from None
+        print("  connected")
+        await client.keepalive_user_stream()
+        print("  listenKey keepalive OK")
 
     print("Check passed.")

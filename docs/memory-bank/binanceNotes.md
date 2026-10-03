@@ -17,7 +17,7 @@ Source: [General Info](https://developers.binance.com/docs/derivatives/usds-marg
 | Mainnet | `https://fapi.binance.com` | `wss://fstream.binance.com` |
 | Testnet | `https://demo-fapi.binance.com` | `wss://demo-fstream.binance.com` |
 
-- The docs no longer list the old testnet host `testnet.binancefuture.com`; older tutorials and libraries may still use it.
+- General Info lists only `demo-fapi` for testnet, but the API Reference pages still show `https://testnet.binancefuture.com` as an alternate endpoint (seen 2026-10-03). The engine uses `demo-fapi`, which works; `testnet.binancefuture.com` is untested.
 
 ### Futures testnet is Binance Demo Trading (2026-10-02)
 
@@ -55,6 +55,7 @@ Source: [Connect](https://developers.binance.com/docs/derivatives/usds-margined-
 
 Source: [General Info](https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info), testnet response
 
+- Security types: USER_DATA (and TRADE) requests are signed as below; USER_STREAM requests (`listenKey`) send only the `X-MBX-APIKEY` header, with no timestamp or signature. Without the header Binance answers HTTP 401, code `-2014` (testnet response).
 - HMAC SHA256 with the secret key over `totalParams` (query string + request body), sent as the `signature` parameter. API key goes in the `X-MBX-APIKEY` header. GET parameters must be in the query string.
 - `recvWindow` defaults to 5000 ms (max 60000). The server accepts a request only if `timestamp < serverTime + 1000` and `serverTime - timestamp <= recvWindow`.
 - The development PC's clock was 462 ms ahead of the testnet server on the first check — close to the 1000 ms future limit. The engine measures the offset with `GET /fapi/v1/time` and corrects signed timestamps.
@@ -70,6 +71,8 @@ Source: [Trade](https://developers.binance.com/en/docs/catalog/core-trading-deri
 | `GET /fapi/v1/accountConfig` | 5 | `dualSidePosition`: `true` = hedge, `false` = one-way. Use this, not `GET /fapi/v1/positionSide/dual` (weight 30) |
 | `GET /fapi/v3/balance` | 5 | One entry per asset, including zero balances |
 | `GET /fapi/v3/positionRisk` | 5 | Only symbols with a position or open orders |
+| `POST /fapi/v1/listenKey` | 1 | USER_STREAM. Returns the active key if there is one |
+| `PUT /fapi/v1/listenKey` | 1 | USER_STREAM. Response `{"listenKey": ...}`; `-1125` if no key is active |
 
 ### Symbol filters (2026-10-02)
 
@@ -85,6 +88,21 @@ Source: [General Info](https://developers.binance.com/docs/derivatives/usds-marg
 - Headers: `X-MBX-USED-WEIGHT-<n><unit>` (per IP) on every response; `X-MBX-ORDER-COUNT-<n><unit>` (per account) on order responses.
 - 429 = rate limit hit, 418 = IP auto-banned after repeated 429s, 403 = WAF block, 5xx = server error (outcome of an order unknown).
 
+### User data stream (2026-10-03)
+
+Source: [User Data Streams](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/user-data-streams), [REST: User Data Streams](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/user-data-streams), testnet response
+
+- URL: `<ws root>/private/ws/<listenKey>`, e.g. `wss://demo-fstream.binance.com/private/ws/<listenKey>` on testnet. A connection lasts at most 24 hours.
+- A `listenKey` (64 characters on testnet) is valid for 60 minutes after its last `POST` or `PUT`. The REST docs recommend a keepalive "about every 60 minutes", which leaves no margin; the engine sends one every 30 minutes.
+- One `listenKey` per account: a second `POST` while one is active returns the same key and extends it. Every process on the account therefore shares the key.
+- `DELETE /fapi/v1/listenKey` (weight 1) invalidates the key: an open connection on it receives `listenKeyExpired` (payload `e`, `E`, `listenKey`), a later `PUT` fails with HTTP 400 `-1125` "This listenKey does not exist.", and the next `POST` returns a new key.
+- After `listenKeyExpired` no more events arrive on that connection until it reconnects with a valid key. The event is unrelated to the 24-hour disconnect.
+- Connecting with a nonexistent key completes the handshake and then stays silent: no error, no events. An unrouted `<ws root>/ws/<listenKey>` also completes the handshake; whether it delivers events is untested.
+- Event types: `ORDER_TRADE_UPDATE`, `ACCOUNT_UPDATE`, `ALGO_UPDATE` (algo/conditional orders), `ACCOUNT_CONFIG_UPDATE`, `MARGIN_CALL`, `TRADE_LITE`, `CONDITIONAL_ORDER_TRIGGER_REJECT`, `STRATEGY_UPDATE`, `GRID_UPDATE` (deprecated), `listenKeyExpired`.
+- Ordering: on one connection, events of the same type are strictly ordered by `T` and `E`; across types, order by `E`.
+- `ACCOUNT_UPDATE` is pushed only when balances, positions, or margin type change (not for unfilled or cancelled orders), with only the changed symbols in `P`. `a.m` gives the reason (`ORDER`, `FUNDING_FEE`, ...).
+- Not yet seen on testnet: real `ORDER_TRADE_UPDATE` / `ACCOUNT_UPDATE` / `ALGO_UPDATE` payloads (they need orders). Older docs said `ORDER_TRADE_UPDATE` omits `N` and `n` when there is no commission; the parser tolerates that.
+
 ## To verify
 
 Check each item while implementing the related feature:
@@ -92,6 +110,6 @@ Check each item while implementing the related feature:
 - [ ] Position mode: how `reduceOnly` behaves in one-way vs hedge mode.
 - [ ] Symbol filters: how orders that violate them are rejected (error codes).
 - [ ] Signed requests: the error code returned when the timestamp is outside `recvWindow`.
-- [ ] User Data Stream: `listenKey` creation, expiry, and keepalive interval; exact `/private` URL format; whether testnet supports it the same way.
-- [ ] Exchange-side stop orders: the docs list TP/SL and trailing stops as algo (conditional) orders with their own endpoints (e.g. `GET /fapi/v1/allAlgoOrders`). Check how to place one, `closePosition` vs `reduceOnly`, and the trigger price source (mark vs last price).
+- [ ] Exchange-side stop orders: the docs list TP/SL and trailing stops as algo (conditional) orders with their own endpoints (e.g. `GET /fapi/v1/allAlgoOrders`). Check how to place one, `closePosition` vs `reduceOnly`, and the trigger price source (mark vs last price). Their status changes arrive as `ALGO_UPDATE` on the user data stream.
+- [ ] Real `ORDER_TRADE_UPDATE`, `ACCOUNT_UPDATE`, and `ALGO_UPDATE` payloads on testnet, compared with the documented fields.
 - [ ] State restore on restart: which endpoint returns open orders, including algo orders.

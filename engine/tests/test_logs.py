@@ -1,6 +1,5 @@
 import logging
 import os
-from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -11,7 +10,6 @@ from quantdeck_engine.binance.rest import BinanceRestClient
 from quantdeck_engine.config import parse_settings
 from quantdeck_engine.logs import (
     DEFAULT_LOG_DIR,
-    QUIET_LOGGERS,
     RollingFileHandler,
     delete_old_logs,
     setup_logging,
@@ -121,21 +119,6 @@ def test_delete_old_logs_removes_only_expired_engine_logs(tmp_path: Path) -> Non
 
     assert delete_old_logs(tmp_path, now=now, max_age_days=30) == 1
     assert file_names(tmp_path) == ["engine_recent.log", "notes.txt"]
-
-
-@pytest.fixture
-def isolated_logging() -> Iterator[None]:
-    root = logging.getLogger()
-    saved_handlers, saved_level = root.handlers[:], root.level
-    saved_quiet = {name: logging.getLogger(name).level for name in QUIET_LOGGERS}
-    yield
-    for handler in root.handlers[:]:
-        if handler not in saved_handlers:
-            root.removeHandler(handler)
-            handler.close()
-    root.setLevel(saved_level)
-    for name, level in saved_quiet.items():
-        logging.getLogger(name).setLevel(level)
 
 
 @pytest.mark.usefixtures("isolated_logging")

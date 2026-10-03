@@ -118,6 +118,39 @@ async def test_non_json_error_still_raises() -> None:
     assert exc_info.value.code is None
 
 
+async def test_listen_key_requests_send_api_key_without_signature() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json={"listenKey": "lk-123"})
+
+    async with make_client(handler) as client:
+        key = await client.start_user_stream()
+        await client.keepalive_user_stream()
+
+    assert [(r.method, r.url.path) for r in seen] == [
+        ("POST", "/fapi/v1/listenKey"),
+        ("PUT", "/fapi/v1/listenKey"),
+    ]
+    for request in seen:
+        assert request.headers["X-MBX-APIKEY"] == "test-key"
+        assert request.url.query == b""  # USER_STREAM: no timestamp, no signature
+    assert key.reveal() == "lk-123"
+    assert "lk-123" not in f"{key} {key!r}"
+
+
+async def test_keepalive_without_active_key_raises_1125() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(400, json={"code": -1125, "msg": "This listenKey does not exist."})
+
+    async with make_client(handler) as client:
+        with pytest.raises(BinanceAPIError) as exc_info:
+            await client.keepalive_user_stream()
+
+    assert exc_info.value.code == -1125
+
+
 async def test_errors_never_contain_credentials() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"code": -2015, "msg": "Invalid API-key."})
