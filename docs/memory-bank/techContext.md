@@ -34,7 +34,7 @@ quantdeck/
 
 ## Environment variables
 
-Defined in the root `.env` (gitignored); names are listed in `.env.example`. Never record values here. Real environment variables override `.env`. The engine reads them only through `quantdeck_engine.config`.
+Defined in the root `.env` (gitignored); names are listed in `.env.example`. Never record values here. Real environment variables override `.env`. The engine reads them only through `quantdeck_engine.config`. Strategy and risk settings will go in `engine/config.toml` instead (D-28); that file doesn't exist yet.
 
 | Variable | Used by | Notes |
 |---|---|---|

@@ -93,7 +93,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 
 - **Decision:** Nobody trades manually on the account the engine uses; manual trading happens on a different account. The engine treats every position and open order on its account as its own.
 - **Why:** In one-way mode (D-05) a symbol has a single net position, so manual and engine trades in the same symbol can't be told apart. A dedicated account keeps the kill switch's "cancel all orders, close all positions" correct as written and keeps account PnL equal to engine PnL. Sharing the account would also share margin, so manual losses could liquidate engine positions.
-- **Consequence:** On startup the engine adopts whatever positions and orders it finds (D-06). What it does with a position that has no exchange-side stop is decided with order execution. Whether sub-accounts are available for the user's Binance account is unchecked.
+- **Consequence:** On startup the engine adopts whatever positions and orders it finds (D-06). What it does with a position that has no exchange-side stop is set by D-19 and D-26. Whether sub-accounts are available for the user's Binance account is unchecked.
 - **Date:** 2026-10-03
 
 ## D-15 Multi-symbol structure, one symbol in operation first
@@ -104,7 +104,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 
 ## D-16 Isolated margin, applied by the engine at startup
 
-- **Decision:** Positions use isolated margin. Margin type and leverage per symbol come from engine configuration. At startup the engine reads the account: if the symbol has no position, it applies the configured values; if a position exists under different settings, it refuses to trade and warns. The leverage cap is decided with risk management. `check` stays read-only.
+- **Decision:** Positions use isolated margin. Margin type and leverage per symbol come from engine configuration. At startup the engine reads the account: if the symbol has no position, it applies the configured values; if a position exists under different settings, it refuses to trade and warns. The leverage values and the liquidation check are set in D-25. `check` stays read-only.
 - **Why:** The biggest risk in automated trading is a bug such as a missing stop or a wrong quantity. Isolated margin caps that loss at the position's margin; cross margin would put the whole balance at risk. Keeping the values in configuration means the account can't silently drift from what the engine assumes.
 - **Consequence:** Liquidation sits closer to entry than with cross margin, so before every entry the engine checks that the stop price is safely inside the liquidation price.
 - **Date:** 2026-10-03
@@ -122,14 +122,13 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Trade-off:** A mark-price stop can fire later than a last-price stop when the last price moves first, so fills can be worse than the trigger price.
 - **Date:** 2026-10-03
 
-
 ## D-19 Never leave a position without an exchange-side stop
 
 - **Decision:**
   - After an entry fills, the engine places its stop at once. If that fails, it retries a few times within a few seconds, checking before each retry whether the stop was in fact placed (the outcome of a failed request can be unknown). If the stop is still not confirmed, or its trigger price has already been crossed, the engine closes the position with a market `reduceOnly` order, stops trading that symbol, and logs an ERROR.
-  - At startup, a position without a stop gets an emergency stop at a configured distance from its entry price and is adopted. If that trigger price is already crossed, would sit beyond the liquidation price (D-16), or can't be placed (as above), the engine closes the position instead. Either way it logs an ERROR.
-- **Why:** Safety principle 6. Brief retries ride out transient errors without leaving the position unprotected for long. For a position found at startup, the user chose an emergency stop over closing at whatever price the restart happens to meet; because the engine no longer knows where the strategy meant to stop out, the distance is a configured risk setting rather than a strategy value.
-- **Open:** The emergency distance is set with the risk limits. Whether the strategy manages an adopted position is decided with the strategy interface.
+  - At startup, a position without a stop gets an emergency stop (placed per D-26) and is adopted. If that trigger price is already crossed, would sit beyond the liquidation price (D-16), or can't be placed (as above), the engine closes the position instead. Either way it logs an ERROR.
+- **Why:** Safety principle 6. Brief retries ride out transient errors without leaving the position unprotected for long. For a position found at startup, the user chose an emergency stop over closing at whatever price the restart happens to meet; because the engine no longer knows where the strategy meant to stop out, the distance comes from the risk settings rather than the strategy.
+- **Open:** Whether the strategy manages an adopted position is decided with the strategy interface.
 - **Date:** 2026-10-03
 
 ## D-20 Unknown order outcomes are resolved by lookup, never by blind retry
@@ -146,9 +145,61 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 
 ## D-22 Position size from a fixed risk amount
 
-- **Decision:** Quantity = risk amount ÷ |entry price − stop price|, where the risk amount is a configured fraction of the account balance. Strategies supply a stop price with every entry signal. The quantity is rounded down to `stepSize`, an entry below `MIN_NOTIONAL` is skipped, and the maximum position size and leverage cap trim it further.
+- **Decision:** Quantity = risk amount ÷ |entry price − stop price|, where the risk amount is a configured fraction of the day's base balance (D-23). Strategies supply a stop price with every entry signal. The quantity is rounded down to `stepSize`, an entry below `MIN_NOTIONAL` is skipped, and the daily-limit entry gate (D-24) and the position caps (D-25) trim it further.
 - **Why:** Each stop-out then loses about the same amount, so the daily loss limit and kill switch can be reasoned about as a number of stop-outs. Every entry needs a stop anyway (D-19), so asking the strategy for it costs nothing. Rounding down keeps the risk at or below the configured amount.
 - **Caveat:** Realized losses can exceed the risk amount through stop slippage, mark-price trigger lag (D-18), and fees.
-- **Open:** The fraction, and which balance it applies to, are set with the risk limits.
 - **Date:** 2026-10-03
+
+## D-23 One base balance per UTC day; risk per trade is a fraction of it
+
+- **Decision:** Risk limits are computed from the day's base balance: the wallet balance of the margin asset (USDT) at 00:00 UTC (09:00 KST), fixed until the next 00:00 UTC. Every risk-management day runs from 00:00 UTC. At startup the engine rebuilds the base from the exchange: the current wallet balance minus every income record since 00:00 UTC (income history). D-22's risk amount is a configured fraction of the base; testnet starts at 1%.
+- **Why:** One number per day keeps the arithmetic readable: daily limit ÷ risk fraction = stop-outs per day (D-24). The wallet balance doesn't swing with unrealized PnL as the margin balance does, and doesn't shrink as margin gets tied up as the available balance would once several symbols trade (D-15). The base can be rebuilt from the exchange after a restart (D-06). UTC matches the logs (D-12) and Binance timestamps, and the day turns at 09:00 KST, when the user is usually awake.
+- **Alternatives:** The current wallet, margin, or available balance; days starting at 00:00 KST.
+- **Date:** 2026-10-10
+
+## D-24 Daily loss limit counts realized PnL, fees, and funding; entries are capped by the room left
+
+- **Decision:**
+  - Today's loss is the net of realized PnL, commissions, and funding fees since 00:00 UTC (D-23): gains offset losses, and transfers and unrealized PnL don't count. The engine rebuilds it from income history at startup.
+  - The limit is a configured fraction of the base; testnet starts at 3%, three stop-outs at D-23's 1%. When today's loss reaches it, the kill switch fires (D-27).
+  - Entry gate: an entry's risk amount is the smaller of D-23's amount and the room left under the limit. If that leaves a quantity below `MIN_NOTIONAL`, the entry is skipped.
+- **Why:** Fees and funding are real losses; counting realized PnL alone understates them. Unrealized PnL is left out because every open position's loss is already bounded by its exchange-side stop (D-19), and the gate counts that risk before the position opens, so the limit holds as long as the stops work; the kill switch backs it up against slippage and bugs. Counting unrealized PnL would need a mark price stream, couldn't be rebuilt after a restart (the unrealized PnL at 00:00 UTC is gone by then), and would fire the kill switch at nearly the moment a stop fires.
+- **Caveat:** Stop slippage, mark-price trigger lag (D-18), and fees can still push a day's loss past the limit.
+- **Alternatives:** A fixed USDT amount; a multiple of the risk amount; an equity-based loss that includes unrealized PnL.
+- **Date:** 2026-10-10
+
+## D-25 Position cap 2× the base, leverage 5× capped at 10×, stop within half the liquidation distance
+
+- **Decision:**
+  - An entry's notional is capped at a configured multiple of the base (testnet: 2×) and at the available balance × leverage, so its initial margin fits. A trimmed entry risks less than the risk amount.
+  - Leverage per symbol comes from configuration (D-16); testnet starts at 5×. A code constant caps it at 10× (D-28).
+  - Before every entry, the stop must sit no farther from the entry price than half the distance to the estimated liquidation price; otherwise the entry is skipped with a WARNING.
+- **Why:** D-22 sizing grows as the stop tightens: 1% risk with a 0.25% stop is a notional of 4× the base. With isolated margin and an exchange-side stop, leverage doesn't change the planned loss (quantity × stop distance). It sets two other things: the liquidation distance (about 1/leverage) and the margin, which is what a failed stop can lose. At 5×, liquidation sits about 20% away, leaving room for stops up to about 10%, and a full 2× position ties up about 40% of the base. Keeping the stop within half the liquidation distance leaves room for maintenance margin, fees, and mark/last price divergence.
+- **Revisit:** The leverage, once the first strategy's typical stop distance is known.
+- **Date:** 2026-10-10
+
+## D-26 Emergency stop where the loss equals one risk amount
+
+- **Decision:** A position found at startup without a stop (D-19) gets its emergency stop at entry price ∓ (risk amount ÷ position quantity), using D-23's risk amount. There is no separate distance setting. D-19's checks (already crossed, beyond liquidation, can't be placed → close the position) apply unchanged.
+- **Why:** For a position the engine sized under D-22, this lands near its original stop. An oversized position gets a proportionally tighter stop, so its loss still stays at one risk amount, and if the price is already past that point the position is closed. A fixed percentage would let an oversized position lose several risk amounts; an ATR-based distance would need candle history and a timeframe in an emergency path.
+- **Date:** 2026-10-10
+
+## D-27 The kill switch halts trading until the user lifts it
+
+- **Decision:**
+  - When it fires (D-24), the engine cancels all orders, algo orders included, closes every position with `reduceOnly` market orders, and enters a halted state: it keeps running and serving queries and monitoring, but places no new orders.
+  - The halt lasts until the user lifts it with an explicit command. Lifting it on the same UTC day changes nothing, because the entry gate (D-24) has no room left.
+  - The halt survives restarts. At startup the engine rebuilds today's loss from the exchange and starts halted if it is at the limit. The kill switch also writes a local record that stays until the user lifts the halt, so the engine also starts halted on later days. If that record is lost, the engine resumes on the next UTC day.
+  - Safety principle 7 now ends with "halt trading until the user lifts the halt" instead of "stop the engine".
+- **Why:** The kill switch fires on a bad day or a bug; requiring the user to look before trading resumes keeps a bug from repeating every day. A running engine still shows positions and logs to the GUI and can receive the lift command; an exited one shows nothing, and nothing restarts it yet. Rebuilding from the exchange keeps a same-day restart halted even without the local record.
+- **Alternatives:** Resume automatically at 00:00 UTC; exit the process.
+- **Open:** Where the local record lives (a file or SQLite) is decided with storage.
+- **Date:** 2026-10-10
+
+## D-28 Strategy and risk settings in `engine/config.toml`, bounded by code constants
+
+- **Decision:** `.env` keeps secrets and environment settings (keys, network, log level). Strategy and risk settings — per-symbol margin type and leverage, the risk fraction, the daily loss limit, the position cap — go in `engine/config.toml`, read with the stdlib `tomllib` by `quantdeck_engine.config` at startup. The real file is gitignored; `engine/config.example.toml` is committed with the same keys. Code constants bound each risk value (for example risk fraction ≤ 2%, daily limit ≤ 10%, leverage ≤ 10×); a missing or out-of-bounds value stops the engine.
+- **Why:** Per-symbol tables (D-15, D-16) are awkward as environment variables, and `tomllib` adds no dependency. Keeping the real file out of git keeps the user's values out of the public repo, as with `.env`. The bounds catch typos such as `1` for `0.01`, the same way an invalid `BINANCE_TESTNET` already stops the engine; raising one takes a code change.
+- **Alternatives:** More `.env` variables; SQLite edited from the GUI (premature without a GUI).
+- **Date:** 2026-10-10
 

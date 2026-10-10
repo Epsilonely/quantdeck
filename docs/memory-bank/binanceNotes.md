@@ -135,3 +135,5 @@ Check each item while implementing the related feature:
 - [ ] Real `ORDER_TRADE_UPDATE`, `ACCOUNT_UPDATE`, and `ALGO_UPDATE` payloads on testnet, compared with the documented fields.
 - [ ] State restore on restart: response shapes of Current All Open Orders and Current All Algo Open Orders on testnet.
 - [ ] Margin type and leverage (D-16): the endpoints that set them, how to read the current values per symbol, and the error returned when changing margin type while a position or open orders exist.
+- [ ] Income history (`GET /fapi/v1/income`) for the base balance and today's loss (D-23, D-24): the `incomeType` values for realized PnL, commission, funding, and transfers; time-range and paging limits; and whether the records since 00:00 UTC add up exactly to the wallet balance change.
+- [ ] Liquidation price before entry (D-25): estimate it from the maintenance margin rates in `GET /fapi/v1/leverageBracket`, and compare the estimate with `liquidationPrice` from `positionRisk` once a position is open.
