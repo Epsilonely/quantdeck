@@ -3,14 +3,18 @@
 import argparse
 import asyncio
 import logging
+from decimal import Decimal
 
 import httpx
 from websockets.exceptions import WebSocketException
 
 from quantdeck_engine.binance.rest import BinanceAPIError
 from quantdeck_engine.check import CheckFailed, run_check
-from quantdeck_engine.config import ConfigError, load_settings
+from quantdeck_engine.config import ConfigError, load_settings, load_trading_config
 from quantdeck_engine.logs import setup_logging
+from quantdeck_engine.trading.executor import OrderOutcomeUnclear, TradingHalted
+from quantdeck_engine.trading.rules import Side
+from quantdeck_engine.trial import TrialFailed, run_trial
 
 logger = logging.getLogger(__name__)
 
@@ -22,6 +26,12 @@ def main() -> None:
     check.add_argument("--symbol", default="BTCUSDT")
     check.add_argument("--interval", default="1m")
     check.add_argument("--count", type=int, default=3, help="kline updates to wait for")
+    trial = commands.add_parser(
+        "trial", help="TESTNET ONLY: run entry, stop, and close once (places orders)"
+    )
+    trial.add_argument("--symbol", help="a symbol from config.toml (default: the first)")
+    trial.add_argument("--side", choices=["long", "short"], default="long")
+    trial.add_argument("--stop-percent", type=Decimal, default=Decimal(1))
     args = parser.parse_args()
 
     log_file = setup_logging()
@@ -48,6 +58,30 @@ def main() -> None:
             asyncio.run(run_check(settings, args.symbol.upper(), args.interval, args.count))
         except (CheckFailed, BinanceAPIError, httpx.HTTPError, WebSocketException, OSError) as e:
             logger.error("Check failed: %s", e)
+            raise SystemExit(1) from None
+        return
+
+    if args.command == "trial":
+        try:
+            trading = load_trading_config()
+        except ConfigError as e:
+            logger.error("Config error: %s", e)
+            raise SystemExit(1) from None
+        symbol = (args.symbol or next(iter(trading.symbols))).upper()
+        side = Side.LONG if args.side == "long" else Side.SHORT
+        try:
+            asyncio.run(run_trial(settings, trading, symbol, side, args.stop_percent))
+        except (
+            TrialFailed,
+            TradingHalted,
+            OrderOutcomeUnclear,
+            BinanceAPIError,
+            httpx.HTTPError,
+            WebSocketException,
+            OSError,
+            TimeoutError,
+        ) as e:
+            logger.error("Trial failed: %s", e)
             raise SystemExit(1) from None
         return
 

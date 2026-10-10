@@ -8,12 +8,12 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 |---|---|---|
 | GUI | Electron, React, TypeScript, electron-vite, electron-builder | Scaffolded (template) |
 | Charts | lightweight-charts | Planned, not installed |
-| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, read-only Binance access; no orders yet |
-| Binance client | In-house, asyncio on httpx + websockets (D-10) | Read-only REST, kline stream, user data stream |
+| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops; no risk limits or trading loop yet |
+| Binance client | In-house, asyncio on httpx + websockets (D-10) | REST including orders and algo orders, kline stream, user data stream |
 | Discord bot | Undecided | Not started |
 | Storage | SQLite (trades, orders, logs), Parquet (historical candles) | Planned; diagnostic logs already go to files (D-12) |
 | Engine ↔ clients | WebSocket on localhost | Planned |
-| Exchange | Binance USDⓈ-M Futures, HMAC keys (D-11) | Testnet connected, read-only |
+| Exchange | Binance USDⓈ-M Futures, HMAC keys (D-11) | Testnet; orders placed only by `trial` so far |
 
 ## Requirements
 
@@ -34,7 +34,7 @@ quantdeck/
 
 ## Environment variables
 
-Defined in the root `.env` (gitignored); names are listed in `.env.example`. Never record values here. Real environment variables override `.env`. The engine reads them only through `quantdeck_engine.config`. Strategy and risk settings will go in `engine/config.toml` instead (D-28); that file doesn't exist yet.
+Defined in the root `.env` (gitignored); names are listed in `.env.example`. Never record values here. Real environment variables override `.env`. The engine reads them only through `quantdeck_engine.config`. Strategy and risk settings live in `engine/config.toml` instead (D-28): gitignored, created by copying `engine/config.example.toml`. `check` doesn't need it; `trial` does.
 
 | Variable | Used by | Notes |
 |---|---|---|

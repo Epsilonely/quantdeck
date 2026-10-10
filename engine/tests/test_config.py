@@ -1,14 +1,17 @@
 import logging
+from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
 from quantdeck_engine.config import (
+    DEFAULT_CONFIG_FILE,
     DEFAULT_ENV_FILE,
     MAINNET,
     TESTNET,
     ConfigError,
     load_settings,
+    load_trading_config,
     parse_settings,
 )
 
@@ -120,3 +123,114 @@ def test_missing_env_file_falls_back_to_environment(tmp_path: Path) -> None:
 
 def test_default_env_file_is_at_repo_root() -> None:
     assert (DEFAULT_ENV_FILE.parent / ".env.example").is_file()
+
+
+# engine/config.toml (D-28)
+
+EXAMPLE_CONFIG = Path(__file__).resolve().parents[1] / "config.example.toml"
+
+VALID_TOML = """
+[risk]
+risk_per_trade_percent = 1
+daily_loss_limit_percent = 3.5
+max_notional_multiple = 2
+
+[symbols.BTCUSDT]
+leverage = 5
+"""
+
+
+def write_config(tmp_path: Path, text: str) -> Path:
+    path = tmp_path / "config.toml"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_example_config_is_valid() -> None:
+    config = load_trading_config(EXAMPLE_CONFIG)
+    assert config.risk_per_trade_percent == Decimal("1")
+    assert config.daily_loss_limit_percent == Decimal("3")
+    assert config.max_notional_multiple == Decimal("2")
+    assert config.symbols["BTCUSDT"].leverage == 5
+
+
+def test_decimals_stay_exact(tmp_path: Path) -> None:
+    config = load_trading_config(write_config(tmp_path, VALID_TOML))
+    assert config.daily_loss_limit_percent == Decimal("3.5")
+    assert isinstance(config.daily_loss_limit_percent, Decimal)
+
+
+def test_missing_config_file_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="config.example.toml"):
+        load_trading_config(tmp_path / "config.toml")
+
+
+def test_invalid_toml_is_rejected(tmp_path: Path) -> None:
+    with pytest.raises(ConfigError, match="config.toml"):
+        load_trading_config(write_config(tmp_path, "[risk\n"))
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("risk_per_trade_percent", "100"),  # typo for 1.00
+        ("risk_per_trade_percent", "2.01"),
+        ("risk_per_trade_percent", "0"),
+        ("risk_per_trade_percent", "-1"),
+        ("daily_loss_limit_percent", "10.5"),
+        ("max_notional_multiple", "6"),
+    ],
+)
+def test_risk_values_outside_bounds_are_rejected(tmp_path: Path, key: str, value: str) -> None:
+    text = VALID_TOML.replace(f"{key} = ", f"{key} = {value} #")
+    with pytest.raises(ConfigError, match=key):
+        load_trading_config(write_config(tmp_path, text))
+
+
+@pytest.mark.parametrize("value", ['"1"', "true"])
+def test_risk_value_must_be_a_number(tmp_path: Path, value: str) -> None:
+    text = VALID_TOML.replace("risk_per_trade_percent = ", f"risk_per_trade_percent = {value} #")
+    with pytest.raises(ConfigError, match="must be a number"):
+        load_trading_config(write_config(tmp_path, text))
+
+
+@pytest.mark.parametrize("value", ["0", "11", "5.5", "true"])
+def test_leverage_outside_bounds_is_rejected(tmp_path: Path, value: str) -> None:
+    text = VALID_TOML.replace("leverage = 5", f"leverage = {value}")
+    with pytest.raises(ConfigError, match="leverage"):
+        load_trading_config(write_config(tmp_path, text))
+
+
+def test_missing_risk_value_is_rejected(tmp_path: Path) -> None:
+    text = VALID_TOML.replace("max_notional_multiple = 2\n", "")
+    with pytest.raises(ConfigError, match="max_notional_multiple"):
+        load_trading_config(write_config(tmp_path, text))
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "where"),
+    [
+        ("risk_per_trade_percent", "risk_per_trade_pct", r"\[risk\]"),
+        ("leverage = 5", "leverage = 5\nlevrage = 3", r"\[symbols.BTCUSDT\]"),
+        ("[risk]", "[risks]\n[risk]", "top level"),
+    ],
+)
+def test_unknown_keys_are_rejected(tmp_path: Path, old: str, new: str, where: str) -> None:
+    with pytest.raises(ConfigError, match=where):
+        load_trading_config(write_config(tmp_path, VALID_TOML.replace(old, new)))
+
+
+def test_at_least_one_symbol_is_required(tmp_path: Path) -> None:
+    text = VALID_TOML.replace("[symbols.BTCUSDT]\nleverage = 5\n", "[symbols]\n")
+    with pytest.raises(ConfigError, match="at least one symbol"):
+        load_trading_config(write_config(tmp_path, text))
+
+
+def test_lower_case_symbol_is_rejected(tmp_path: Path) -> None:
+    text = VALID_TOML.replace("BTCUSDT", "btcusdt")
+    with pytest.raises(ConfigError, match="upper case"):
+        load_trading_config(write_config(tmp_path, text))
+
+
+def test_default_config_file_is_in_engine_dir() -> None:
+    assert DEFAULT_CONFIG_FILE.parent == EXAMPLE_CONFIG.parent

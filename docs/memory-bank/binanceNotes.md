@@ -61,7 +61,7 @@ Source: [General Info](https://developers.binance.com/docs/derivatives/usds-marg
 - `recvWindow` defaults to 5000 ms (max 60000). The server accepts a request only if `timestamp < serverTime + 1000` and `serverTime - timestamp <= recvWindow`.
 - The development PC's clock was 462 ms ahead of the testnet server on the first check — close to the 1000 ms future limit. The engine measures the offset with `GET /fapi/v1/time` and corrects signed timestamps.
 
-### REST endpoints in use (2026-10-02)
+### REST endpoints in use (2026-10-02, extended 2026-10-10)
 
 Source: [Trade](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/trade), [Account](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/account), [Market Data](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/market-data), testnet response
 
@@ -70,17 +70,29 @@ Source: [Trade](https://developers.binance.com/en/docs/catalog/core-trading-deri
 | `GET /fapi/v1/time` | 1 | |
 | `GET /fapi/v1/exchangeInfo` | 1 | Symbols, filters, and the account's rate limits |
 | `GET /fapi/v1/accountConfig` | 5 | `dualSidePosition`: `true` = hedge, `false` = one-way. Use this, not `GET /fapi/v1/positionSide/dual` (weight 30) |
-| `GET /fapi/v3/balance` | 5 | One entry per asset, including zero balances |
-| `GET /fapi/v3/positionRisk` | 5 | Only symbols with a position or open orders |
+| `GET /fapi/v3/balance` | 5 | One entry per asset, including zero balances. `balance` is the wallet balance |
+| `GET /fapi/v3/positionRisk` | 5 | Only symbols with a position or open orders. Has `liquidationPrice` and `isolatedWallet`, but no `leverage` or `marginType` (v2 had them) |
+| `GET /fapi/v1/symbolConfig` | 5 | Current `marginType` (`ISOLATED`/`CROSSED`) and `leverage` per symbol |
+| `GET /fapi/v1/premiumIndex` | 1 with `symbol` | `markPrice`. An object with `symbol`, an array without (weight 10) |
+| `GET /fapi/v1/leverageBracket` | 1 | Bracket values (`notionalFloor`, `notionalCap`, `maintMarginRatio`, `cum`, `initialLeverage`) are JSON numbers, not strings. Docs: an object when `symbol` is sent, an array otherwise |
+| `GET /fapi/v1/income` | 30 | See Income history |
+| `GET /fapi/v1/openOrders`, `GET /fapi/v1/openAlgoOrders` | 1 with `symbol`, 40 without | |
+| `POST /fapi/v1/marginType` | 1 | `-4046` no change needed; `-4047` open orders exist; `-4048` a position exists (docs) |
+| `POST /fapi/v1/leverage` | 1 | Response `{"leverage", "maxNotionalValue", "symbol"}` |
 | `POST /fapi/v1/listenKey` | 1 | USER_STREAM. Returns the active key if there is one |
 | `PUT /fapi/v1/listenKey` | 1 | USER_STREAM. Response `{"listenKey": ...}`; `-1125` if no key is active |
 
-### Symbol filters (2026-10-02)
+- Boolean request parameters (`reduceOnly`, `closePosition`, `priceProtect`) are the strings `true`/`false`; boolean response fields are JSON booleans. Prices and quantities in responses are strings; IDs and times are numbers.
+- Changing margin type and leverage with no position worked on testnet (2026-10-10). The margin type change also pushes `ACCOUNT_UPDATE` with `m: "MARGIN_TYPE_CHANGE"`; the leverage change pushes `ACCOUNT_CONFIG_UPDATE` `{"ac": {"s": "BTCUSDT", "l": 5}}`.
 
-Source: testnet response
+### Symbol filters (2026-10-02, extended 2026-10-10)
+
+Source: testnet response, [Common Definition](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/common-definition)
 
 - Field names: `PRICE_FILTER` {`tickSize`, `minPrice`, `maxPrice`}, `LOT_SIZE` {`stepSize`, `minQty`, `maxQty`}, `MIN_NOTIONAL` {`notional`}. Docs also list `MARKET_LOT_SIZE`, `MAX_NUM_ORDERS`, `PERCENT_PRICE`.
 - Values differ per symbol and per network (testnet BTCUSDT: tick 0.10, step 0.0001, min notional 50), so always read them from `exchangeInfo` at runtime.
+- `MARKET_LOT_SIZE` limits MARKET orders; the docs don't say whether `LOT_SIZE` does too, so the engine applies the stricter of the two. For MARKET orders `MIN_NOTIONAL` is checked at the mark price.
+- Each symbol in `exchangeInfo` also has `triggerProtect` (the `priceProtect` threshold) and `marketTakeBound`.
 
 ### Rate-limit signals (2026-10-02)
 
@@ -101,39 +113,61 @@ Source: [User Data Streams](https://developers.binance.com/en/docs/products/deri
 - Connecting with a nonexistent key completes the handshake and then stays silent: no error, no events. An unrouted `<ws root>/ws/<listenKey>` also completes the handshake; whether it delivers events is untested.
 - Event types: `ORDER_TRADE_UPDATE`, `ACCOUNT_UPDATE`, `ALGO_UPDATE` (algo/conditional orders), `ACCOUNT_CONFIG_UPDATE`, `MARGIN_CALL`, `TRADE_LITE`, `CONDITIONAL_ORDER_TRIGGER_REJECT`, `STRATEGY_UPDATE`, `GRID_UPDATE` (deprecated), `listenKeyExpired`.
 - Ordering: on one connection, events of the same type are strictly ordered by `T` and `E`; across types, order by `E`.
-- `ACCOUNT_UPDATE` is pushed only when balances, positions, or margin type change (not for unfilled or cancelled orders), with only the changed symbols in `P`. `a.m` gives the reason (`ORDER`, `FUNDING_FEE`, ...).
-- Not yet seen on testnet: real `ORDER_TRADE_UPDATE` / `ACCOUNT_UPDATE` / `ALGO_UPDATE` payloads (they need orders). Older docs said `ORDER_TRADE_UPDATE` omits `N` and `n` when there is no commission; the parser tolerates that.
+- `ACCOUNT_UPDATE` is pushed only when balances, positions, or margin type change (not for unfilled or cancelled orders), with only the changed symbols in `P`. `a.m` gives the reason (`ORDER`, `FUNDING_FEE`, `MARGIN_TYPE_CHANGE`, ...).
+- Seen on testnet (2026-10-10): a market order produces `TRADE_LITE`, then `ORDER_TRADE_UPDATE` (`x`/`X` `NEW`), `ACCOUNT_UPDATE` (`m: "ORDER"`), and `ORDER_TRADE_UPDATE` (`TRADE`/`FILLED`). `n` and `N` were present even at zero commission (older docs said they could be left out; the parser tolerates both).
+- `ACCOUNT_UPDATE` `P` entries also carry `cr`, `iw` (isolated wallet), `ma` (margin asset), and `bep`. `mt` is lowercase (`isolated`), unlike REST's `ISOLATED`. Right after an entry, `iw` was exactly the initial margin (notional ÷ leverage) minus the opening commission.
+- `CONDITIONAL_ORDER_TRIGGER_REJECT` is deprecated since 2025-12-15 (Change Log); rejection reasons come in `ALGO_UPDATE` `rm`.
 
-### Algo (conditional) orders (2026-10-03)
+### Algo (conditional) orders (2026-10-03, testnet 2026-10-10)
 
-Source: [Trade — New Algo Order](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/trade). Docs only; nothing placed on testnet yet.
+Source: [Trade — New Algo Order](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/trade), Change Log, testnet response
 
-- `POST /fapi/v1/algoOrder` (TRADE, signed) with `algoType=CONDITIONAL`. Types: `STOP_MARKET`, `TAKE_PROFIT_MARKET`, `STOP`, `TAKE_PROFIT`, `TRAILING_STOP_MARKET`. Costs 1 on the 10 s and 1 min order-count limits and 0 IP weight. Related: Query Algo Order, Cancel Algo Order, Cancel All Algo Open Orders.
+- `POST /fapi/v1/algoOrder` (TRADE, signed) with `algoType=CONDITIONAL`. Types: `STOP_MARKET`, `TAKE_PROFIT_MARKET`, `STOP`, `TAKE_PROFIT`, `TRAILING_STOP_MARKET`. Costs 1 on the 10 s and 1 min order-count limits and 0 IP weight. Since 2025-12-09 `POST /fapi/v1/order` rejects these types with `-4120`, so stops go through algo orders only.
 - `triggerPrice` sets the trigger. `STOP_MARKET` SELL triggers when the price falls to it, BUY when the price rises to it.
 - `workingType`: `MARK_PRICE` or `CONTRACT_PRICE` (last price); default `CONTRACT_PRICE`.
 - `closePosition=true` (`STOP_MARKET`/`TAKE_PROFIT_MARKET` only) closes the whole current position on trigger: a long if SELL, a short if BUY. It cannot be combined with `quantity` or `reduceOnly`.
 - `priceProtect=true` (default false): at trigger time, the mark/last price difference must not exceed the symbol's `triggerProtect` from `exchangeInfo`.
 - `clientAlgoId`: unique among open orders, `^[\.A-Z\:/a-z0-9_-]{1,36}$`, generated if not sent.
-- The response carries `algoId`, `clientAlgoId`, and `algoStatus` (`NEW` on placement); status changes then arrive as `ALGO_UPDATE` on the user data stream.
+- Query (`GET`) and Cancel (`DELETE /fapi/v1/algoOrder`) take `algoId` or `clientAlgoId` and no `symbol`. Cancel answers `{"code": "200", "msg": "success"}` with `code` as a string. The docs give no error code for "algo order not found", so the engine checks `openAlgoOrders` instead of querying one.
+- `ALGO_UPDATE` fields: `caid` clientAlgoId, `aid` algoId, `o` order type, `X` status, `tp` trigger price, `cp` closePosition, `R` reduceOnly, `wt` working type, `ai` the matching-engine `orderId` once triggered (a string, `""` before), `rm` failure reason. `ap`, `aq`, `act`, `rm` are left out until they apply.
+- Statuses: `NEW` (waiting), `CANCELED`, `TRIGGERING` (sent to the matching engine), `TRIGGERED` (placed there), `FINISHED` (that order filled or was cancelled), `REJECTED`, `EXPIRED` (cancelled by the system).
+- Testnet (2026-10-10): a `STOP_MARKET` with `closePosition=true` and `MARK_PRICE` was accepted and reported `f: "GTE_GTC"`, `q: "0"`, `R: true` (reduceOnly, though not sent). `ALGO_UPDATE` went `NEW` on placement, `CANCELED` on cancel, and `EXPIRED` about 60 ms after the position was closed by a reduceOnly market order: Binance removes a `closePosition` stop itself once its position is gone.
+- Docs: no margin check before a conditional order triggers (Change Log); `-2021` "Order would immediately trigger." and `-4142` "REJECT: take profit or stop order will be triggered immediately" are the crossed-trigger errors.
 
-### Order IDs and lookups (2026-10-03)
+### Orders, lookups, and unknown outcomes (2026-10-03, testnet 2026-10-10)
 
-Source: [Trade](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/trade). Docs only.
+Source: [Trade](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/trade), [General Info](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/general-info), [Error Codes](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/error-code), testnet response
 
 - `newClientOrderId` follows the same pattern as `clientAlgoId` (above). Both are unique among **open** orders only, so a filled or cancelled order's ID can be sent again.
-- `GET /fapi/v1/order` (weight 1) takes `symbol` plus `orderId` or `origClientOrderId`; `GET /fapi/v1/algoOrder` (weight 1) takes `algoId` or `clientAlgoId`. Neither finds an order cancelled or expired without fills more than 3 days ago, or any order older than 90 days.
-- Other Trade endpoints relevant later: Current All Open Orders, Current All Algo Open Orders, Query All Algo Orders, Change Initial Leverage, Change Margin Type, Modify Isolated Position Margin.
+- A MARKET order with `newOrderRespType=RESULT` answers with its final fill: on testnet the response had `status` `FILLED` and `executedQty`. The docs' only example has no `avgPrice` or `cumQuote`; the engine doesn't rely on them.
+- `positionSide` defaults to `BOTH` in one-way mode; `reduceOnly` can't be sent in hedge mode. A reduceOnly market close worked in one-way mode on testnet.
+- `GET /fapi/v1/order` (weight 1) takes `symbol` plus `orderId` or `origClientOrderId`; a missing order is `-2013` "Order does not exist.". It and `GET /fapi/v1/algoOrder` don't find an order cancelled or expired without fills more than 3 days ago, or any order older than 90 days.
+- Unknown outcome (look the order up before resending): HTTP 503 "Unknown error, please check your request or try again later.", other 5xx, HTTP 408, `-1006`, `-1007`. Definite failure: HTTP 503 "Service Unavailable.", `-1001`, `-1008` (reduceOnly and closePosition orders are exempt from `-1008` throttling).
+- Order rejections (docs): `-2019` margin insufficient, `-2022` ReduceOnly rejected, `-2027` exceeds the maximum position at current leverage, `-4164` below min notional, `-1111` precision, `-4004`/`-4005` quantity below min/above max, `-4023` quantity not a step multiple, `-4014` price not a tick multiple, `-4116` duplicated client order ID.
+
+### Income history (2026-10-10)
+
+Source: [Account — Income History](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/account), testnet response
+
+- `GET /fapi/v1/income` (USER_DATA, weight 30): `startTime`/`endTime` in ms, both inclusive; `page`; `limit` default 100, max 1000. Without times it returns the last 7 days; only the last three months are kept. Results are oldest first.
+- Fields: `symbol`, `incomeType`, `income` (string), `asset`, `info`, `time`, `tranId`, `tradeId`. Types include `TRANSFER`, `REALIZED_PNL`, `FUNDING_FEE`, `COMMISSION`, `INSURANCE_CLEAR`, and about twenty more.
+- Testnet: one entry-and-close produced two `COMMISSION` records and one `REALIZED_PNL`, and the day's records summed exactly to the wallet balance change — the basis for rebuilding the day's base balance (D-23).
+
+### Liquidation price (2026-10-10)
+
+Source: Binance FAQ "How to Calculate Liquidation Price of USDⓈ-M Futures Contracts" (updated 2025-12-31). Docs only.
+
+- For an isolated one-way position, with Q the absolute size, EP the entry price, WB the isolated wallet balance, and MMR/`cum` from the position's bracket: long LP = (Q·EP − WB − cum) / (Q·(1 − MMR)); short LP = (Q·EP + WB + cum) / (Q·(1 + MMR)). If the notional at LP falls in another bracket, recompute with that bracket.
 
 ## To verify
 
 Check each item while implementing the related feature:
 
-- [ ] Position mode: how `reduceOnly` behaves in one-way vs hedge mode.
-- [ ] Symbol filters: how orders that violate them are rejected (error codes).
+- [ ] Symbol filters: the error codes testnet actually returns for orders that violate them (docs list them under Orders, lookups, and unknown outcomes).
 - [ ] Signed requests: the error code returned when the timestamp is outside `recvWindow`.
-- [ ] Exchange-side stops on testnet (D-18): place a `STOP_MARKET` with `closePosition=true` and `MARK_PRICE`; the error when the trigger price is already crossed (docs mention `-2021` "Order would immediately trigger" for trailing stops); whether a `closePosition` stop can be placed with no open position; and whether it is cancelled or expired automatically when the position closes.
-- [ ] Real `ORDER_TRADE_UPDATE`, `ACCOUNT_UPDATE`, and `ALGO_UPDATE` payloads on testnet, compared with the documented fields.
-- [ ] State restore on restart: response shapes of Current All Open Orders and Current All Algo Open Orders on testnet.
-- [ ] Margin type and leverage (D-16): the endpoints that set them, how to read the current values per symbol, and the error returned when changing margin type while a position or open orders exist.
-- [ ] Income history (`GET /fapi/v1/income`) for the base balance and today's loss (D-23, D-24): the `incomeType` values for realized PnL, commission, funding, and transfers; time-range and paging limits; and whether the records since 00:00 UTC add up exactly to the wallet balance change.
-- [ ] Liquidation price before entry (D-25): estimate it from the maintenance margin rates in `GET /fapi/v1/leverageBracket`, and compare the estimate with `liquidationPrice` from `positionRisk` once a position is open.
+- [ ] Exchange-side stops: the error a `STOP_MARKET` gets when its trigger is already crossed (`-2021` or `-4142`), and whether a `closePosition` stop can be placed with no open position.
+- [ ] A stop that triggers: the `ALGO_UPDATE` sequence (`TRIGGERING` → `TRIGGERED` → `FINISHED`?) and the client order ID of the market order it creates (only `ai` = `orderId` links them in the docs).
+- [ ] `GET /fapi/v1/openOrders` with a non-empty result (the engine reads `clientOrderId`, `orderId`, `side`, `type`, `origQty`, `reduceOnly`).
+- [ ] Margin type and leverage: the errors when changing them with a position or open orders (docs: `-4047`, `-4048`, `-4161`).
+- [ ] Income history paging past 1000 records within one day.
+- [ ] Liquidation price before entry (D-25): compare the engine's estimate with `liquidationPrice` from `positionRisk` while a position is open. The estimate uses notional ÷ leverage as WB, which runs one opening commission higher than the real `iw`.

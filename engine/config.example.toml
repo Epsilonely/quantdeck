@@ -1,0 +1,13 @@
+# QuantDeck engine settings (D-28). Copy to config.toml (gitignored) and adjust.
+# Secrets and the network (testnet/mainnet) stay in the repo-root .env.
+# The values below are testnet starting values (D-23 to D-25), not mainnet values.
+
+[risk]
+# Percentages are of the day's base balance: the USDT wallet balance at 00:00 UTC.
+risk_per_trade_percent = 1      # loss at the stop, per trade (max 2)
+daily_loss_limit_percent = 3    # net loss that fires the kill switch (max 10)
+max_notional_multiple = 2       # position notional <= this x base balance (max 5)
+
+# One table per symbol. Margin type is always isolated.
+[symbols.BTCUSDT]
+leverage = 5                    # 1 to 10

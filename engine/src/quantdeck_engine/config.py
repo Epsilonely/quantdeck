@@ -1,14 +1,21 @@
 """Engine settings, loaded once at startup.
 
-Values come from the repo-root `.env`, overridden by real environment variables.
-The rest of the engine receives a `Settings` object and never reads `os.environ` itself.
+Two sources, both read only here:
+
+- `Settings`: secrets and environment from the repo-root `.env`, overridden by real
+  environment variables. The rest of the engine never reads `os.environ` itself.
+- `TradingConfig`: strategy and risk settings from `engine/config.toml` (D-28). Each risk
+  value has a hard bound in code, so a typo stops the engine instead of trading on it.
 """
 
 import logging
 import os
+import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
+from decimal import Decimal
 from pathlib import Path
+from typing import Any
 
 from dotenv import dotenv_values
 
@@ -16,6 +23,14 @@ logger = logging.getLogger(__name__)
 
 # engine/src/quantdeck_engine/config.py -> repo root
 DEFAULT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
+# engine/src/quantdeck_engine/config.py -> engine/
+DEFAULT_CONFIG_FILE = Path(__file__).resolve().parents[2] / "config.toml"
+
+# Hard bounds (D-28). Raising one takes a code change on purpose.
+MAX_RISK_PER_TRADE_PERCENT = Decimal(2)
+MAX_DAILY_LOSS_LIMIT_PERCENT = Decimal(10)
+MAX_NOTIONAL_MULTIPLE = Decimal(5)
+MAX_LEVERAGE = 10
 
 
 class ConfigError(Exception):
@@ -127,3 +142,107 @@ def _parse_log_level(raw: str | None) -> int:
 def _non_blank(raw: str | None) -> str | None:
     value = (raw or "").strip()
     return value or None
+
+
+@dataclass(frozen=True)
+class SymbolConfig:
+    symbol: str
+    leverage: int  # margin type is always isolated (D-16)
+
+
+@dataclass(frozen=True)
+class TradingConfig:
+    """Risk and per-symbol settings from `engine/config.toml`.
+
+    Percentages are of the day's base balance: the wallet balance at 00:00 UTC (D-23).
+    """
+
+    risk_per_trade_percent: Decimal  # D-22, D-23
+    daily_loss_limit_percent: Decimal  # D-24
+    max_notional_multiple: Decimal  # D-25: notional <= this x base balance
+    symbols: Mapping[str, SymbolConfig]
+
+
+def load_trading_config(path: Path = DEFAULT_CONFIG_FILE) -> TradingConfig:
+    if not path.is_file():
+        raise ConfigError(f"{path.name} not found; copy config.example.toml to {path} first")
+    try:
+        with path.open("rb") as f:
+            # parse_float keeps TOML decimals exact: 0.1 stays Decimal("0.1").
+            data = tomllib.load(f, parse_float=Decimal)
+    except tomllib.TOMLDecodeError as e:
+        raise ConfigError(f"{path.name}: {e}") from None
+    return parse_trading_config(data)
+
+
+def parse_trading_config(data: Mapping[str, Any]) -> TradingConfig:
+    _reject_unknown(data, {"risk", "symbols"}, "top level")
+
+    risk = _table(data, "risk")
+    _reject_unknown(
+        risk,
+        {"risk_per_trade_percent", "daily_loss_limit_percent", "max_notional_multiple"},
+        "[risk]",
+    )
+
+    symbols_table = _table(data, "symbols")
+    if not symbols_table:
+        raise ConfigError("[symbols] must list at least one symbol, e.g. [symbols.BTCUSDT]")
+    symbols: dict[str, SymbolConfig] = {}
+    for name, table in symbols_table.items():
+        where = f"[symbols.{name}]"
+        if not isinstance(table, Mapping):
+            raise ConfigError(f"{where} must be a table")
+        if name != name.upper():
+            raise ConfigError(f"{where}: symbol names are upper case, e.g. BTCUSDT")
+        _reject_unknown(table, {"leverage"}, where)
+        symbols[name] = SymbolConfig(
+            symbol=name, leverage=_bounded_int(table, "leverage", 1, MAX_LEVERAGE, where)
+        )
+
+    return TradingConfig(
+        risk_per_trade_percent=_bounded_decimal(
+            risk, "risk_per_trade_percent", MAX_RISK_PER_TRADE_PERCENT, "[risk]"
+        ),
+        daily_loss_limit_percent=_bounded_decimal(
+            risk, "daily_loss_limit_percent", MAX_DAILY_LOSS_LIMIT_PERCENT, "[risk]"
+        ),
+        max_notional_multiple=_bounded_decimal(
+            risk, "max_notional_multiple", MAX_NOTIONAL_MULTIPLE, "[risk]"
+        ),
+        symbols=symbols,
+    )
+
+
+def _table(data: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    value = data.get(key)
+    if not isinstance(value, Mapping):
+        raise ConfigError(f"[{key}] table is missing")
+    return value
+
+
+def _reject_unknown(table: Mapping[str, Any], known: set[str], where: str) -> None:
+    # A misspelled key would otherwise be ignored silently.
+    unknown = sorted(set(table) - known)
+    if unknown:
+        raise ConfigError(f"{where}: unknown key(s) {', '.join(unknown)}")
+
+
+def _bounded_decimal(table: Mapping[str, Any], key: str, maximum: Decimal, where: str) -> Decimal:
+    value = table.get(key)
+    # bool is an int subclass: reject `true` explicitly.
+    if isinstance(value, bool) or not isinstance(value, int | Decimal):
+        raise ConfigError(f"{where} {key} must be a number, got {value!r}")
+    number = Decimal(value)
+    if not 0 < number <= maximum:
+        raise ConfigError(f"{where} {key} must be > 0 and <= {maximum}, got {number}")
+    return number
+
+
+def _bounded_int(table: Mapping[str, Any], key: str, minimum: int, maximum: int, where: str) -> int:
+    value = table.get(key)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ConfigError(f"{where} {key} must be a whole number, got {value!r}")
+    if not minimum <= value <= maximum:
+        raise ConfigError(f"{where} {key} must be between {minimum} and {maximum}, got {value}")
+    return value

@@ -95,6 +95,31 @@ class AccountUpdate:
 
 
 @dataclass(frozen=True)
+class AlgoUpdate:
+    """`ALGO_UPDATE`: an algo (conditional) order such as an exchange-side stop changed.
+
+    Statuses: NEW (waiting for its trigger), CANCELED, TRIGGERING (sent to the matching
+    engine), TRIGGERED (placed there), FINISHED (that order filled or was canceled),
+    REJECTED, EXPIRED.
+    """
+
+    event_time: int  # ms
+    symbol: str
+    algo_id: int
+    client_algo_id: str
+    order_type: str  # STOP_MARKET, TAKE_PROFIT, ...
+    side: str
+    position_side: str
+    status: str
+    trigger_price: Decimal
+    close_position: bool
+    reduce_only: bool
+    working_type: str
+    actual_order_id: str  # the matching-engine orderId once triggered, else ""
+    reject_reason: str  # why the algo order failed, if it did
+
+
+@dataclass(frozen=True)
 class RawEvent:
     """An event this module doesn't parse, or failed to; `data` is the payload as received."""
 
@@ -102,7 +127,7 @@ class RawEvent:
     data: dict[str, Any]
 
 
-UserEvent = UserStreamConnected | OrderUpdate | AccountUpdate | RawEvent
+UserEvent = UserStreamConnected | OrderUpdate | AccountUpdate | AlgoUpdate | RawEvent
 
 
 def parse_order_update(data: dict[str, Any]) -> OrderUpdate:
@@ -163,9 +188,30 @@ def parse_account_update(data: dict[str, Any]) -> AccountUpdate:
     )
 
 
+def parse_algo_update(data: dict[str, Any]) -> AlgoUpdate:
+    o = data["o"]
+    return AlgoUpdate(
+        event_time=data["E"],
+        symbol=o["s"],
+        algo_id=o["aid"],
+        client_algo_id=o["caid"],
+        order_type=o["o"],
+        side=o["S"],
+        position_side=o["ps"],
+        status=o["X"],
+        trigger_price=Decimal(o["tp"]),
+        close_position=o["cp"],
+        reduce_only=o["R"],
+        working_type=o["wt"],
+        actual_order_id=o.get("ai", ""),
+        reject_reason=o.get("rm", ""),
+    )
+
+
 PARSERS: dict[str, Callable[[dict[str, Any]], UserEvent]] = {
     "ORDER_TRADE_UPDATE": parse_order_update,
     "ACCOUNT_UPDATE": parse_account_update,
+    "ALGO_UPDATE": parse_algo_update,
 }
 
 
@@ -219,6 +265,8 @@ async def user_data_stream(
 
 def _parse_or_raw(data: dict[str, Any]) -> UserEvent:
     event_type = data.get("e", "")
+    # Payloads as received, for checking them against the docs (binanceNotes.md).
+    logger.debug("User data event: %s", json.dumps(data, separators=(",", ":")))
     if event_type == "MARGIN_CALL":
         logger.warning("MARGIN_CALL: %s", data)
     try:

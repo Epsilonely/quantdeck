@@ -11,6 +11,7 @@ import hmac
 import logging
 import time
 from collections.abc import Callable, Mapping
+from decimal import Decimal
 from typing import Any, Self
 from urllib.parse import urlencode
 
@@ -20,6 +21,14 @@ from quantdeck_engine.config import Secret, Settings
 
 RECV_WINDOW_MS = 5000
 TIMEOUT_SECONDS = 10.0
+
+# Error codes the docs mark as "execution status unknown" (General Info, Error Codes).
+UNKNOWN_OUTCOME_CODES = {-1006, -1007}
+NO_SUCH_ORDER = -2013
+NO_NEED_TO_CHANGE_MARGIN_TYPE = -4046
+# A stop whose trigger price is already crossed. The docs name -2021 only for trailing
+# stops; -4142 is the algo-order message. Treat both as "crossed".
+STOP_WOULD_TRIGGER_CODES = {-2021, -4142}
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +46,26 @@ class BinanceAPIError(Exception):
 def sign(query: str, secret: str) -> str:
     """HMAC SHA256 signature over the exact query string that will be sent."""
     return hmac.new(secret.encode(), query.encode(), hashlib.sha256).hexdigest()
+
+
+def decimal_param(value: Decimal) -> str:
+    """Format a Decimal for a request parameter: plain digits, never exponent notation."""
+    text = f"{value.normalize():f}"
+    return "0" if text in ("-0", "0") else text
+
+
+def outcome_unknown(error: Exception) -> bool:
+    """Whether a failed order request may still have been executed (D-20).
+
+    Per General Info: a timeout or lost connection, HTTP 408, and 5xx answers leave the
+    outcome unknown (one 503 variant is a definite failure, but looking it up is harmless).
+    Other 4xx answers are definite rejections.
+    """
+    if isinstance(error, httpx.TimeoutException | httpx.TransportError):
+        return True
+    if isinstance(error, BinanceAPIError):
+        return error.status == 408 or error.status >= 500 or error.code in UNKNOWN_OUTCOME_CODES
+    return False
 
 
 class BinanceRestClient:
@@ -93,9 +122,119 @@ class BinanceRestClient:
         return await self._request("GET", "/fapi/v3/balance", signed=True)
 
     async def positions(self, symbol: str | None = None) -> list[dict[str, Any]]:
-        """Only symbols with a position or open orders are returned."""
+        """Only symbols with a position or open orders are returned.
+
+        v3 has no `leverage` or `marginType`; read those with `symbol_config`.
+        """
         params = {"symbol": symbol} if symbol else {}
         return await self._request("GET", "/fapi/v3/positionRisk", params, signed=True)
+
+    async def mark_price(self, symbol: str) -> Decimal:
+        data = await self._request("GET", "/fapi/v1/premiumIndex", {"symbol": symbol})
+        return Decimal(data["markPrice"])
+
+    async def symbol_config(self, symbol: str) -> dict[str, Any]:
+        """Margin type (`ISOLATED`/`CROSSED`) and leverage for one symbol. Weight 5."""
+        data = await self._request("GET", "/fapi/v1/symbolConfig", {"symbol": symbol}, signed=True)
+        return data[0]
+
+    async def leverage_brackets(self, symbol: str) -> list[dict[str, Any]]:
+        """Notional brackets. Their numbers are JSON numbers, not strings."""
+        data = await self._request(
+            "GET", "/fapi/v1/leverageBracket", {"symbol": symbol}, signed=True
+        )
+        # The docs show an object when `symbol` is sent and an array otherwise.
+        entry = data if isinstance(data, dict) else next(d for d in data if d["symbol"] == symbol)
+        return entry["brackets"]
+
+    async def income(
+        self, *, start_time: int, end_time: int, page: int, limit: int = 1000
+    ) -> list[dict[str, Any]]:
+        """Income records (realized PnL, commission, funding, transfers, ...), oldest first.
+
+        Weight 30. Only the last three months are kept.
+        """
+        params = {
+            "startTime": start_time,
+            "endTime": end_time,
+            "page": page,
+            "limit": limit,
+        }
+        return await self._request("GET", "/fapi/v1/income", params, signed=True)
+
+    async def open_orders(self, symbol: str) -> list[dict[str, Any]]:
+        return await self._request("GET", "/fapi/v1/openOrders", {"symbol": symbol}, signed=True)
+
+    async def open_algo_orders(self, symbol: str) -> list[dict[str, Any]]:
+        return await self._request(
+            "GET", "/fapi/v1/openAlgoOrders", {"symbol": symbol}, signed=True
+        )
+
+    async def query_order(self, symbol: str, client_order_id: str) -> dict[str, Any]:
+        """Raises `BinanceAPIError` with code -2013 if the order doesn't exist."""
+        params = {"symbol": symbol, "origClientOrderId": client_order_id}
+        return await self._request("GET", "/fapi/v1/order", params, signed=True)
+
+    # Signed (TRADE) endpoints. Every safety-relevant parameter is spelled out here (D-10).
+
+    async def market_order(
+        self,
+        symbol: str,
+        side: str,
+        quantity: Decimal,
+        client_order_id: str,
+        *,
+        reduce_only: bool,
+    ) -> dict[str, Any]:
+        """A MARKET order. RESULT makes Binance answer with the final fill (FILLED)."""
+        params = {
+            "symbol": symbol,
+            "side": side,
+            "type": "MARKET",
+            "quantity": decimal_param(quantity),
+            "reduceOnly": "true" if reduce_only else "false",
+            "newClientOrderId": client_order_id,
+            "newOrderRespType": "RESULT",
+        }
+        return await self._request("POST", "/fapi/v1/order", params, signed=True)
+
+    async def stop_market_close_position(
+        self, symbol: str, side: str, trigger_price: Decimal, client_algo_id: str
+    ) -> dict[str, Any]:
+        """An exchange-side stop that closes the whole position when it triggers (D-18).
+
+        `side` is the closing side: SELL closes a long, BUY a short. `closePosition` can't be
+        combined with `quantity` or `reduceOnly`, so neither is sent.
+        """
+        params = {
+            "algoType": "CONDITIONAL",
+            "symbol": symbol,
+            "side": side,
+            "type": "STOP_MARKET",
+            "triggerPrice": decimal_param(trigger_price),
+            "workingType": "MARK_PRICE",
+            "closePosition": "true",
+            "priceProtect": "false",
+            "clientAlgoId": client_algo_id,
+        }
+        return await self._request("POST", "/fapi/v1/algoOrder", params, signed=True)
+
+    async def cancel_algo_order(self, client_algo_id: str) -> dict[str, Any]:
+        params = {"clientAlgoId": client_algo_id}
+        return await self._request("DELETE", "/fapi/v1/algoOrder", params, signed=True)
+
+    async def cancel_order(self, symbol: str, client_order_id: str) -> dict[str, Any]:
+        params = {"symbol": symbol, "origClientOrderId": client_order_id}
+        return await self._request("DELETE", "/fapi/v1/order", params, signed=True)
+
+    async def change_margin_type(self, symbol: str, margin_type: str) -> None:
+        """Code -4046 means it already is; -4047/-4048: open orders or a position exist."""
+        params = {"symbol": symbol, "marginType": margin_type}
+        await self._request("POST", "/fapi/v1/marginType", params, signed=True)
+
+    async def change_leverage(self, symbol: str, leverage: int) -> dict[str, Any]:
+        params = {"symbol": symbol, "leverage": leverage}
+        return await self._request("POST", "/fapi/v1/leverage", params, signed=True)
 
     # User data stream (USER_STREAM: API key header, no signature)
 

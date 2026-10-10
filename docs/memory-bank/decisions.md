@@ -104,7 +104,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 
 ## D-16 Isolated margin, applied by the engine at startup
 
-- **Decision:** Positions use isolated margin. Margin type and leverage per symbol come from engine configuration. At startup the engine reads the account: if the symbol has no position, it applies the configured values; if a position exists under different settings, it refuses to trade and warns. The leverage values and the liquidation check are set in D-25. `check` stays read-only.
+- **Decision:** Positions use isolated margin, a code constant. Leverage per symbol comes from engine configuration. At startup the engine reads the account: if the symbol has no position, it applies the configured values; if a position exists under different settings, it refuses to trade and warns. The leverage values and the liquidation check are set in D-25. `check` stays read-only.
 - **Why:** The biggest risk in automated trading is a bug such as a missing stop or a wrong quantity. Isolated margin caps that loss at the position's margin; cross margin would put the whole balance at risk. Keeping the values in configuration means the account can't silently drift from what the engine assumes.
 - **Consequence:** Liquidation sits closer to entry than with cross margin, so before every entry the engine checks that the stop price is safely inside the liquidation price.
 - **Date:** 2026-10-03
@@ -120,6 +120,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Decision:** Every position's stop is a `STOP_MARKET` algo order with `closePosition=true`, `workingType=MARK_PRICE`, and `priceProtect` off. When a position closes by any other route, the engine cancels its leftover stop. Safety principle 5 now reads "`reduceOnly` closes and `closePosition` stops".
 - **Why:** `closePosition` closes whatever position exists when it triggers, so the stop never has to be resized when the position changes; a quantity-based `reduceOnly` stop leaves part of the position unprotected until it is updated. Mark price is what liquidation uses, so "the stop fires before liquidation" (D-16) can be checked in a single price type, and mark price ignores short wicks in the last price. `priceProtect` can block the trigger when mark and last price diverge, which is exactly when a stop matters.
 - **Trade-off:** A mark-price stop can fire later than a last-price stop when the last price moves first, so fills can be worse than the trigger price.
+- **Note:** Binance itself expires a `closePosition` stop once its position is gone (testnet, 2026-10-10), so the engine's cancel is a backstop.
 - **Date:** 2026-10-03
 
 ## D-19 Never leave a position without an exchange-side stop
@@ -133,13 +134,13 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 
 ## D-20 Unknown order outcomes are resolved by lookup, never by blind retry
 
-- **Decision:** When an order request times out, fails at the network level, or gets a 5xx, the engine waits briefly and looks the order up by its client ID (REST query plus user data stream events). Found: carry on with it. Not found: resend once with the same client ID. Still unclear: stop trading that symbol and resync positions and orders from REST, which brings D-19 into play for any position left without a stop.
+- **Decision:** When an order request times out, fails at the network level, or gets a 5xx, the engine waits briefly and looks the order up by its client ID with a REST query. Found: carry on with it. Not found: resend once with the same client ID. Still unclear: stop trading that symbol and resync positions and orders from REST, which brings D-19 into play for any position left without a stop. For a stop, D-19's check of the open algo orders does this job, because the docs give no "not found" code for algo orders.
 - **Why:** Binance enforces client-ID uniqueness only among open orders, and a market order closes the moment it fills, so blindly resending an entry can fill it twice. A 5xx means the outcome is unknown, not that the order failed.
 - **Date:** 2026-10-03
 
 ## D-21 Client order IDs encode the order's role
 
-- **Decision:** Client order IDs and `clientAlgoId`s follow `qd_<role>_<symbol>_<ms timestamp>_<seq>`, with roles `e` entry, `x` strategy exit, `s` stop, `k` kill switch — e.g. `qd_s_BTCUSDT_1759480000123_01` (29 of the 36 allowed characters). A retry reuses the original ID.
+- **Decision:** Client order IDs and `clientAlgoId`s follow `qd_<role>_<symbol>_<ms timestamp>_<seq>`, with roles `e` entry, `x` exit (strategy exits, and closes after a failed stop), `s` stop, `k` kill switch — e.g. `qd_s_BTCUSDT_1759480000123_01` (29 of the 36 allowed characters). A retry reuses the original ID.
 - **Why:** After a restart the engine can tell what each open order is for from the exchange alone (D-06), logs read clearly, and reusing the ID on retry is what makes D-20's lookup possible. Random IDs would need a local record to recover each order's role.
 - **Date:** 2026-10-03
 
@@ -148,6 +149,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Decision:** Quantity = risk amount ÷ |entry price − stop price|, where the risk amount is a configured fraction of the day's base balance (D-23). Strategies supply a stop price with every entry signal. The quantity is rounded down to `stepSize`, an entry below `MIN_NOTIONAL` is skipped, and the daily-limit entry gate (D-24) and the position caps (D-25) trim it further.
 - **Why:** Each stop-out then loses about the same amount, so the daily loss limit and kill switch can be reasoned about as a number of stop-outs. Every entry needs a stop anyway (D-19), so asking the strategy for it costs nothing. Rounding down keeps the risk at or below the configured amount.
 - **Caveat:** Realized losses can exceed the risk amount through stop slippage, mark-price trigger lag (D-18), and fees.
+- **Note:** The entry price is estimated with the mark price, which Binance also uses for a market order's `MIN_NOTIONAL` check. A symbol takes one entry per position; adding to an open position is out of scope for now.
 - **Date:** 2026-10-03
 
 ## D-23 One base balance per UTC day; risk per trade is a fraction of it
@@ -198,7 +200,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 
 ## D-28 Strategy and risk settings in `engine/config.toml`, bounded by code constants
 
-- **Decision:** `.env` keeps secrets and environment settings (keys, network, log level). Strategy and risk settings — per-symbol margin type and leverage, the risk fraction, the daily loss limit, the position cap — go in `engine/config.toml`, read with the stdlib `tomllib` by `quantdeck_engine.config` at startup. The real file is gitignored; `engine/config.example.toml` is committed with the same keys. Code constants bound each risk value (for example risk fraction ≤ 2%, daily limit ≤ 10%, leverage ≤ 10×); a missing or out-of-bounds value stops the engine.
+- **Decision:** `.env` keeps secrets and environment settings (keys, network, log level). Strategy and risk settings — per-symbol leverage, the risk fraction, the daily loss limit, the position cap — go in `engine/config.toml`, read with the stdlib `tomllib` by `quantdeck_engine.config` at startup. The real file is gitignored; `engine/config.example.toml` is committed with the same keys. Code constants bound each risk value (risk fraction ≤ 2%, daily limit ≤ 10%, position cap ≤ 5× the base, leverage ≤ 10×); a missing, misspelled, or out-of-bounds value stops the engine. Margin type isn't a setting: it has one allowed value (D-16).
 - **Why:** Per-symbol tables (D-15, D-16) are awkward as environment variables, and `tomllib` adds no dependency. Keeping the real file out of git keeps the user's values out of the public repo, as with `.env`. The bounds catch typos such as `1` for `0.01`, the same way an invalid `BINANCE_TESTNET` already stops the engine; raising one takes a code change.
 - **Alternatives:** More `.env` variables; SQLite edited from the GUI (premature without a GUI).
 - **Date:** 2026-10-10

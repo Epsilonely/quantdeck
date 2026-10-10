@@ -49,6 +49,7 @@ These apply to all code in this repo. If a task would break one, stop and ask th
 - Prices, quantities, balances, and PnL are `Decimal`, never `float`. Binance sends them as strings; parse them with `Decimal(str_value)`. Float rounding breaks tick/step-size checks and order sizing.
 - Log request paths, never full URLs: a signed query string carries the signature, and user data stream URLs carry the `listenKey`. For the same reason the `httpx`, `httpcore`, and `websockets` loggers stay at WARNING even when the engine logs at DEBUG.
 - Never print, log, or commit values from `.env`. `.env.example` lists the variable names; when adding a variable, add it there too with an empty value.
+- Strategy and risk settings go in `engine/config.toml` (gitignored), not `.env` (D-28). When adding one, add it to `engine/config.example.toml` too, and give a risk value a hard bound in `config.py`.
 - For Binance API details, check `docs/memory-bank/binanceNotes.md` and the official docs instead of relying on memory — the API changes.
 - Talk to the user in their language (usually Korean). This doesn't change the English-only rule for the memory bank.
 - Track work as GitHub issues (`gh`). Write issue titles and bodies in Korean, keeping code identifiers, API names, and paths verbatim. The repo is public: never put balances, keys, or raw log contents in an issue.
@@ -70,6 +71,7 @@ Engine — run in `engine/`:
 - `uv run ruff check .` — lint
 - `uv run ruff format .` — format
 - `uv run quantdeck-engine check` — read-only connection check against the configured network (places no orders)
+- `uv run quantdeck-engine trial` — TESTNET ONLY, places orders: entry → stop → emergency stop → close, once. Needs `engine/config.toml` and a flat symbol; refuses mainnet. Ask the user before running it
 - `uv add <pkg>` / `uv add --dev <pkg>` — add a dependency (updates `uv.lock`; commit both files)
 
 Bot: not implemented yet.
