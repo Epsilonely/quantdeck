@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { CommandName, CommandResult } from '../../shared/engine'
 import LogView from './components/LogView'
 import SymbolTable from './components/SymbolTable'
+import ThemeSwitch from './components/ThemeSwitch'
 import { clock, dateTime, isNegative, isZero, riskDayStart } from './format'
 import { useEngine } from './useEngine'
 
@@ -65,6 +66,7 @@ function App(): React.JSX.Element {
         )}
         <span className={`tag ${statusClass}`}>{statusText}</span>
         <span className="spacer" />
+        <ThemeSwitch />
         {connected ? (
           <button disabled={busy !== null} onClick={() => run('stop_engine')}>
             {busy === 'stop_engine' ? '정지 중…' : '엔진 정지'}

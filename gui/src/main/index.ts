@@ -1,9 +1,10 @@
-import { app, shell, BrowserWindow, dialog, ipcMain } from 'electron'
+import { app, shell, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { EngineClient } from './engine-client'
 import { EngineLauncher } from './engine-launcher'
+import { isThemeSource, loadTheme, setTheme, themeBackground } from './theme'
 import {
   COMMAND_NAMES,
   type CommandName,
@@ -72,6 +73,7 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     title: 'QuantDeck',
+    backgroundColor: themeBackground(),
     ...(process.platform === 'linux' ? { icon } : {}),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
@@ -133,6 +135,16 @@ app.whenReady().then(() => {
     })
     if (response !== 0) return null
     return engine.command(name as CommandName)
+  })
+
+  loadTheme()
+  ipcMain.handle('theme:get', () => nativeTheme.themeSource)
+  ipcMain.handle('theme:set', (event, source: unknown) => {
+    if (BrowserWindow.fromWebContents(event.sender) && isThemeSource(source)) setTheme(source)
+  })
+  // Fires for the user's choice and, under 'system', for a change of the Windows app mode.
+  nativeTheme.on('updated', () => {
+    for (const window of BrowserWindow.getAllWindows()) window.setBackgroundColor(themeBackground())
   })
 
   engine.start()

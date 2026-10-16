@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
 import type { EngineApi } from '../shared/engine'
+import type { ThemeApi } from '../shared/theme'
 
 // Only these calls reach the main process. The renderer gets no general ipcRenderer access, and
 // never the engine's token or connection file (D-32).
@@ -21,4 +22,9 @@ const engine: EngineApi = {
   onLaunch: (listener) => subscribe('engine:launch', listener)
 }
 
-contextBridge.exposeInMainWorld('api', { engine })
+const theme: ThemeApi = {
+  get: () => ipcRenderer.invoke('theme:get'),
+  set: (source) => ipcRenderer.invoke('theme:set', source)
+}
+
+contextBridge.exposeInMainWorld('api', { engine, theme })
