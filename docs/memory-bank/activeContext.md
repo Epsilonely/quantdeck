@@ -7,7 +7,8 @@ _Last updated: 2026-10-16_
 The engine ↔ GUI WebSocket connection (GitHub issue #5), the next roadmap item. Its design was settled on 2026-10-16:
 
 - `quantdeck-engine run`, a long-running engine with no strategy yet (D-31). Done, including the client WebSocket server (D-32, D-33; message shapes in `techContext.md`). It is testnet-only for now.
-- What's left on the issue: the GUI main-process client and IPC, and trying `emergency_close` on testnet (planned from the GUI). Ctrl+C was checked on 2026-10-16.
+- The GUI side is done (2026-10-16): the main-process client with reconnects, preload IPC, and one screen with the state, logs, and the two commands. Tested against `run` on testnet; see `progress.md`.
+- What's left on the issue: trying emergency close from the GUI on testnet, which fires the real kill switch and writes the halt record, then lifting the halt from the GUI. Both need the user's OK. When they pass, close #5 and check off the roadmap item.
 - Connection and authentication: `127.0.0.1`, an OS-assigned port and per-start token in a connection file, browser `Origin`s refused, the GUI connecting from its main process (D-32).
 - Messages: the whole state on every change, recent and live logs, and two commands, emergency close (the kill switch) and lifting the halt (D-33).
 
@@ -25,7 +26,8 @@ Roughly in the order they're needed:
 
 ## Next steps
 
-1. Continue issue #5 with the GUI: the Electron main process reads the connection file, connects with Node's built-in `WebSocket` (check that Electron's Node also sends no `Origin`), reconnects, and relays state, logs, and the two commands to the renderer over preload IPC; a minimal screen shows the connection and the state.
-2. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
-3. Backfill klines missed during stream reconnects (see Known issues in `progress.md`). A GitHub issue for this was drafted but the user put filing it on hold (2026-10-03).
-4. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet.
+1. Finish issue #5: with the user's OK, fire emergency close from the GUI on testnet (ideally with a small position open, so a real close and bulk cancel happen; see To verify in `binanceNotes.md`), then lift the halt from the GUI.
+2. The rest of the GUI roadmap item: start/stop (what it means without a strategy is open), and how a packaged GUI finds the connection file (`techContext.md`, GUI notes).
+3. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
+4. Backfill klines missed during stream reconnects (see Known issues in `progress.md`). A GitHub issue for this was drafted but the user put filing it on hold (2026-10-03).
+5. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet.

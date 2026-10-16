@@ -6,13 +6,13 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 
 | Component | Technology | Status |
 |---|---|---|
-| GUI | Electron, React, TypeScript, electron-vite, electron-builder | Scaffolded (template) |
+| GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the two commands |
 | Charts | lightweight-charts | Planned, not installed |
 | Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch, `run` without a strategy (D-31) serving clients (D-32, D-33) |
 | Binance client | In-house, asyncio on httpx + websockets (D-10) | REST including orders and algo orders, kline stream, user data stream |
 | Discord bot | Undecided | Not started |
 | Storage | SQLite (trades, orders, logs), Parquet (historical candles) | Planned; diagnostic logs go to files (D-12), and the kill-switch halt record is `engine/state/halt.json` (D-29) |
-| Engine ↔ clients | WebSocket on `127.0.0.1`, token from a connection file (D-32) | Engine server done; GUI client not started |
+| Engine ↔ clients | WebSocket on `127.0.0.1`, token from a connection file (D-32) | Engine server and GUI client done |
 | Exchange | Binance USDⓈ-M Futures, HMAC keys (D-11) | Testnet; orders placed only by `trial` so far |
 
 ## Requirements
@@ -54,7 +54,7 @@ Defined in the root `.env` (gitignored); names are listed in `.env.example`. Nev
 
 Decided in D-32 (connection and authentication) and D-33 (messages and commands). The engine side is implemented (protocol 1); the GUI client isn't yet.
 
-**Connecting.** While `run` is serving, `engine/state/connection.json` holds `{"protocol": 1, "port": <int>, "token": "<string>"}`. The port and token change at every start; re-read the file before each reconnect. The server listens on `127.0.0.1` only and refuses any handshake that carries an `Origin` header (HTTP 403). Node's built-in `WebSocket` sends none (checked with Node 24, 2026-10-16).
+**Connecting.** While `run` is serving, `engine/state/connection.json` holds `{"protocol": 1, "port": <int>, "token": "<string>"}`. The port and token change at every start; re-read the file before each reconnect. The server listens on `127.0.0.1` only and refuses any handshake that carries an `Origin` header (HTTP 403). Node's built-in `WebSocket` sends none (checked with Node 24 and Electron 39's main process, 2026-10-16).
 
 Every message is a JSON object with a `type`. Amounts are strings in fixed-point notation (never `1E+3`); times are ISO 8601 UTC.
 
@@ -90,3 +90,9 @@ A client whose unsent messages pile up past 1000 is disconnected.
 ## GUI notes
 
 - `BrowserWindow` is created with `sandbox: false` (the electron-vite template default). Revisit when hardening the GUI.
+- The main process finds the connection file relative to the app path, which works only when run from source (`npm run dev`). A packaged app needs another way to find `engine/state/`.
+- The preload script exposes only `window.api.engine` (snapshot, the two commands, and status/state/logs listeners); the template's general `window.electron` IPC access was removed. The main process accepts only the two command names and asks for confirmation in a native dialog before sending either.
+- Electron 39's built-in `WebSocket` (main process, checked 2026-10-16) differs from Node 24's:
+  - A refused connection fires `error` and never `close`, so the client treats either event as the end of the connection.
+  - `close()` on a socket that is still connecting fires `error` again synchronously; calling `close()` from the `error` handler recursed until the stack overflowed and stalled the main process. Close only a socket whose `readyState` is `OPEN`.
+  - The engine's 1008 refusal (wrong token) arrives as `close` with code 1008 and no `error`.
