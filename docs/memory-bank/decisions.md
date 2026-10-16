@@ -81,6 +81,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Decision:** The engine logs to the console and to text files in `engine/logs/`. Rolling over (size limit or a new UTC date) always opens a new file with a higher index or a new start time; a written file is never renamed. Details are in `techContext.md` (Engine logs).
 - **Why:** The stdlib `RotatingFileHandler` and `TimedRotatingFileHandler` roll over by renaming the active file, and on Windows a rename fails while another program (an editor, a log viewer) has the file open. Start-time names also make it easy to find what happened on a given day. The user chose the name format, including index `000` on the first file.
 - **Relation to D-04:** These are diagnostic logs. SQLite remains the plan for trade and order records; whether log lines also go to SQLite is decided with the GUI log view.
+- **Note (2026-10-16):** At the user's request, log timestamps, file names, and the date rollover use the machine's local time zone (KST on the development machine), and every timestamp carries its UTC offset, e.g. `2026-10-16T16:41:50.908+09:00`. The user reads logs in Korean time, Binance's web pages show local time, and the API's times are epoch milliseconds with no zone. Files written before the change are named and stamped in UTC. The risk day stays at 00:00 UTC (D-23), and the client protocol keeps UTC times (D-33); the GUI shows them in local time.
 - **Date:** 2026-10-03
 
 ## D-13 User data stream: fresh listenKey per connection, never deleted, resync after every connect
@@ -157,6 +158,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Decision:** Risk limits are computed from the day's base balance: the wallet balance of the margin asset (USDT) at 00:00 UTC (09:00 KST), fixed until the next 00:00 UTC. Every risk-management day runs from 00:00 UTC. At startup the engine rebuilds the base from the exchange: the current wallet balance minus every income record since 00:00 UTC (income history). D-22's risk amount is a configured fraction of the base; testnet starts at 1%.
 - **Why:** One number per day keeps the arithmetic readable: daily limit ÷ risk fraction = stop-outs per day (D-24). The wallet balance doesn't swing with unrealized PnL as the margin balance does, and doesn't shrink as margin gets tied up as the available balance would once several symbols trade (D-15). The base can be rebuilt from the exchange after a restart (D-06). UTC matches the logs (D-12) and Binance timestamps, and the day turns at 09:00 KST, when the user is usually awake.
 - **Alternatives:** The current wallet, margin, or available balance; days starting at 00:00 KST.
+- **Note (2026-10-16):** The logs now use local time (D-12 note), so the reason "UTC matches the logs" no longer holds; the day still starts at 00:00 UTC, shown as 09:00 in the logs and the GUI.
 - **Date:** 2026-10-10
 
 ## D-24 Daily loss limit counts realized PnL, fees, and funding; entries are capped by the room left

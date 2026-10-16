@@ -46,8 +46,8 @@ Defined in the root `.env` (gitignored); names are listed in `.env.example`. Nev
 
 ## Engine logs
 
-- Written to the console and to `engine/logs/` (gitignored), wherever the engine is started from. Timestamps are UTC.
-- File name: `engine_<UTC start time>_<index>.log`, index from `000`. Past 10 MB the next record opens index + 1; a new UTC date opens a new start time at `000` (D-12).
+- Written to the console and to `engine/logs/` (gitignored), wherever the engine is started from. Timestamps are the machine's local time with the UTC offset, e.g. `2026-10-16T16:41:50.908+09:00` (D-12 note).
+- File name: `engine_<local start time>_<index>.log`, index from `000`. Past 10 MB the next record opens index + 1; a new local date opens a new start time at `000` (D-12).
 - Files last written more than 30 days ago are deleted at startup.
 
 ## Engine ↔ GUI / bot protocol
@@ -56,7 +56,7 @@ Decided in D-32 (connection and authentication) and D-33 (messages and commands)
 
 **Connecting.** While `run` is serving, `engine/state/connection.json` holds `{"protocol": 1, "port": <int>, "token": "<string>"}`. The port and token change at every start; re-read the file before each reconnect. The server listens on `127.0.0.1` only and refuses any handshake that carries an `Origin` header (HTTP 403). Node's built-in `WebSocket` sends none (checked with Node 24 and Electron 39's main process, 2026-10-16).
 
-Every message is a JSON object with a `type`. Amounts are strings in fixed-point notation (never `1E+3`); times are ISO 8601 UTC.
+Every message is a JSON object with a `type`. Amounts are strings in fixed-point notation (never `1E+3`); times are ISO 8601 UTC. The GUI shows them in local time.
 
 | Direction | `type` | Fields |
 |---|---|---|
