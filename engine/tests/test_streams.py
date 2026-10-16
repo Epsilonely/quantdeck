@@ -4,7 +4,13 @@ from decimal import Decimal
 
 from websockets.asyncio.server import ServerConnection, serve
 
-from quantdeck_engine.binance.streams import kline_stream, kline_stream_url, parse_kline
+from quantdeck_engine.binance.streams import (
+    kline_stream,
+    kline_stream_url,
+    mark_price_stream_url,
+    parse_kline,
+    parse_mark_price,
+)
 from quantdeck_engine.config import MAINNET, TESTNET
 
 SAMPLE = {
@@ -86,3 +92,35 @@ async def test_kline_stream_reconnects_after_server_closes() -> None:
 
     assert len(received) == 3
     assert connections == 3
+
+
+MARK_PRICE = {
+    "stream": "btcusdt@markPrice@1s",
+    "data": {
+        "e": "markPriceUpdate",
+        "E": 1562305380000,
+        "s": "BTCUSDT",
+        "p": "11794.15000000",
+        "i": "11784.62659091",
+        "P": "11784.25641265",
+        "r": "0.00038167",
+        "T": 1562306400000,
+    },
+}
+
+
+def test_mark_price_url_combines_symbols_on_the_market_route() -> None:
+    assert (
+        mark_price_stream_url(TESTNET.ws, ["BTCUSDT", "ETHUSDT"])
+        == "wss://demo-fstream.binance.com/market/stream?streams="
+        "btcusdt@markPrice@1s/ethusdt@markPrice@1s"
+    )
+
+
+def test_parse_mark_price() -> None:
+    update = parse_mark_price(json.dumps(MARK_PRICE))
+    assert (update.symbol, update.price, update.event_time) == (
+        "BTCUSDT",
+        Decimal("11794.15000000"),
+        1562305380000,
+    )

@@ -10,7 +10,7 @@ from quantdeck_engine.trading.balance import BaseBalance
 from quantdeck_engine.trading.executor import SymbolTrader, TradingHalted
 from quantdeck_engine.trading.halt import HaltRecord, HaltStore
 from quantdeck_engine.trading.order_ids import ClientIdFactory, Role, parse_client_id
-from quantdeck_engine.trading.risk import KILL_ATTEMPTS, RiskGuard, loss_from_income
+from quantdeck_engine.trading.risk import KILL_ATTEMPTS, LiftRefused, RiskGuard, loss_from_income
 from quantdeck_engine.trading.rules import Side
 
 D = Decimal
@@ -257,3 +257,46 @@ async def test_start_below_the_limit_is_not_halted(store: HaltStore) -> None:
     guard = make(FakeExchange(), store)[0]
     await guard.start()
     assert not guard.halted and store.load() is None
+
+
+# Lifting the halt (D-27, D-33)
+
+
+async def test_lift_clears_the_halt_and_the_record(
+    store: HaltStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    exchange = FakeExchange()
+    guard, trader = make(exchange, store)
+    await guard.trip("by hand")
+    assert guard.halted_at and store.load() is not None
+    with caplog.at_level(logging.WARNING):
+        assert await guard.lift() is True
+    assert not guard.halted and guard.halted_at is None
+    assert store.load() is None
+    assert "halt lifted by the user" in caplog.text
+    assert await trader.open_position(Side.LONG, D(59400)) is not None
+
+
+async def test_lift_without_a_halt_does_nothing(store: HaltStore) -> None:
+    guard = make(FakeExchange(), store)[0]
+    assert await guard.lift() is False
+
+
+async def test_lift_is_refused_while_the_limit_is_reached(store: HaltStore) -> None:
+    exchange = FakeExchange()
+    lose(exchange, "150")
+    guard = make(exchange, store)[0]
+    await guard.check()
+    assert guard.halted
+    with pytest.raises(LiftRefused, match="next UTC day"):
+        await guard.lift()
+    assert guard.halted and store.load() is not None
+
+
+async def test_lift_after_a_halt_carried_over_from_an_earlier_day(store: HaltStore) -> None:
+    store.save(HaltRecord(reason="fired yesterday", halted_at="2026-10-15T20:00:00+00:00"))
+    guard = make(FakeExchange(), store)[0]
+    await guard.start()
+    assert guard.halted_at == "2026-10-15T20:00:00+00:00"
+    assert await guard.lift() is True
+    assert store.load() is None

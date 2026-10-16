@@ -52,6 +52,13 @@ Source: [Connect](https://developers.binance.com/docs/derivatives/usds-margined-
 - Max 1024 streams per connection.
 - Observed on testnet (2026-10-03): when the client closes a stream, the close handshake completes (code 1000) but `websockets` still waits 5–7 s before the connection is gone, up to its `close_timeout` (default 10 s). With `close_timeout=2` the close took 2 s.
 
+### Mark price stream (2026-10-16)
+
+Source: testnet response
+
+- `<symbol>@markPrice@1s` works on the `/market` route as a combined stream: `wss://demo-fstream.binance.com/market/stream?streams=btcusdt@markPrice@1s` delivered one update a second.
+- Combined-stream messages wrap the payload as `{"stream": ..., "data": {...}}`. The engine reads `data.s` (symbol), `data.p` (mark price, a string), and `data.E` (event time, ms); the other fields are unchecked.
+
 ### Signed requests (2026-10-02)
 
 Source: [General Info](https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info), testnet response

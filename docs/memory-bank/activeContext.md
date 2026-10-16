@@ -6,7 +6,8 @@ _Last updated: 2026-10-16_
 
 The engine ↔ GUI WebSocket connection (GitHub issue #5), the next roadmap item. Its design was settled on 2026-10-16:
 
-- `quantdeck-engine run`, a long-running engine with no strategy yet (D-31). Done except the WebSocket server: startup checks, the user data stream, the risk guard's checks at the points D-30 lists, and the single-process lock. It is testnet-only for now.
+- `quantdeck-engine run`, a long-running engine with no strategy yet (D-31). Done, including the client WebSocket server (D-32, D-33; message shapes in `techContext.md`). It is testnet-only for now.
+- What's left on the issue: the GUI main-process client and IPC, and trying `emergency_close` and Ctrl+C on testnet.
 - Connection and authentication: `127.0.0.1`, an OS-assigned port and per-start token in a connection file, browser `Origin`s refused, the GUI connecting from its main process (D-32).
 - Messages: the whole state on every change, recent and live logs, and two commands, emergency close (the kill switch) and lifting the halt (D-33).
 
@@ -24,7 +25,7 @@ Roughly in the order they're needed:
 
 ## Next steps
 
-1. Continue issue #5: the engine's WebSocket server (D-32, D-33: connection file, token, state and log messages, the two commands, the mark price stream for display), then the GUI main-process client and IPC.
+1. Continue issue #5 with the GUI: the Electron main process reads the connection file, connects with Node's built-in `WebSocket` (check that Electron's Node also sends no `Origin`), reconnects, and relays state, logs, and the two commands to the renderer over preload IPC; a minimal screen shows the connection and the state.
 2. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
 3. Backfill klines missed during stream reconnects (see Known issues in `progress.md`). A GitHub issue for this was drafted but the user put filing it on hold (2026-10-03).
 4. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet.

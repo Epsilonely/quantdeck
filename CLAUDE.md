@@ -71,7 +71,7 @@ Engine — run in `engine/`:
 - `uv run pytest` — tests
 - `uv run ruff check .` — lint
 - `uv run ruff format .` — format
-- `uv run quantdeck-engine run` — TESTNET ONLY: the long-running engine until Ctrl+C (D-31). No strategy yet, so no entries; it adopts and protects positions and fires the kill switch at the daily limit. Only one `run` (or `trial`) at a time
+- `uv run quantdeck-engine run` — TESTNET ONLY: the long-running engine until Ctrl+C (D-31). No strategy yet, so no entries; it adopts and protects positions, fires the kill switch at the daily limit, and serves the GUI over WebSocket (D-32, D-33). Only one `run` (or `trial`) at a time
 - `uv run quantdeck-engine check` — read-only connection check against the configured network (places no orders)
 - `uv run quantdeck-engine trial` — TESTNET ONLY, places orders: entry → stop → emergency stop → close, then a second entry closed by the kill switch, once. Its halt record goes to a temporary directory. Needs `engine/config.toml` and a flat symbol; refuses mainnet and a halted engine. Ask the user before running it
 - `uv run quantdeck-engine lift-halt` — lift the kill switch's halt by deleting `engine/state/halt.json` (D-29). Only the user decides to lift a halt: never run it on your own

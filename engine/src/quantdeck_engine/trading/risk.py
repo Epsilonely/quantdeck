@@ -68,6 +68,10 @@ KILL_ATTEMPTS = 3
 KILL_RETRY_DELAY = 2.0  # seconds
 
 
+class LiftRefused(Exception):
+    """The halt can't be lifted now: today's loss is still at the limit (D-27)."""
+
+
 def loss_from_income(incomes: Iterable[dict[str, Any]], asset: str) -> Decimal:
     """Today's loss: the net of the counted records for `asset`, negated (D-24).
 
@@ -127,6 +131,7 @@ class RiskGuard:
         self._recorded = False
         self._unknown_types: set[str] = set()
         self.halt_reason: str | None = None
+        self.halted_at: str | None = None  # ISO 8601 UTC, when known
 
     def attach(self, traders: Sequence[SymbolTrader]) -> None:
         """The traders the kill switch flattens. Each trader takes the guard as its gate, so
@@ -149,6 +154,7 @@ class RiskGuard:
             return
         self._recorded = True
         self.halt_reason = record.reason
+        self.halted_at = record.halted_at or None
         logger.error(
             "Starting halted: the kill switch fired at %s (%s). "
             "Lift it with `quantdeck-engine lift-halt` (D-27).",
@@ -205,20 +211,49 @@ class RiskGuard:
         async with self._kill_lock:
             if self.halt_reason is None:
                 self.halt_reason = reason
+                self.halted_at = datetime.fromtimestamp(self._clock(), UTC).isoformat(
+                    timespec="seconds"
+                )
             logger.error(
                 "KILL SWITCH: %s. Closing every position and cancelling every order; "
                 "trading stays halted until `quantdeck-engine lift-halt` (D-27).",
                 reason,
             )
-            self._record(reason)
+            self._record()
             return await self._flatten()
 
-    def _record(self, reason: str) -> None:
-        if self._recorded:
+    async def lift(self) -> bool:
+        """Lift the halt at the user's request (D-27, D-33): delete the record and resume.
+
+        Returns False if there was no halt. Raises `LiftRefused` while today's loss is at the
+        limit, since the next check would fire the kill switch again at once, and OSError if
+        the record can't be deleted (the engine then stays halted).
+        """
+        async with self._kill_lock:
+            if not self.halted:
+                return False
+            daily = await self.daily_loss()
+            if daily.reached:
+                raise LiftRefused(
+                    f"{daily.describe(self._base.asset)}: the limit is still reached, so the "
+                    "halt can be lifted from the next UTC day (D-27)"
+                )
+            self._store.clear()
+            logger.warning(
+                "Kill-switch halt lifted by the user (fired at %s: %s)",
+                self.halted_at or "an unknown time",
+                self.halt_reason,
+            )
+            self.halt_reason = None
+            self.halted_at = None
+            self._recorded = False
+            return True
+
+    def _record(self) -> None:
+        if self._recorded or self.halt_reason is None:
             return
-        halted_at = datetime.fromtimestamp(self._clock(), UTC).isoformat(timespec="seconds")
         try:
-            self._store.save(HaltRecord(reason=reason, halted_at=halted_at))
+            self._store.save(HaltRecord(reason=self.halt_reason, halted_at=self.halted_at or ""))
         except OSError as e:
             # Never let the record block the close (D-29).
             logger.critical(

@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 from collections.abc import Callable
 from decimal import Decimal
@@ -12,10 +13,17 @@ from test_executor import TRADING, open_long
 from quantdeck_engine.binance.user_stream import AccountUpdate, UserStreamConnected
 from quantdeck_engine.config import SymbolConfig, TradingConfig, parse_settings
 from quantdeck_engine.lock import EngineAlreadyRunning, InstanceLock
-from quantdeck_engine.run import Engine, RiskChecker, RunFailed, run_engine, start_engine
+from quantdeck_engine.run import (
+    Engine,
+    RiskChecker,
+    RunFailed,
+    _text,
+    run_engine,
+    start_engine,
+)
 from quantdeck_engine.trading.halt import HaltRecord, HaltStore
 from quantdeck_engine.trading.risk import DailyLoss
-from quantdeck_engine.trading.state import PositionClosed
+from quantdeck_engine.trading.state import PositionClosed, resync
 
 D = Decimal
 
@@ -200,3 +208,63 @@ async def test_checker_keeps_running_after_a_failed_check(
         assert "Risk check failed (down)" in caplog.text
     finally:
         task.cancel()
+
+
+# What clients see and send (D-33)
+
+
+async def test_snapshot_of_a_protected_position(store: HaltStore) -> None:
+    exchange = FakeExchange()
+    open_long(exchange)  # 0.083 at 60000
+    exchange.add_stop("SELL", "59400")
+    client = exchange.client()
+    engine = await start_engine(client, SETTINGS, TRADING, store)
+    await resync(client, engine.state)
+    engine.mark_prices["BTCUSDT"] = D("60100.5")
+
+    snapshot = engine.snapshot()
+    json.dumps(snapshot)  # JSON-ready as it is
+    assert snapshot["network"] == "testnet"
+    assert snapshot["halt"] == {"halted": False, "reason": None, "since": None}
+    assert snapshot["daily_loss"] is None  # until the first check
+    assert snapshot["balances"] == {"USDT": "5000"}
+    (symbol,) = snapshot["symbols"]
+    assert symbol["symbol"] == "BTCUSDT" and symbol["halted"] is None
+    assert symbol["mark_price"] == "60100.5"
+    assert symbol["position"] == {
+        "amount": "0.083",
+        "entry_price": "60000",
+        "unrealized_pnl": "8.3415",
+    }
+    assert symbol["orders"] == []
+    assert [(s["side"], s["trigger_price"], s["close_position"]) for s in symbol["stops"]] == [
+        ("SELL", "59400", True)
+    ]
+
+    engine.checker.latest = await engine.guard.check()
+    assert engine.snapshot()["daily_loss"] == {
+        "asset": "USDT",
+        "base": "5000",
+        "loss": "0",
+        "limit": "150",
+    }
+
+
+def test_amounts_are_never_in_exponent_notation() -> None:
+    assert _text(D("0E-8")) == "0.00000000"
+    assert _text(D("1E+3")) == "1000"
+
+
+async def test_emergency_close_halts_and_shows_in_the_snapshot(store: HaltStore) -> None:
+    exchange = FakeExchange()
+    open_long(exchange)
+    exchange.add_stop("SELL", "59400")
+    engine = await start_engine(exchange.client(), SETTINGS, TRADING, store)
+    assert await engine.emergency_close() is True
+    assert exchange.position_amount == 0
+    halt = engine.snapshot()["halt"]
+    assert halt["halted"] is True
+    assert "emergency close requested by the user" in halt["reason"]
+    assert halt["since"]
+    assert await engine.lift_halt() is True
+    assert engine.snapshot()["halt"]["halted"] is False

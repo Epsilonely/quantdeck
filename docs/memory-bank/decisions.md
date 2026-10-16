@@ -263,5 +263,10 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
     - Lifting the halt does what `quantdeck-engine lift-halt` does and also lifts the halt in the running engine at once. The CLI command stays. On the same UTC day the entry gate still blocks entries while today's loss is at the limit (D-27).
 - **Why:** With one symbol the state is small. Sending all of it means a client never rebuilds state from deltas, so reconnects and missed messages can't leave it out of step, the same reasoning as resyncing from the exchange (D-06, D-13). Keeping recent logs in memory lets the GUI show context without deciding whether logs go in SQLite (D-04, D-12). One emergency command that also halts avoids a second close path with its own rules.
 - **Alternatives:** An initial snapshot followed by delta events; pausing and resuming entries (no effect without a strategy, so it waits for one).
+- **Note (2026-10-16, implementation):**
+  - The engine builds the state every 0.25 s and sends it when it differs from the last one sent, so no change source needs its own hook. With the mark price updating each second, a client gets about one state message a second.
+  - Lifting the halt is refused while today's loss is still at the limit: the next risk check would fire the kill switch again within a minute. The CLI `lift-halt` has no exchange access and doesn't check.
+  - The client server's failures are logged and don't stop the engine; it keeps protecting positions without clients.
+  - Message shapes are in `techContext.md`.
 - **Date:** 2026-10-16
 

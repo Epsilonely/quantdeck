@@ -8,11 +8,11 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 |---|---|---|
 | GUI | Electron, React, TypeScript, electron-vite, electron-builder | Scaffolded (template) |
 | Charts | lightweight-charts | Planned, not installed |
-| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch, `run` without a strategy (D-31) |
+| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch, `run` without a strategy (D-31) serving clients (D-32, D-33) |
 | Binance client | In-house, asyncio on httpx + websockets (D-10) | REST including orders and algo orders, kline stream, user data stream |
 | Discord bot | Undecided | Not started |
 | Storage | SQLite (trades, orders, logs), Parquet (historical candles) | Planned; diagnostic logs go to files (D-12), and the kill-switch halt record is `engine/state/halt.json` (D-29) |
-| Engine ↔ clients | WebSocket on `127.0.0.1`, token from a connection file (D-32) | Designed, not implemented |
+| Engine ↔ clients | WebSocket on `127.0.0.1`, token from a connection file (D-32) | Engine server done; GUI client not started |
 | Exchange | Binance USDⓈ-M Futures, HMAC keys (D-11) | Testnet; orders placed only by `trial` so far |
 
 ## Requirements
@@ -52,7 +52,40 @@ Defined in the root `.env` (gitignored); names are listed in `.env.example`. Nev
 
 ## Engine ↔ GUI / bot protocol
 
-Decided in D-32 (connection and authentication) and D-33 (messages and commands); not implemented yet. Record the message types, their direction, and payload shapes here as they are implemented.
+Decided in D-32 (connection and authentication) and D-33 (messages and commands). The engine side is implemented (protocol 1); the GUI client isn't yet.
+
+**Connecting.** While `run` is serving, `engine/state/connection.json` holds `{"protocol": 1, "port": <int>, "token": "<string>"}`. The port and token change at every start; re-read the file before each reconnect. The server listens on `127.0.0.1` only and refuses any handshake that carries an `Origin` header (HTTP 403). Node's built-in `WebSocket` sends none (checked with Node 24, 2026-10-16).
+
+Every message is a JSON object with a `type`. Amounts are strings in fixed-point notation (never `1E+3`); times are ISO 8601 UTC.
+
+| Direction | `type` | Fields |
+|---|---|---|
+| client → engine | `hello` | `token`. Must be the first message, within 5 s; otherwise the engine closes with code 1008 |
+| engine → client | `welcome` | `protocol` |
+| engine → client | `logs` | `records`: list of `{time, level, logger, message}`. First the backlog (up to 200, INFO and above), then each new record as it is logged |
+| engine → client | `state` | `state`: the whole state (below). Sent after `welcome`, then whenever it changes (checked every 0.25 s) |
+| client → engine | `command` | `id` (any JSON value, echoed back), `name`: `emergency_close` or `lift_halt` |
+| engine → client | `result` | `id`, `ok` (bool), `message` (text for the user) |
+
+After `hello` the first three messages are `welcome`, `logs`, `state`, in that order.
+
+**State.**
+
+```
+network      "testnet" | "mainnet"
+halt         {halted: bool, reason: str | null, since: str | null}
+daily_loss   null until the first check, then {asset, base, loss, limit}
+balances     {asset: wallet balance}, nonzero only
+symbols      [{symbol, halted: str | null (this symbol's own halt, D-19/D-20),
+               mark_price: str | null,
+               position: null | {amount (negative = short), entry_price, unrealized_pnl: str | null},
+               orders: [{client_id, side, type, quantity, reduce_only}],
+               stops:  [{client_algo_id, side, type, trigger_price, close_position}]}]
+```
+
+**Commands.** `emergency_close` fires the kill switch (D-27); `ok` is false if a symbol couldn't be flattened. `lift_halt` answers `ok: true` with "halt lifted" or "not halted", and `ok: false` while today's loss is still at the limit.
+
+A client whose unsent messages pile up past 1000 is disconnected.
 
 ## GUI notes
 

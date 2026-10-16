@@ -1,15 +1,15 @@
 """Market data streams for Binance USDⓈ-M Futures.
 
-Streams use the routed URLs recorded in docs/memory-bank/binanceNotes.md; klines are on the
-/market route. Binance drops every connection after 24 hours at most, so streams reconnect
-forever instead of ending.
+Streams use the routed URLs recorded in docs/memory-bank/binanceNotes.md; klines and mark
+prices are on the /market route. Binance drops every connection after 24 hours at most, so
+streams reconnect forever instead of ending.
 """
 
 import json
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterable
 from dataclasses import dataclass
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
@@ -67,3 +67,44 @@ async def kline_stream(ws_root: str, symbol: str, interval: str) -> AsyncIterato
             except ConnectionClosed:
                 pass
         logger.warning("Kline stream %s closed; reconnecting", url)
+
+
+@dataclass(frozen=True)
+class MarkPrice:
+    symbol: str
+    price: Decimal
+    event_time: int  # ms
+
+
+def mark_price_stream_url(ws_root: str, symbols: Iterable[str]) -> str:
+    streams = "/".join(f"{s.lower()}@markPrice@1s" for s in symbols)
+    return f"{ws_root}/market/stream?streams={streams}"
+
+
+def parse_mark_price(message: str | bytes) -> MarkPrice:
+    """One `markPriceUpdate` from a combined stream (`{"stream": ..., "data": ...}`)."""
+    data = json.loads(message)["data"]
+    return MarkPrice(symbol=data["s"], price=Decimal(data["p"]), event_time=data["E"])
+
+
+async def mark_price_stream(ws_root: str, symbols: Iterable[str]) -> AsyncIterator[MarkPrice]:
+    """Yield each symbol's mark price once a second, forever, reconnecting as needed.
+
+    For display only: risk checks don't use the mark price (D-24). A message that can't be
+    parsed is logged and skipped. Wrap the call in `contextlib.aclosing`.
+    """
+    url = mark_price_stream_url(ws_root, symbols)
+    async for ws in connect(url):
+        async with ws:
+            logger.info("Mark price stream %s connected", url)
+            try:
+                async for message in ws:
+                    try:
+                        update = parse_mark_price(message)
+                    except (KeyError, TypeError, ValueError, InvalidOperation):
+                        logger.warning("Could not parse a mark price message: %.200s", message)
+                        continue
+                    yield update
+            except ConnectionClosed:
+                pass
+        logger.warning("Mark price stream %s closed; reconnecting", url)
