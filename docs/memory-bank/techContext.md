@@ -6,7 +6,7 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 
 | Component | Technology | Status |
 |---|---|---|
-| GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the two commands |
+| GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the commands; starts the engine when none is running (D-34) |
 | Charts | lightweight-charts | Planned, not installed |
 | Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch, `run` without a strategy (D-31) serving clients (D-32, D-33) |
 | Binance client | In-house, asyncio on httpx + websockets (D-10) | REST including orders and algo orders, kline stream, user data stream |
@@ -64,7 +64,7 @@ Every message is a JSON object with a `type`. Amounts are strings in fixed-point
 | engine → client | `welcome` | `protocol` |
 | engine → client | `logs` | `records`: list of `{time, level, logger, message}`. First the backlog (up to 200, INFO and above), then each new record as it is logged |
 | engine → client | `state` | `state`: the whole state (below). Sent after `welcome`, then whenever it changes (checked every 0.25 s) |
-| client → engine | `command` | `id` (any JSON value, echoed back), `name`: `emergency_close` or `lift_halt` |
+| client → engine | `command` | `id` (any JSON value, echoed back), `name`: `emergency_close`, `lift_halt`, or `stop_engine` |
 | engine → client | `result` | `id`, `ok` (bool), `message` (text for the user) |
 
 After `hello` the first three messages are `welcome`, `logs`, `state`, in that order.
@@ -83,15 +83,16 @@ symbols      [{symbol, halted: str | null (this symbol's own halt, D-19/D-20),
                stops:  [{client_algo_id, side, type, trigger_price, close_position}]}]
 ```
 
-**Commands.** `emergency_close` fires the kill switch (D-27); `ok` is false if a symbol couldn't be flattened. `lift_halt` answers `ok: true` with "halt lifted" or "not halted", and `ok: false` while today's loss is still at the limit.
+**Commands.** `emergency_close` fires the kill switch (D-27); `ok` is false if a symbol couldn't be flattened. `lift_halt` answers `ok: true` with "halt lifted" or "not halted", and `ok: false` while today's loss is still at the limit. `stop_engine` (D-34) answers `ok: true` once any kill switch in progress has finished; the engine then closes every connection with code 1001 and deletes the connection file. The process itself exits a few seconds later, after its Binance streams close.
 
 A client whose unsent messages pile up past 1000 is disconnected.
 
 ## GUI notes
 
 - `BrowserWindow` is created with `sandbox: false` (the electron-vite template default). Revisit when hardening the GUI.
-- The main process finds the connection file relative to the app path, which works only when run from source (`npm run dev`). A packaged app needs another way to find `engine/state/`.
-- The preload script exposes only `window.api.engine` (snapshot, the two commands, and status/state/logs listeners); the template's general `window.electron` IPC access was removed. The main process accepts only the two command names and asks for confirmation in a native dialog before sending either.
+- The main process finds `engine/` relative to the app path, which works only when run from source (`npm run dev`). A packaged app needs another way to find the connection file and the engine's virtualenv.
+- The GUI starts the engine as `engine/.venv/Scripts/pythonw.exe -m quantdeck_engine run` (D-34), so the venv must exist (`uv sync`). The engine inherits Electron's inheritable handles: started from a GUI run with `--remoteDebuggingPort`, it kept that port bound after the GUI quit, and the next GUI couldn't open its debugging port (2026-10-16). Use a different port, or stop the engine, when testing over the DevTools protocol.
+- The preload script exposes only `window.api.engine` (snapshot, the commands, starting the engine, and status/state/logs/launch listeners); the template's general `window.electron` IPC access was removed. The main process accepts only the known command names and asks for confirmation in a native dialog before sending any of them.
 - Electron 39's built-in `WebSocket` (main process, checked 2026-10-16) differs from Node 24's:
   - A refused connection fires `error` and never `close`, so the client treats either event as the end of the connection.
   - `close()` on a socket that is still connecting fires `error` again synchronously; calling `close()` from the `error` handler recursed until the stack overflowed and stalled the main process. Close only a socket whose `readyState` is `OPEN`.

@@ -240,6 +240,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - `run` refuses mainnet until the mainnet prerequisites are settled (activeContext.md).
   - The engine re-measures the clock offset hourly, since signed timestamps must stay within `recvWindow` for days.
   - Event-triggered risk checks (a position closed, `FUNDING_FEE`, a reconnect) run about 3 s after the event, because income records appeared 1.1 s after a fill (D-30). Requests close together share one check.
+- **Note (2026-10-16):** The GUI now starts `run` when none is running and stops it with a command (D-34). Running it without the GUI and restarting it after a crash are still open.
 - **Date:** 2026-10-16
 
 ## D-32 Clients connect to `127.0.0.1` with a per-start token; the GUI connects from its main process
@@ -268,5 +269,17 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - Lifting the halt is refused while today's loss is still at the limit: the next risk check would fire the kill switch again within a minute. The CLI `lift-halt` has no exchange access and doesn't check.
   - The client server's failures are logged and don't stop the engine; it keeps protecting positions without clients.
   - Message shapes are in `techContext.md`.
+- **Note (2026-10-16):** A third command, `stop_engine`, was added with D-34.
 - **Date:** 2026-10-16
 
+## D-34 The GUI starts the engine when none is running and can stop it
+
+- **Decision:**
+  - When the GUI starts, it tries to connect (D-32). If no engine answers, it starts one: the virtualenv's `pythonw` runs `python -m quantdeck_engine run` in `engine/`, hidden and detached, with no stdin, stdout, or stderr. If an engine is running, the GUI leaves it as it is. While disconnected, the screen also offers a start button.
+  - That first attempt is the only time the GUI starts the engine by itself. If the engine stops or crashes later, the user starts it again with the button. When an engine the GUI started exits with a failure, the GUI shows the exit code and the last ERROR or CRITICAL line of the engine's log file.
+  - A new client command, `stop_engine`, stops the engine as Ctrl+C does, once any kill switch in progress has finished. The GUI asks for confirmation first. While the engine is stopped, open positions keep their exchange-side stops, but nothing watches the daily loss limit.
+  - Closing the GUI never stops the engine (D-01).
+- **Why:** The user wanted opening the GUI to be enough to run the system. Starting only on the first attempt keeps an engine that crashes at startup from being restarted in a loop against Binance. `pythonw` has no console: when a detached `uv run` started Python, Windows opened a new Windows Terminal window for it (2026-10-16). A hidden engine can't receive Ctrl+C, so it needs a stop command. The instance lock (D-31) refuses a second engine, so a race between the GUI's start and another start is harmless; the loser exits, and the GUI shows why.
+- **Trade-offs:** Starting with the venv's `pythonw` skips `uv run`'s sync, so the venv must be kept up to date with `uv sync`. Output that never reaches the log file, such as an import error before logging starts, is lost.
+- **Alternatives:** A visible console window stopped with Ctrl+C; the user chose the hidden engine with a stop button. A Windows service or scheduled task, still open for running without the GUI.
+- **Date:** 2026-10-16
