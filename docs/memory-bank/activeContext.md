@@ -4,24 +4,27 @@ _Last updated: 2026-10-16_
 
 ## Current focus
 
-Risk management is done (GitHub issue #4): today's loss from income history (D-24, D-30), the entry gate, and the kill switch with its halt record (D-27, D-29); `quantdeck-engine lift-halt` lifts a halt. It passed the extended `quantdeck-engine trial` on testnet on 2026-10-16: the kill switch closed the position and had the symbol clear of orders within about 0.6 s, refused the next entry, and a restarted guard came up halted. The trial's income-delay measurement bug (income times are whole seconds; see `binanceNotes.md`) is fixed; a re-run on 2026-10-16 measured a 1.1 s delay. Work items are tracked as GitHub issues.
+The engine ↔ GUI WebSocket connection, the next roadmap item. Its design was settled on 2026-10-16 and nothing is implemented yet:
 
-There is still no trading loop, so nothing calls the guard's check on events or on a timer yet. D-30 lists the calls the loop must make.
+- `quantdeck-engine run`, a long-running engine with no strategy yet: startup checks, the user data stream, the risk guard's checks at the points D-30 lists, and the WebSocket server (D-31).
+- Connection and authentication: `127.0.0.1`, an OS-assigned port and per-start token in a connection file, browser `Origin`s refused, the GUI connecting from its main process (D-32).
+- Messages: the whole state on every change, recent and live logs, and two commands, emergency close (the kill switch) and lifting the halt (D-33).
+
+Risk management (GitHub issue #4) is done and passed `quantdeck-engine trial` on testnet; the re-run on 2026-10-16 measured a 1.1 s income-history delay (D-30). Work items are tracked as GitHub issues.
 
 ## Open questions
 
 Roughly in the order they're needed:
 
-- **Storage:** what SQLite records, whether logs go there (D-12), where historical candles come from, and how Parquet files are laid out. The halt record is settled (D-29).
-- **Engine operation:** who starts the engine (manually, the GUI, a Windows service or scheduled task) and what restarts it after a crash.
-- **Engine ↔ GUI protocol:** message types and schemas, localhost authentication, the initial state sent on connect, and which commands the GUI may send (lifting a kill-switch halt is one, D-27). Lifting is a CLI command for now; a running engine doesn't notice it until restarted.
-- **Strategy:** the first strategy (symbol, timeframe, logic) and the interface live and backtest share (D-07). Every entry signal carries a stop price (D-22); whether the strategy manages an adopted position is open (D-19); adding to an open position is out of scope for now (D-22). Backtest fill model: slippage, fees, funding.
+- **Engine operation:** running `run` as a Windows service or scheduled task, and what restarts it after a crash. For now the user starts it by hand (D-31).
+- **Storage:** what SQLite records, whether logs go there (D-12, D-33 keeps recent logs in memory for now), where historical candles come from, and how Parquet files are laid out. The halt record is settled (D-29).
+- **Strategy:** the first strategy (symbol, timeframe, logic) and the interface live and backtest share (D-07). Every entry signal carries a stop price (D-22); whether the strategy manages an adopted position is open (D-19); adding to an open position is out of scope for now (D-22). Pausing and resuming entries from the GUI waits for the strategy (D-33). Backtest fill model: slippage, fees, funding.
   - Take profit, discussed 2026-10-16 and undecided: an optional take-profit price on the entry signal, placed like the stop as a `TAKE_PROFIT_MARKET` `closePosition` algo order. `TRAILING_STOP_MARKET` can't use `closePosition` (D-18), so trailing is deferred.
-- **Later:** GUI `sandbox: false`, Discord bot stack and which alerts it sends, mainnet prerequisites (Ed25519 per D-11, IP whitelist, go-live criteria, mainnet risk values — D-23 to D-25 set testnet starting values only).
+- **Later:** GUI `sandbox: false`, Discord bot stack, which alerts it sends, and whether its commands need a narrower permission than the GUI's (safety principle 9), mainnet prerequisites (Ed25519 per D-11, IP whitelist, go-live criteria, mainnet risk values — D-23 to D-25 set testnet starting values only).
 
 ## Next steps
 
-1. Next roadmap item: the engine ↔ GUI WebSocket connection. It needs the protocol decisions under Open questions first. Open a GitHub issue for it.
-2. The income-history delay is measured (1.1 s on testnet, one sample; D-30). More samples are optional, and `trial` needs the user's OK each time since it places orders.
+1. Implement the engine ↔ GUI WebSocket connection (GitHub issue #5, D-31 to D-33): the engine side first, then the GUI main-process client and IPC.
+2. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
 3. Backfill klines missed during stream reconnects (see Known issues in `progress.md`). A GitHub issue for this was drafted but the user put filing it on hold (2026-10-03).
 4. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet.

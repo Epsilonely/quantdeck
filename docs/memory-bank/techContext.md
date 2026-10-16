@@ -12,7 +12,7 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 | Binance client | In-house, asyncio on httpx + websockets (D-10) | REST including orders and algo orders, kline stream, user data stream |
 | Discord bot | Undecided | Not started |
 | Storage | SQLite (trades, orders, logs), Parquet (historical candles) | Planned; diagnostic logs go to files (D-12), and the kill-switch halt record is `engine/state/halt.json` (D-29) |
-| Engine ↔ clients | WebSocket on localhost | Planned |
+| Engine ↔ clients | WebSocket on `127.0.0.1`, token from a connection file (D-32) | Designed, not implemented |
 | Exchange | Binance USDⓈ-M Futures, HMAC keys (D-11) | Testnet; orders placed only by `trial` so far |
 
 ## Requirements
@@ -52,7 +52,7 @@ Defined in the root `.env` (gitignored); names are listed in `.env.example`. Nev
 
 ## Engine ↔ GUI / bot protocol
 
-Not designed yet. Once defined, record the message types, their direction, and payload shapes here.
+Decided in D-32 (connection and authentication) and D-33 (messages and commands); not implemented yet. Record the message types, their direction, and payload shapes here as they are implemented.
 
 ## GUI notes
 

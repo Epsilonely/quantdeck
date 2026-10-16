@@ -228,3 +228,35 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Alternatives:** Add `rp` and `n` from `ORDER_TRADE_UPDATE` and funding from `ACCOUNT_UPDATE` as events arrive, with income history only at startup and after reconnects.
 - **Date:** 2026-10-16
 
+## D-31 `quantdeck-engine run` is the long-running engine, built before any strategy
+
+- **Decision:**
+  - `quantdeck-engine run` is the engine process. It runs the startup checks for each symbol (D-16, D-19), follows the user data stream with resyncs (D-13), runs the risk guard's checks at the points D-30 lists, and serves the WebSocket clients (D-32). It is built with the engine ↔ GUI connection, before a strategy exists, so it places no entries yet; the strategy later adds its entry logic to this loop.
+  - The user starts it by hand from a terminal for now. Running it as a service and restarting it after a crash are still open.
+  - Only one `run` process may run at a time: a second one refuses to start.
+- **Why:** The WebSocket server has to live in a long-running process, and a GUI built against a stub would meet the real engine only later. Building the loop now also puts D-30's checks in place while positions can still exist (an adopted position, a manual test). Two engine processes on one account would each act on the same positions and orders (D-14).
+- **Date:** 2026-10-16
+
+## D-32 Clients connect to `127.0.0.1` with a per-start token; the GUI connects from its main process
+
+- **Decision:**
+  - The engine's WebSocket server listens on `127.0.0.1` on a port the OS assigns. At each start the engine writes the port and a new random token to a connection file in `engine/state/` (gitignored, written like the halt record in D-29), and deletes it on a clean shutdown. A client reads the file, connects, and sends the token in its first message; a wrong or missing token closes the connection.
+  - Connections that carry an `Origin` header are refused. Browsers always send one; the GUI's main process and the bot don't.
+  - In the GUI, the Electron main process holds the connection and relays state, logs, and commands to the renderer over IPC through the preload script. The renderer never sees the token or the connection file.
+- **Why:** Any web page open in the user's browser can open a WebSocket to `127.0.0.1`, so listening only on localhost isn't enough. The token is in a file rather than `.env`, so the GUI never reads the file that holds the API keys (D-08). A new token and port on every start mean a token left over from an old run is useless, and there's no port to configure or collide. The renderer shows web content, so keeping the token out of it limits what a renderer bug could do. The token goes in the first message because Node's built-in `WebSocket` can't set request headers, and a query string can end up in logs.
+- **Alternatives:** A fixed port and token in `.env`; the renderer connecting directly.
+- **Date:** 2026-10-16
+
+## D-33 The engine sends the whole state on every change; GUI commands are the kill switch and lifting the halt
+
+- **Decision:**
+  - Messages are JSON objects with a `type`. Prices, quantities, balances, and PnL are strings, as Binance sends them, so no client parses them as floats.
+  - After a client authenticates, the engine sends the whole state, then sends the whole state again whenever it changes, with changes close together sent once. The state includes positions, open orders and stops, balances, today's loss and limit, the halt, the network, and the mark price and unrealized PnL per position. The mark price comes from a mark price stream used only for display; risk checks don't use it (D-24).
+  - Log records at INFO and above go to clients as they happen, and a client gets the most recent ones (about 200, kept in memory) when it connects.
+  - Commands carry an `id` that the engine echoes in its result. Two commands for now:
+    - Emergency close fires the kill switch (D-27), with a reason saying the user fired it. There is no separate "close and keep trading" command.
+    - Lifting the halt does what `quantdeck-engine lift-halt` does and also lifts the halt in the running engine at once. The CLI command stays. On the same UTC day the entry gate still blocks entries while today's loss is at the limit (D-27).
+- **Why:** With one symbol the state is small. Sending all of it means a client never rebuilds state from deltas, so reconnects and missed messages can't leave it out of step, the same reasoning as resyncing from the exchange (D-06, D-13). Keeping recent logs in memory lets the GUI show context without deciding whether logs go in SQLite (D-04, D-12). One emergency command that also halts avoids a second close path with its own rules.
+- **Alternatives:** An initial snapshot followed by delta events; pausing and resuming entries (no effect without a strategy, so it waits for one).
+- **Date:** 2026-10-16
+
