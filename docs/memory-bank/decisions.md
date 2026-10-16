@@ -235,6 +235,11 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - The user starts it by hand from a terminal for now. Running it as a service and restarting it after a crash are still open.
   - Only one `run` process may run at a time: a second one refuses to start.
 - **Why:** The WebSocket server has to live in a long-running process, and a GUI built against a stub would meet the real engine only later. Building the loop now also puts D-30's checks in place while positions can still exist (an adopted position, a manual test). Two engine processes on one account would each act on the same positions and orders (D-14).
+- **Note (2026-10-16, implementation):**
+  - The single-process rule is an OS file lock on `engine/state/engine.lock`, released by the OS even after a crash. `trial` takes the same lock.
+  - `run` refuses mainnet until the mainnet prerequisites are settled (activeContext.md).
+  - The engine re-measures the clock offset hourly, since signed timestamps must stay within `recvWindow` for days.
+  - Event-triggered risk checks (a position closed, `FUNDING_FEE`, a reconnect) run about 3 s after the event, because income records appeared 1.1 s after a fill (D-30). Requests close together share one check.
 - **Date:** 2026-10-16
 
 ## D-32 Clients connect to `127.0.0.1` with a per-start token; the GUI connects from its main process

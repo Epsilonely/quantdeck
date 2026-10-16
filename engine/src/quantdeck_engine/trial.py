@@ -7,8 +7,9 @@ switch fired by hand, how soon income history shows its close (D-30), and a rest
 must come up halted (D-27). The trial's halt record goes to a temporary directory, never
 `engine/state/`.
 
-Refuses to run against mainnet, while the engine is halted, and on a symbol that isn't
-flat. Don't run it while an engine is trading on the same account (D-14).
+Refuses to run against mainnet, while the engine is halted or running (D-31), and on a
+symbol that isn't flat. Don't run it while an engine on another machine trades the same
+account (D-14).
 
 Run with ENGINE_LOG_LEVEL=DEBUG to log every user data payload as received.
 """
@@ -30,6 +31,7 @@ from quantdeck_engine.binance.user_stream import (
     UserStreamConnected,
 )
 from quantdeck_engine.config import Settings, TradingConfig
+from quantdeck_engine.lock import InstanceLock
 from quantdeck_engine.trading.balance import BaseBalance, fetch_income
 from quantdeck_engine.trading.executor import SymbolTrader, TradingHalted
 from quantdeck_engine.trading.halt import HaltStore
@@ -94,7 +96,8 @@ async def run_trial(
     if (record := HaltStore().load()) is not None:
         raise TrialFailed(f"the engine is halted by the kill switch ({record.reason})")
 
-    with tempfile.TemporaryDirectory() as state_dir:
+    # The same lock as `run`, so the trial never trades beside a running engine (D-14, D-31).
+    with InstanceLock(), tempfile.TemporaryDirectory() as state_dir:
         store = HaltStore(Path(state_dir) / "halt.json")
         await _run(settings, trading, config.symbol, side, stop_percent, store)
 

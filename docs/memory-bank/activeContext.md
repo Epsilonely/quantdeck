@@ -4,9 +4,9 @@ _Last updated: 2026-10-16_
 
 ## Current focus
 
-The engine ↔ GUI WebSocket connection, the next roadmap item. Its design was settled on 2026-10-16 and nothing is implemented yet:
+The engine ↔ GUI WebSocket connection (GitHub issue #5), the next roadmap item. Its design was settled on 2026-10-16:
 
-- `quantdeck-engine run`, a long-running engine with no strategy yet: startup checks, the user data stream, the risk guard's checks at the points D-30 lists, and the WebSocket server (D-31).
+- `quantdeck-engine run`, a long-running engine with no strategy yet (D-31). Done except the WebSocket server: startup checks, the user data stream, the risk guard's checks at the points D-30 lists, and the single-process lock. It is testnet-only for now.
 - Connection and authentication: `127.0.0.1`, an OS-assigned port and per-start token in a connection file, browser `Origin`s refused, the GUI connecting from its main process (D-32).
 - Messages: the whole state on every change, recent and live logs, and two commands, emergency close (the kill switch) and lifting the halt (D-33).
 
@@ -24,7 +24,7 @@ Roughly in the order they're needed:
 
 ## Next steps
 
-1. Implement the engine ↔ GUI WebSocket connection (GitHub issue #5, D-31 to D-33): the engine side first, then the GUI main-process client and IPC.
+1. Continue issue #5: the engine's WebSocket server (D-32, D-33: connection file, token, state and log messages, the two commands, the mark price stream for display), then the GUI main-process client and IPC.
 2. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
 3. Backfill klines missed during stream reconnects (see Known issues in `progress.md`). A GitHub issue for this was drafted but the user put filing it on hold (2026-10-03).
 4. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet.

@@ -67,6 +67,8 @@ class FakeExchange:
     leverage: int = 5
     wallet: Decimal = Decimal(5000)
     available: Decimal = Decimal(5000)
+    hedge_mode: bool = False
+    margin_asset: str = "USDT"
     incomes: list[dict[str, Any]] = field(default_factory=list)
     open_orders: list[dict[str, Any]] = field(default_factory=list)
     algo_orders: list[dict[str, Any]] = field(default_factory=list)
@@ -104,6 +106,12 @@ class FakeExchange:
 
     def _route(self, key: tuple[str, str], p: dict[str, str]) -> httpx.Response:
         match key:
+            case ("GET", "/fapi/v1/time"):
+                return httpx.Response(200, json={"serverTime": 1_792_000_000_000})
+            case ("GET", "/fapi/v1/accountConfig"):
+                return httpx.Response(200, json={"dualSidePosition": self.hedge_mode})
+            case ("GET", "/fapi/v1/exchangeInfo"):
+                return httpx.Response(200, json={"symbols": [self._symbol_info()]})
             case ("GET", "/fapi/v3/positionRisk"):
                 if self.position_amount == 0:
                     return httpx.Response(200, json=[])
@@ -201,6 +209,20 @@ class FakeExchange:
         }
         self.orders[p["newClientOrderId"]] = order
         return httpx.Response(200, json=order)
+
+    def _symbol_info(self) -> dict[str, Any]:
+        """The same rules as `test_executor.RULES`."""
+        lot = {"stepSize": "0.001", "minQty": "0.001", "maxQty": "120"}
+        return {
+            "symbol": self.symbol,
+            "marginAsset": self.margin_asset,
+            "filters": [
+                {"filterType": "PRICE_FILTER", "tickSize": "0.1"},
+                {"filterType": "LOT_SIZE", **lot},
+                {"filterType": "MARKET_LOT_SIZE", **lot},
+                {"filterType": "MIN_NOTIONAL", "notional": "100"},
+            ],
+        }
 
     def _position(self) -> dict[str, Any]:
         return {
