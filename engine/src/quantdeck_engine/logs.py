@@ -1,16 +1,18 @@
 """Engine logging: the console plus rolling log files in engine/logs/.
 
-File names carry the UTC time their series started and a three-digit index, e.g.
+Times are the machine's local time with its UTC offset, e.g. `2026-10-16T16:41:50.908+09:00`
+(D-12). The risk day still starts at 00:00 UTC (D-23) whatever the log shows.
+
+File names carry the local time their series started and a three-digit index, e.g.
 `engine_2026-10-03_14-30-05_000.log`. A written file is never renamed — on Windows a rename
 fails while another program has the file open — so rolling over always opens a new file:
 
 - the next record would push the file past `max_bytes` -> same start time, index + 1
-- the UTC date changes -> that record's time, index 000
+- the local date changes -> that record's time, index 000
 """
 
 import logging
-import time
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import BinaryIO
 
@@ -24,10 +26,27 @@ FILE_PREFIX = "engine_"
 # signature included, and websockets logs its handshake requests at DEBUG.
 QUIET_LOGGERS = ("httpx", "httpcore", "websockets")
 
-FORMAT = "%(asctime)s.%(msecs)03dZ %(levelname)-7s %(name)s: %(message)s"
-DATE_FORMAT = "%Y-%m-%dT%H:%M:%S"
+FORMAT = "%(asctime)s %(levelname)-7s %(name)s: %(message)s"
 
 logger = logging.getLogger(__name__)
+
+
+def local_time(timestamp: float, tz: tzinfo | None = None) -> datetime:
+    """`timestamp` in `tz`, or in the machine's local time zone when None, with its offset."""
+    if tz is not None:
+        return datetime.fromtimestamp(timestamp, tz)
+    return datetime.fromtimestamp(timestamp).astimezone()
+
+
+class LocalTimeFormatter(logging.Formatter):
+    """Formats `%(asctime)s` as ISO 8601 local time with milliseconds and the UTC offset."""
+
+    def __init__(self, fmt: str = FORMAT, *, tz: tzinfo | None = None) -> None:
+        super().__init__(fmt)
+        self.tz = tz
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        return local_time(record.created, self.tz).isoformat(timespec="milliseconds")
 
 
 def log_file_name(start: datetime, index: int) -> str:
@@ -47,13 +66,16 @@ class RollingFileHandler(logging.Handler):
         *,
         max_bytes: int = MAX_BYTES,
         start: datetime | None = None,
+        tz: tzinfo | None = None,
     ) -> None:
+        """`tz` None means the machine's local time zone, which sets names and rollover."""
         super().__init__()
         self.directory = directory
         self.max_bytes = max_bytes
+        self.tz = tz
         self._stream: BinaryIO | None = None
         directory.mkdir(parents=True, exist_ok=True)
-        self._open(start or datetime.now(UTC), 0)
+        self._open(start or local_time(datetime.now(UTC).timestamp(), tz), 0)
 
     @property
     def path(self) -> Path:
@@ -62,7 +84,7 @@ class RollingFileHandler(logging.Handler):
     def emit(self, record: logging.LogRecord) -> None:
         try:
             data = (self.format(record) + "\n").encode("utf-8")
-            created = datetime.fromtimestamp(record.created, UTC)
+            created = local_time(record.created, self.tz)
             # `>` rather than `!=`: a record from just before midnight that arrives late
             # must not reopen the previous day.
             if created.date() > self._start.date():
@@ -102,8 +124,7 @@ def setup_logging(log_dir: Path = DEFAULT_LOG_DIR) -> Path:
     warning reach the file too. The level starts at INFO; apply the configured level once
     settings are loaded.
     """
-    formatter = logging.Formatter(FORMAT, DATE_FORMAT)
-    formatter.converter = time.gmtime
+    formatter = LocalTimeFormatter()
     file_handler = RollingFileHandler(log_dir)
     root = logging.getLogger()
     for handler in (logging.StreamHandler(), file_handler):

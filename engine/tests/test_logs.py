@@ -1,6 +1,6 @@
 import logging
 import os
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime, timedelta, timezone
 from pathlib import Path
 
 import httpx
@@ -10,16 +10,18 @@ from quantdeck_engine.binance.rest import BinanceRestClient
 from quantdeck_engine.config import parse_settings
 from quantdeck_engine.logs import (
     DEFAULT_LOG_DIR,
+    LocalTimeFormatter,
     RollingFileHandler,
     delete_old_logs,
     setup_logging,
 )
 
-START = datetime(2026, 10, 3, 14, 30, 5, tzinfo=UTC)
+KST = timezone(timedelta(hours=9))
+START = datetime(2026, 10, 3, 14, 30, 5, tzinfo=KST)
 
 
 def make_handler(directory: Path, max_bytes: int = 100) -> RollingFileHandler:
-    handler = RollingFileHandler(directory, max_bytes=max_bytes, start=START)
+    handler = RollingFileHandler(directory, max_bytes=max_bytes, start=START, tz=KST)
     handler.setFormatter(logging.Formatter("%(message)s"))
     return handler
 
@@ -80,12 +82,14 @@ def test_record_larger_than_limit_goes_whole_into_its_own_file(tmp_path: Path) -
     ]
 
 
-def test_new_utc_date_starts_a_new_series(tmp_path: Path) -> None:
-    handler = RollingFileHandler(tmp_path, start=datetime(2026, 10, 3, 23, 59, 58, tzinfo=UTC))
+def test_new_local_date_starts_a_new_series(tmp_path: Path) -> None:
+    start = datetime(2026, 10, 3, 23, 59, 58, tzinfo=KST)
+    handler = RollingFileHandler(tmp_path, start=start, tz=KST)
     handler.setFormatter(logging.Formatter("%(message)s"))
-    emit(handler, "before", at=datetime(2026, 10, 3, 23, 59, 59, tzinfo=UTC))
-    emit(handler, "after", at=datetime(2026, 10, 4, 0, 0, 3, tzinfo=UTC))
-    emit(handler, "late", at=datetime(2026, 10, 3, 23, 59, 59, 900000, tzinfo=UTC))
+    emit(handler, "before", at=datetime(2026, 10, 3, 23, 59, 59, tzinfo=KST))
+    # 00:00:03 KST is still 2026-10-03 in UTC; the local date decides.
+    emit(handler, "after", at=datetime(2026, 10, 4, 0, 0, 3, tzinfo=KST))
+    emit(handler, "late", at=datetime(2026, 10, 3, 23, 59, 59, 900000, tzinfo=KST))
     handler.close()
 
     assert file_names(tmp_path) == [
@@ -95,6 +99,14 @@ def test_new_utc_date_starts_a_new_series(tmp_path: Path) -> None:
     assert (tmp_path / "engine_2026-10-03_23-59-58_000.log").read_text() == "before\n"
     # A late record from the previous day stays in the current file.
     assert (tmp_path / "engine_2026-10-04_00-00-03_000.log").read_text() == "after\nlate\n"
+
+
+def test_times_are_local_with_the_utc_offset() -> None:
+    record = logging.makeLogRecord({"msg": "hello", "levelno": logging.INFO, "name": "x"})
+    record.levelname = "INFO"
+    record.created = datetime(2026, 10, 16, 7, 41, 50, 908000, tzinfo=UTC).timestamp()
+    line = LocalTimeFormatter(tz=KST).format(record)
+    assert line == "2026-10-16T16:41:50.908+09:00 INFO    x: hello"
 
 
 def test_reopening_the_same_name_appends(tmp_path: Path) -> None:
