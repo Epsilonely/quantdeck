@@ -1,22 +1,22 @@
-import { contextBridge } from 'electron'
-import { electronAPI } from '@electron-toolkit/preload'
+import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import type { EngineApi } from '../shared/engine'
 
-// Custom APIs for renderer
-const api = {}
-
-// Use `contextBridge` APIs to expose Electron APIs to
-// renderer only if context isolation is enabled, otherwise
-// just add to the DOM global.
-if (process.contextIsolated) {
-  try {
-    contextBridge.exposeInMainWorld('electron', electronAPI)
-    contextBridge.exposeInMainWorld('api', api)
-  } catch (error) {
-    console.error(error)
+// Only these calls reach the main process. The renderer gets no general ipcRenderer access, and
+// never the engine's token or connection file (D-32).
+function subscribe<T>(channel: string, listener: (value: T) => void): () => void {
+  const handler = (_event: IpcRendererEvent, value: T): void => listener(value)
+  ipcRenderer.on(channel, handler)
+  return () => {
+    ipcRenderer.removeListener(channel, handler)
   }
-} else {
-  // @ts-ignore (define in dts)
-  window.electron = electronAPI
-  // @ts-ignore (define in dts)
-  window.api = api
 }
+
+const engine: EngineApi = {
+  snapshot: () => ipcRenderer.invoke('engine:snapshot'),
+  command: (name) => ipcRenderer.invoke('engine:command', name),
+  onStatus: (listener) => subscribe('engine:status', listener),
+  onState: (listener) => subscribe('engine:state', listener),
+  onLogs: (listener) => subscribe('engine:logs', listener)
+}
+
+contextBridge.exposeInMainWorld('api', { engine })

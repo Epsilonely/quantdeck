@@ -1,8 +1,7 @@
-import { ElectronAPI } from '@electron-toolkit/preload'
+import type { EngineApi } from '../shared/engine'
 
 declare global {
   interface Window {
-    electron: ElectronAPI
-    api: unknown
+    api: { engine: EngineApi }
   }
 }
