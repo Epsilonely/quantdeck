@@ -21,7 +21,9 @@ function LogView({ logs }: { logs: LogRecord[] }): React.JSX.Element {
       {logs.length === 0 && <p className="muted">로그가 없습니다.</p>}
       {logs.map((record, index) => (
         <div key={index} className={`log level-${record.level.toLowerCase()}`}>
-          <span className="log-time">{clock(record.time)}</span>
+          <span className="log-time" title={record.time}>
+            {clock(record.time)}
+          </span>
           <span className="log-level">{record.level}</span>
           <span className="log-logger">{record.logger}</span>
           <span className="log-message">{record.message}</span>

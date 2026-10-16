@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { CommandName, CommandResult } from '../../shared/engine'
 import LogView from './components/LogView'
 import SymbolTable from './components/SymbolTable'
-import { clock, dateTime, isNegative, isZero } from './format'
+import { clock, dateTime, isNegative, isZero, riskDayStart } from './format'
 import { useEngine } from './useEngine'
 
 const COMMAND_LABELS: Record<CommandName, string> = {
@@ -40,7 +40,7 @@ function App(): React.JSX.Element {
     statusText = '연결 중'
     statusClass = 'info'
   } else if (connected) {
-    statusText = `연결됨 · ${clock(status.since)} UTC부터`
+    statusText = `연결됨 · ${clock(status.since)}부터`
     statusClass = 'ok'
   } else if (launch.phase === 'starting') {
     statusText = '엔진 시작 중'
@@ -146,7 +146,7 @@ function App(): React.JSX.Element {
               )}
             </div>
             <div className="card">
-              <div className="label">기준 잔고 (00:00 UTC)</div>
+              <div className="label">기준 잔고 (매일 {riskDayStart()})</div>
               <div className="value">
                 {state.daily_loss ? `${state.daily_loss.base} ${state.daily_loss.asset}` : '—'}
               </div>
