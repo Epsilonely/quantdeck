@@ -6,7 +6,7 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 
 | Component | Technology | Status |
 |---|---|---|
-| GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the commands; starts the engine when none is running (D-34) |
+| GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the commands; starts the engine when none is running (D-34); light/dark theme (D-35) |
 | Charts | lightweight-charts | Planned, not installed |
 | Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch, `run` without a strategy (D-31) serving clients (D-32, D-33) |
 | Binance client | In-house, asyncio on httpx + websockets (D-10) | REST including orders and algo orders, kline stream, user data stream |
@@ -52,7 +52,7 @@ Defined in the root `.env` (gitignored); names are listed in `.env.example`. Nev
 
 ## Engine ↔ GUI / bot protocol
 
-Decided in D-32 (connection and authentication) and D-33 (messages and commands). The engine side is implemented (protocol 1); the GUI client isn't yet.
+Decided in D-32 (connection and authentication) and D-33 (messages and commands). The engine and the GUI client both implement protocol 1.
 
 **Connecting.** While `run` is serving, `engine/state/connection.json` holds `{"protocol": 1, "port": <int>, "token": "<string>"}`. The port and token change at every start; re-read the file before each reconnect. The server listens on `127.0.0.1` only and refuses any handshake that carries an `Origin` header (HTTP 403). Node's built-in `WebSocket` sends none (checked with Node 24 and Electron 39's main process, 2026-10-16).
 
@@ -92,7 +92,9 @@ A client whose unsent messages pile up past 1000 is disconnected.
 - `BrowserWindow` is created with `sandbox: false` (the electron-vite template default). Revisit when hardening the GUI.
 - The main process finds `engine/` relative to the app path, which works only when run from source (`npm run dev`). A packaged app needs another way to find the connection file and the engine's virtualenv.
 - The GUI starts the engine as `engine/.venv/Scripts/pythonw.exe -m quantdeck_engine run` (D-34), so the venv must exist (`uv sync`). The engine inherits Electron's inheritable handles: started from a GUI run with `--remoteDebuggingPort`, it kept that port bound after the GUI quit, and the next GUI couldn't open its debugging port (2026-10-16). Use a different port, or stop the engine, when testing over the DevTools protocol.
-- The preload script exposes only `window.api.engine` (snapshot, the commands, starting the engine, and status/state/logs/launch listeners); the template's general `window.electron` IPC access was removed. The main process accepts only the known command names and asks for confirmation in a native dialog before sending any of them.
+- The preload script exposes only `window.api.engine` (snapshot, the commands, starting the engine, and status/state/logs/launch listeners) and `window.api.theme` (get and set the theme); the template's general `window.electron` IPC access was removed. The main process accepts only the known command names and asks for confirmation in a native dialog before sending any of them.
+- Theme (D-35): the choice is saved as `theme.json` in Electron's userData folder (`%APPDATA%\gui` when run from source). `main.css` keeps every color in `:root` variables, dark by default and light under `prefers-color-scheme: light`; new UI uses the variables, never literal colors. lightweight-charts takes colors in JavaScript, so charts will need to read the variables and redraw when the theme changes.
+- Screen checks over the DevTools protocol: while the window is behind other windows, `document.visibilityState` is `hidden` and Chromium doesn't repaint, so a Win32 window capture (`PrintWindow`) shows the last painted frame while the title bar is current (2026-10-16). Take a `Page.captureScreenshot` first, which forces a paint. To catch an animation mid-way, slow it with `Animation.setPlaybackRate` in the same DevTools session.
 - Electron 39's built-in `WebSocket` (main process, checked 2026-10-16) differs from Node 24's:
   - A refused connection fires `error` and never `close`, so the client treats either event as the end of the connection.
   - `close()` on a socket that is still connecting fires `error` again synchronously; calling `close()` from the `error` handler recursed until the stack overflowed and stalled the main process. Close only a socket whose `readyState` is `OPEN`.

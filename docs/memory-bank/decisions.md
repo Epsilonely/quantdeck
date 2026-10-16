@@ -285,3 +285,13 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Trade-offs:** Starting with the venv's `pythonw` skips `uv run`'s sync, so the venv must be kept up to date with `uv sync`. Output that never reaches the log file, such as an import error before logging starts, is lost.
 - **Alternatives:** A visible console window stopped with Ctrl+C; the user chose the hidden engine with a stop button. A Windows service or scheduled task, still open for running without the GUI.
 - **Date:** 2026-10-16
+
+## D-35 GUI theme: system, light, or dark, applied by the main process through `nativeTheme`
+
+- **Decision:**
+  - The GUI offers three themes: system (follows the Windows app mode), light, and dark. The default is system.
+  - The control is a toggle in the header with icons instead of text, at the user's request: a monitor, a sun, and a moon. The selection slides between them, and the page's colors fade for 250 ms during a switch. Both animations are off when Windows asks for reduced motion (`prefers-reduced-motion`).
+  - The main process saves the choice in Electron's userData folder and applies it with `nativeTheme.themeSource`. The renderer only picks colors from `prefers-color-scheme` in CSS and calls `window.api.theme` to read or change the choice.
+- **Why:** The user chose three options with system as the default. With `nativeTheme` one setting drives both the page and the Windows title bar, and system mode follows a change of the Windows app mode without code in the renderer. Saving in the main process keeps one setting for dev and packaged builds, whose renderer origins (`localhost` and `file://`) would each have their own `localStorage`. The theme is a GUI preference, so it stays out of the engine's files.
+- **Alternatives:** Light and dark only; dark by default; text labels (the first version); renderer `localStorage` with a `data-theme` attribute, which leaves the title bar on the Windows setting.
+- **Date:** 2026-10-16

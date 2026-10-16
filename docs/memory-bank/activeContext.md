@@ -4,7 +4,7 @@ _Last updated: 2026-10-16_
 
 ## Current focus
 
-Issue #5, the engine ↔ GUI WebSocket connection, is done (2026-10-16): `quantdeck-engine run` (D-31), the client server and the GUI client (D-32, D-33), and the GUI starting and stopping the engine (D-34). Emergency close and lifting the halt were tried from the GUI on testnet. The GUI roadmap item (monitoring, start/stop, emergency close) was finished along the way; strategy settings and charts wait for a strategy.
+Issue #5, the engine ↔ GUI WebSocket connection, is done (2026-10-16): `quantdeck-engine run` (D-31), the client server and the GUI client (D-32, D-33), and the GUI starting and stopping the engine (D-34). Emergency close and lifting the halt were tried from the GUI on testnet. The GUI roadmap item (monitoring, start/stop, emergency close) was finished along the way; strategy settings and charts wait for a strategy. Before moving on, issue #6 added a light/dark theme to the GUI (D-35, 2026-10-16).
 
 The next roadmap items are the backtest module and the first strategy. Both need the strategy decisions under Open questions first. Work items are tracked as GitHub issues.
 
