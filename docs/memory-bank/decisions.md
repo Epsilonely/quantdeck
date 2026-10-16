@@ -224,7 +224,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 
 - **Decision:** The engine never accumulates today's loss from stream events. Each time it needs the number, it reads income history since 00:00 UTC and recomputes it: before every entry (the gate), and in a check that fires the kill switch. The trading loop is to run that check after a position closes, after an `ACCOUNT_UPDATE` with reason `FUNDING_FEE`, after every stream (re)connect, and about once a minute.
 - **Why:** The exchange stays the only source (D-06): no events missed while the stream is disconnected, no double counting when a resync replays events, no separate handling for commission assets or funding events. The cost is weight 30 per read (one page holds 1000 records), small next to the 2400 per minute limit at a few reads a minute.
-- **Trade-off:** If income records appear some time after a fill, a check right after a stop-out can miss it; the periodic check catches it. The trial measures the delay.
+- **Trade-off:** If income records appear some time after a fill, a check right after a stop-out can miss it; the periodic check catches it. The trial measures the delay: 1.1 s on testnet (2026-10-16, one sample, `binanceNotes.md`), so the periodic check backs up the post-close check rather than being its main path.
 - **Alternatives:** Add `rp` and `n` from `ORDER_TRADE_UPDATE` and funding from `ACCOUNT_UPDATE` as events arrive, with income history only at startup and after reconnects.
 - **Date:** 2026-10-16
 

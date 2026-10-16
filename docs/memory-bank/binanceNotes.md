@@ -176,6 +176,6 @@ Check each item while implementing the related feature:
 - [ ] `GET /fapi/v1/openOrders` with a non-empty result (the engine reads `clientOrderId`, `orderId`, `side`, `type`, `origQty`, `reduceOnly`).
 - [ ] Margin type and leverage: the errors when changing them with a position or open orders (docs: `-4047`, `-4048`, `-4161`).
 - [ ] Income history paging past 1000 records within one day.
-- [ ] Income history delay: how soon `REALIZED_PNL` and `COMMISSION` appear after a fill (D-30). The `trial` prints it; its first run (2026-10-16) queried from a mid-second start time and missed the records, so no number yet. They were there by the end of that run, within about 15 s of the fill.
+- [ ] Income history delay: how soon `REALIZED_PNL` and `COMMISSION` appear after a fill (D-30). The `trial` prints it. Its first run (2026-10-16) queried from a mid-second start time and missed the records. After the fix, the second run (2026-10-16) saw the close 1.1 s after the kill switch finished, on the second read. Only one sample on testnet; repeat it, and check mainnet before relying on it.
 - [ ] Bulk cancels with orders actually open: on 2026-10-16 the stop had already expired with its position, so both calls ran on an empty book.
 - [ ] Liquidation price before entry (D-25): compare the engine's estimate with `liquidationPrice` from `positionRisk` while a position is open. The estimate uses notional ÷ leverage as WB, which runs one opening commission higher than the real `iw`.
