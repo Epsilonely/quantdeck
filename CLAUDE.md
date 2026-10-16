@@ -75,6 +75,7 @@ Engine — run in `engine/`:
 - `uv run quantdeck-engine check` — read-only connection check against the configured network (places no orders)
 - `uv run quantdeck-engine trial` — TESTNET ONLY, places orders: entry → stop → emergency stop → close, then a second entry closed by the kill switch, once. Its halt record goes to a temporary directory. Needs `engine/config.toml` and a flat symbol; refuses mainnet and a halted engine. Ask the user before running it
 - `uv run quantdeck-engine lift-halt` — lift the kill switch's halt by deleting `engine/state/halt.json` (D-29). Only the user decides to lift a halt: never run it on your own
+- Client commands to a running engine (D-33): `emergency_close` fires the kill switch and writes the real halt record; `lift_halt` lifts it. Ask the user before sending either, including from a test script. Connecting and reading state and logs is fine
 - `uv add <pkg>` / `uv add --dev <pkg>` — add a dependency (updates `uv.lock`; commit both files)
 
 Bot: not implemented yet.

@@ -7,7 +7,7 @@ _Last updated: 2026-10-16_
 The engine ↔ GUI WebSocket connection (GitHub issue #5), the next roadmap item. Its design was settled on 2026-10-16:
 
 - `quantdeck-engine run`, a long-running engine with no strategy yet (D-31). Done, including the client WebSocket server (D-32, D-33; message shapes in `techContext.md`). It is testnet-only for now.
-- What's left on the issue: the GUI main-process client and IPC, and trying `emergency_close` and Ctrl+C on testnet.
+- What's left on the issue: the GUI main-process client and IPC, and trying `emergency_close` on testnet (planned from the GUI). Ctrl+C was checked on 2026-10-16.
 - Connection and authentication: `127.0.0.1`, an OS-assigned port and per-start token in a connection file, browser `Origin`s refused, the GUI connecting from its main process (D-32).
 - Messages: the whole state on every change, recent and live logs, and two commands, emergency close (the kill switch) and lifting the halt (D-33).
 
