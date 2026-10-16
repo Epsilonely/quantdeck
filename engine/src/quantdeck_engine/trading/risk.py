@@ -1,0 +1,286 @@
+"""Daily loss limit, entry gate, and kill switch (D-24, D-27, D-29, D-30).
+
+One guard covers the whole account. Today's loss is re-read from income history every time
+it is needed (D-30), never accumulated from stream events: the exchange stays the only
+source (D-06), and nothing is missed while the stream is disconnected. Call `check` whenever
+the loss may have changed (a position closed, a funding fee, a stream reconnect) and
+periodically, since income records may appear a little after a fill.
+"""
+
+import asyncio
+import logging
+import time
+from collections.abc import Awaitable, Callable, Iterable, Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
+from decimal import Decimal
+from typing import Any
+
+from quantdeck_engine.binance.rest import BinanceRestClient
+from quantdeck_engine.config import TradingConfig
+from quantdeck_engine.trading.balance import BaseBalance, day_start_ms, fetch_income
+from quantdeck_engine.trading.executor import (
+    REQUEST_ERRORS,
+    OrderOutcomeUnclear,
+    SymbolTrader,
+    TradingHalted,
+)
+from quantdeck_engine.trading.halt import HaltRecord, HaltStore
+
+logger = logging.getLogger(__name__)
+
+# Income types that count toward today's loss (D-24): trading results and their costs.
+COUNTED_INCOME_TYPES = frozenset(
+    {
+        "REALIZED_PNL",
+        "COMMISSION",
+        "FUNDING_FEE",
+        "SPECIAL_FUNDING_FEE",
+        "INSURANCE_CLEAR",  # liquidation clearance fee
+        "POSITION_LIMIT_INCREASE_FEE",
+    }
+)
+# Every other type the docs list (2026-10-16): transfers, rebates, rewards, other products.
+# Rebates are left out so they can't make room for more losses.
+UNCOUNTED_INCOME_TYPES = frozenset(
+    {
+        "TRANSFER",
+        "WELCOME_BONUS",
+        "REFERRAL_KICKBACK",
+        "COMMISSION_REBATE",
+        "API_REBATE",
+        "CONTEST_REWARD",
+        "CROSS_COLLATERAL_TRANSFER",
+        "OPTIONS_PREMIUM_FEE",
+        "OPTIONS_SETTLE_PROFIT",
+        "INTERNAL_TRANSFER",
+        "AUTO_EXCHANGE",
+        "DELIVERED_SETTELMENT",  # sic
+        "COIN_SWAP_DEPOSIT",
+        "COIN_SWAP_WITHDRAW",
+        "STRATEGY_UMFUTURES_TRANSFER",
+        "FEE_RETURN",
+        "BFUSD_REWARD",
+    }
+)
+
+KILL_ATTEMPTS = 3
+KILL_RETRY_DELAY = 2.0  # seconds
+
+
+def loss_from_income(incomes: Iterable[dict[str, Any]], asset: str) -> Decimal:
+    """Today's loss: the net of the counted records for `asset`, negated (D-24).
+
+    Gains offset losses, so the result is negative after a net gain.
+    """
+    return Decimal(0) - sum(
+        (
+            Decimal(i["income"])
+            for i in incomes
+            if i["asset"] == asset and i["incomeType"] in COUNTED_INCOME_TYPES
+        ),
+        Decimal(0),
+    )
+
+
+@dataclass(frozen=True)
+class DailyLoss:
+    base: Decimal  # the day's base balance (D-23)
+    loss: Decimal  # negative after a net gain
+    limit: Decimal
+
+    @property
+    def room(self) -> Decimal:
+        return self.limit - self.loss
+
+    @property
+    def reached(self) -> bool:
+        return self.loss >= self.limit
+
+    def describe(self, asset: str) -> str:
+        return (
+            f"today's loss {self.loss:.2f} {asset}, daily limit {self.limit:.2f} {asset} "
+            f"(base {self.base:.2f})"
+        )
+
+
+class RiskGuard:
+    def __init__(
+        self,
+        client: BinanceRestClient,
+        trading: TradingConfig,
+        base_balance: BaseBalance,
+        store: HaltStore,
+        *,
+        clock: Callable[[], float] = time.time,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        self._client = client
+        self._trading = trading
+        self._base = base_balance
+        self._store = store
+        self._clock = clock
+        self._sleep = sleep
+        self._traders: list[SymbolTrader] = []
+        self._kill_lock = asyncio.Lock()
+        self._pending_kill: asyncio.Task[bool] | None = None
+        self._recorded = False
+        self._unknown_types: set[str] = set()
+        self.halt_reason: str | None = None
+
+    def attach(self, traders: Sequence[SymbolTrader]) -> None:
+        """The traders the kill switch flattens. Each trader takes the guard as its gate, so
+        they are attached after construction."""
+        self._traders = list(traders)
+
+    @property
+    def halted(self) -> bool:
+        return self.halt_reason is not None
+
+    async def start(self) -> None:
+        """Startup, after each trader's `prepare` (D-27).
+
+        A halt record, or a loss already at the limit, starts the engine halted, and every
+        symbol is flattened again in case an earlier kill switch couldn't finish.
+        """
+        record = self._store.load()
+        if record is None:
+            await self.check()
+            return
+        self._recorded = True
+        self.halt_reason = record.reason
+        logger.error(
+            "Starting halted: the kill switch fired at %s (%s). "
+            "Lift it with `quantdeck-engine lift-halt` (D-27).",
+            record.halted_at or "an unknown time",
+            record.reason,
+        )
+        async with self._kill_lock:
+            await self._flatten()
+
+    async def daily_loss(self) -> DailyLoss:
+        base = await self._base.get()
+        now_ms = int(self._clock() * 1000)
+        incomes = await fetch_income(self._client, day_start_ms(now_ms), now_ms)
+        self._warn_unknown(incomes)
+        return DailyLoss(
+            base=base,
+            loss=loss_from_income(incomes, self._base.asset),
+            limit=base * self._trading.daily_loss_limit_percent / 100,
+        )
+
+    async def check(self) -> DailyLoss:
+        """Re-read today's loss and fire the kill switch once it reaches the limit (D-24).
+
+        Never call this while holding a trader's lock: the kill switch takes each one.
+        """
+        daily = await self.daily_loss()
+        logger.debug("Risk check: %s", daily.describe(self._base.asset))
+        if daily.reached and not self.halted:
+            await self.trip(self._limit_reason(daily))
+        return daily
+
+    async def entry_risk(self, per_trade: Decimal) -> Decimal:
+        """The entry gate (D-24): the per-trade risk, capped by the room left under the limit.
+
+        Runs inside a trader's lock, so at the limit it only schedules the kill switch, which
+        then waits for that lock, and refuses the entry.
+        """
+        if self.halted:
+            raise TradingHalted(f"kill switch: {self.halt_reason}")
+        daily = await self.daily_loss()
+        if daily.reached:
+            reason = self._limit_reason(daily)
+            if self._pending_kill is None or self._pending_kill.done():
+                self._pending_kill = asyncio.create_task(self.trip(reason))
+                self._pending_kill.add_done_callback(_log_kill_failure)
+            raise TradingHalted(f"kill switch: {reason}")
+        return min(per_trade, daily.room)
+
+    async def trip(self, reason: str) -> bool:
+        """Fire the kill switch (D-27): halt, record the halt, then flatten every symbol.
+
+        Returns True once every symbol is flat with no open orders.
+        """
+        async with self._kill_lock:
+            if self.halt_reason is None:
+                self.halt_reason = reason
+            logger.error(
+                "KILL SWITCH: %s. Closing every position and cancelling every order; "
+                "trading stays halted until `quantdeck-engine lift-halt` (D-27).",
+                reason,
+            )
+            self._record(reason)
+            return await self._flatten()
+
+    def _record(self, reason: str) -> None:
+        if self._recorded:
+            return
+        halted_at = datetime.fromtimestamp(self._clock(), UTC).isoformat(timespec="seconds")
+        try:
+            self._store.save(HaltRecord(reason=reason, halted_at=halted_at))
+        except OSError as e:
+            # Never let the record block the close (D-29).
+            logger.critical(
+                "Could not write the halt record %s (%s). This engine stays halted, but a "
+                "restart on a later UTC day would trade again.",
+                self._store.path,
+                e,
+            )
+            return
+        self._recorded = True
+
+    async def _flatten(self) -> bool:
+        pending = list(self._traders)
+        for attempt in range(1, KILL_ATTEMPTS + 1):
+            if attempt > 1:
+                await self._sleep(KILL_RETRY_DELAY)
+            failed: list[SymbolTrader] = []
+            for trader in pending:
+                try:
+                    if await trader.flatten():
+                        continue
+                    logger.warning(
+                        "%s: kill switch attempt %d/%d left a position or open orders",
+                        trader.symbol,
+                        attempt,
+                        KILL_ATTEMPTS,
+                    )
+                except (*REQUEST_ERRORS, OrderOutcomeUnclear) as e:
+                    logger.warning(
+                        "%s: kill switch attempt %d/%d failed: %s",
+                        trader.symbol,
+                        attempt,
+                        KILL_ATTEMPTS,
+                        e,
+                    )
+                failed.append(trader)
+            if not failed:
+                logger.info("Kill switch: every symbol is flat with no open orders")
+                return True
+            pending = failed
+        logger.critical(
+            "KILL SWITCH COULD NOT FLATTEN %s: close the positions and cancel the orders manually",
+            ", ".join(t.symbol for t in pending),
+        )
+        return False
+
+    def _limit_reason(self, daily: DailyLoss) -> str:
+        return f"{daily.describe(self._base.asset)}: the daily loss limit is reached (D-24)"
+
+    def _warn_unknown(self, incomes: Iterable[dict[str, Any]]) -> None:
+        types = {i["incomeType"] for i in incomes}
+        for income_type in sorted(
+            types - COUNTED_INCOME_TYPES - UNCOUNTED_INCOME_TYPES - self._unknown_types
+        ):
+            self._unknown_types.add(income_type)
+            logger.warning(
+                "Income type %s is unknown and not counted toward today's loss; "
+                "check the docs (D-24)",
+                income_type,
+            )
+
+
+def _log_kill_failure(task: asyncio.Task[bool]) -> None:
+    if not task.cancelled() and (error := task.exception()) is not None:
+        logger.critical("The kill switch failed: close positions manually", exc_info=error)

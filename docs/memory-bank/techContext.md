@@ -8,10 +8,10 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 |---|---|---|
 | GUI | Electron, React, TypeScript, electron-vite, electron-builder | Scaffolded (template) |
 | Charts | lightweight-charts | Planned, not installed |
-| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops; no risk limits or trading loop yet |
+| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch; no trading loop yet |
 | Binance client | In-house, asyncio on httpx + websockets (D-10) | REST including orders and algo orders, kline stream, user data stream |
 | Discord bot | Undecided | Not started |
-| Storage | SQLite (trades, orders, logs), Parquet (historical candles) | Planned; diagnostic logs already go to files (D-12) |
+| Storage | SQLite (trades, orders, logs), Parquet (historical candles) | Planned; diagnostic logs go to files (D-12), and the kill-switch halt record is `engine/state/halt.json` (D-29) |
 | Engine ↔ clients | WebSocket on localhost | Planned |
 | Exchange | Binance USDⓈ-M Futures, HMAC keys (D-11) | Testnet; orders placed only by `trial` so far |
 

@@ -23,6 +23,22 @@ def day_start_ms(now_ms: int) -> int:
     return now_ms - now_ms % DAY_MS
 
 
+async def fetch_income(
+    client: BinanceRestClient, start_ms: int, end_ms: int
+) -> list[dict[str, Any]]:
+    """Every income record from `start_ms` to `end_ms` (both inclusive), oldest first."""
+    incomes: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        batch = await client.income(
+            start_time=start_ms, end_time=end_ms, page=page, limit=INCOME_PAGE_SIZE
+        )
+        incomes.extend(batch)
+        if len(batch) < INCOME_PAGE_SIZE:
+            return incomes
+        page += 1
+
+
 def base_from_income(
     wallet_balance: Decimal, incomes: Iterable[dict[str, Any]], asset: str
 ) -> Decimal:
@@ -59,16 +75,7 @@ class BaseBalance:
         wallet = next(
             (Decimal(b["balance"]) for b in balances if b["asset"] == self.asset), Decimal(0)
         )
-        incomes: list[dict[str, Any]] = []
-        page = 1
-        while True:
-            batch = await self._client.income(
-                start_time=day, end_time=now_ms, page=page, limit=INCOME_PAGE_SIZE
-            )
-            incomes.extend(batch)
-            if len(batch) < INCOME_PAGE_SIZE:
-                break
-            page += 1
+        incomes = await fetch_income(self._client, day, now_ms)
         base = base_from_income(wallet, incomes, self.asset)
         logger.info(
             "Base balance for %s: %s %s (wallet %s, %d income record(s) since 00:00 UTC)",

@@ -227,6 +227,16 @@ class BinanceRestClient:
         params = {"symbol": symbol, "origClientOrderId": client_order_id}
         return await self._request("DELETE", "/fapi/v1/order", params, signed=True)
 
+    async def cancel_all_open_orders(self, symbol: str) -> dict[str, Any]:
+        """Cancel every regular open order on the symbol. Weight 1."""
+        params = {"symbol": symbol}
+        return await self._request("DELETE", "/fapi/v1/allOpenOrders", params, signed=True)
+
+    async def cancel_all_algo_open_orders(self, symbol: str) -> dict[str, Any]:
+        """Cancel every open algo (conditional) order on the symbol, stops included. Weight 1."""
+        params = {"symbol": symbol}
+        return await self._request("DELETE", "/fapi/v1/algoOpenOrders", params, signed=True)
+
     async def change_margin_type(self, symbol: str, margin_type: str) -> None:
         """Code -4046 means it already is; -4047/-4048: open orders or a position exist."""
         params = {"symbol": symbol, "marginType": margin_type}

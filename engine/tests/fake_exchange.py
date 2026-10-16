@@ -38,8 +38,15 @@ BRACKETS = [
 ]
 
 
+CANCEL_ALL_DONE = {"code": 200, "msg": "The operation of cancel all open order is done."}
+
+
 def api_error(status: int, code: int, msg: str = "error") -> httpx.Response:
     return httpx.Response(status, json={"code": code, "msg": msg})
+
+
+def income(income_type: str, amount: str, asset: str = "USDT") -> dict[str, Any]:
+    return {"symbol": "BTCUSDT", "incomeType": income_type, "income": amount, "asset": asset}
 
 
 @dataclass
@@ -152,6 +159,12 @@ class FakeExchange:
                     o for o in self.open_orders if o["clientOrderId"] != p["origClientOrderId"]
                 ]
                 return httpx.Response(200, json={})
+            case ("DELETE", "/fapi/v1/allOpenOrders"):
+                self.open_orders = []
+                return httpx.Response(200, json=CANCEL_ALL_DONE)
+            case ("DELETE", "/fapi/v1/algoOpenOrders"):
+                self.algo_orders = []
+                return httpx.Response(200, json=CANCEL_ALL_DONE)
             case ("POST", "/fapi/v1/marginType"):
                 if self.margin_type == p["marginType"]:
                     return api_error(400, -4046, "No need to change margin type.")

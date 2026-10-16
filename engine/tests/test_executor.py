@@ -43,7 +43,17 @@ async def no_sleep(_: float) -> None:
     pass
 
 
-def make_trader(exchange: FakeExchange) -> SymbolTrader:
+class FixedGate:
+    """An entry gate that caps every entry's risk at `cap` (no cap by default)."""
+
+    def __init__(self, cap: Decimal | None = None) -> None:
+        self.cap = cap
+
+    async def entry_risk(self, per_trade: Decimal) -> Decimal:
+        return per_trade if self.cap is None else min(per_trade, self.cap)
+
+
+def make_trader(exchange: FakeExchange, gate: FixedGate | None = None) -> SymbolTrader:
     client = exchange.client()
     return SymbolTrader(
         client,
@@ -51,6 +61,7 @@ def make_trader(exchange: FakeExchange) -> SymbolTrader:
         TRADING,
         RULES,
         BaseBalance(client, "USDT"),
+        gate or FixedGate(),
         ClientIdFactory(),
         sleep=no_sleep,
     )
@@ -249,6 +260,13 @@ async def test_entry_sizes_from_the_base_balance() -> None:
     exchange.incomes = [{"asset": "USDT", "income": "-50"}]  # base 5000, not 4950
     plan = await make_trader(exchange).open_position(Side.LONG, D(59400))
     assert plan.quantity == D("0.083")
+
+
+async def test_entry_risk_is_capped_by_the_gate() -> None:
+    exchange = FakeExchange()
+    # Room 20 instead of 50: 20 / 600 = 0.0333 -> 0.033.
+    plan = await make_trader(exchange, FixedGate(D(20))).open_position(Side.LONG, D(59400))
+    assert plan.quantity == D("0.033")
 
 
 async def test_entry_rejected_by_sizing_places_nothing() -> None:

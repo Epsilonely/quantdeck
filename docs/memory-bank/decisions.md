@@ -168,6 +168,8 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Why:** Fees and funding are real losses; counting realized PnL alone understates them. Unrealized PnL is left out because every open position's loss is already bounded by its exchange-side stop (D-19), and the gate counts that risk before the position opens, so the limit holds as long as the stops work; the kill switch backs it up against slippage and bugs. Counting unrealized PnL would need a mark price stream, couldn't be rebuilt after a restart (the unrealized PnL at 00:00 UTC is gone by then), and would fire the kill switch at nearly the moment a stop fires.
 - **Caveat:** Stop slippage, mark-price trigger lag (D-18), and fees can still push a day's loss past the limit.
 - **Alternatives:** A fixed USDT amount; a multiple of the risk amount; an equity-based loss that includes unrealized PnL.
+- **Note (2026-10-16):** The counted income types also include `SPECIAL_FUNDING_FEE`, `INSURANCE_CLEAR` (liquidation clearance fee), and `POSITION_LIMIT_INCREASE_FEE`, all costs of trading. Rebates (`COMMISSION_REBATE`, `FEE_RETURN`, ...) are not counted, so they can't make room for more losses. A type missing from the docs' list is logged as a WARNING and not counted.
+- **Limitation:** The room left doesn't count the risk of positions already open on other symbols. With one symbol (D-15) and one entry per position (D-22) there are none; this must change before a second symbol trades.
 - **Date:** 2026-10-10
 
 ## D-25 Position cap 2× the base, leverage 5× capped at 10×, stop within half the liquidation distance
@@ -195,7 +197,8 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - Safety principle 7 now ends with "halt trading until the user lifts the halt" instead of "stop the engine".
 - **Why:** The kill switch fires on a bad day or a bug; requiring the user to look before trading resumes keeps a bug from repeating every day. A running engine still shows positions and logs to the GUI and can receive the lift command; an exited one shows nothing, and nothing restarts it yet. Rebuilding from the exchange keeps a same-day restart halted even without the local record.
 - **Alternatives:** Resume automatically at 00:00 UTC; exit the process.
-- **Open:** Where the local record lives (a file or SQLite) is decided with storage.
+- **Note:** The local record is a JSON file (D-29).
+- **Note (2026-10-16):** Per symbol, the kill switch closes the position first and cancels orders (`DELETE /fapi/v1/allOpenOrders` and `/fapi/v1/algoOpenOrders`) only once it is flat, so the stop protects the position until it is gone. It retries a few times; a symbol it still can't flatten keeps its stop and gets a CRITICAL log asking for manual action. A halted engine at startup flattens every symbol again.
 - **Date:** 2026-10-10
 
 ## D-28 Strategy and risk settings in `engine/config.toml`, bounded by code constants
@@ -204,4 +207,24 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Why:** Per-symbol tables (D-15, D-16) are awkward as environment variables, and `tomllib` adds no dependency. Keeping the real file out of git keeps the user's values out of the public repo, as with `.env`. The bounds catch typos such as `1` for `0.01`, the same way an invalid `BINANCE_TESTNET` already stops the engine; raising one takes a code change.
 - **Alternatives:** More `.env` variables; SQLite edited from the GUI (premature without a GUI).
 - **Date:** 2026-10-10
+
+## D-29 The kill-switch halt record is a JSON file in `engine/state/`
+
+- **Decision:**
+  - D-27's local record is `engine/state/halt.json` (gitignored), located from the package like `engine/logs/` and `engine/config.toml`, so it doesn't depend on where the engine is started. It holds when the kill switch fired and why.
+  - The file exists only while halted: the kill switch writes it, and the user's lift command deletes it. The lift is logged.
+  - Writes go to a temporary file first, then `os.replace` swaps it in, so a crash never leaves a half-written record.
+  - A file that exists but can't be read counts as halted, and the engine logs an ERROR.
+  - If the write fails (on Windows, `os.replace` can fail while another program has the file open, as in D-12), the kill switch still closes positions and cancels orders, the running engine stays halted in memory, and it logs CRITICAL.
+- **Why:** The record is one small piece of state, and SQLite's contents and schema are still undecided (D-04); tying the kill switch to them would pull that whole design into the risk-management work. Losing the file is tolerable: a same-day restart is halted anyway because today's loss is rebuilt from the exchange (D-27), so the file only carries the halt into later days. Treating an unreadable file as halted and never letting a failed write block the close keep both failures on the safe side.
+- **Alternatives:** A SQLite table — reconsider when SQLite is introduced; moving the record means changing only its read and write functions.
+- **Date:** 2026-10-16
+
+## D-30 Today's loss is re-read from income history whenever it is needed
+
+- **Decision:** The engine never accumulates today's loss from stream events. Each time it needs the number, it reads income history since 00:00 UTC and recomputes it: before every entry (the gate), and in a check that fires the kill switch. The trading loop is to run that check after a position closes, after an `ACCOUNT_UPDATE` with reason `FUNDING_FEE`, after every stream (re)connect, and about once a minute.
+- **Why:** The exchange stays the only source (D-06): no events missed while the stream is disconnected, no double counting when a resync replays events, no separate handling for commission assets or funding events. The cost is weight 30 per read (one page holds 1000 records), small next to the 2400 per minute limit at a few reads a minute.
+- **Trade-off:** If income records appear some time after a fill, a check right after a stop-out can miss it; the periodic check catches it. The trial measures the delay.
+- **Alternatives:** Add `rp` and `n` from `ORDER_TRADE_UPDATE` and funding from `ACCOUNT_UPDATE` as events arrive, with income history only at startup and after reconnects.
+- **Date:** 2026-10-16
 

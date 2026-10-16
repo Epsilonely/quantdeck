@@ -2,15 +2,23 @@
 
 Entry -> exchange-side stop -> the stop is cancelled to simulate losing it -> the startup
 check finds the unprotected position and places an emergency stop (D-26) -> reduceOnly
-close -> the leftover stop is cancelled. Refuses to run against mainnet, and only on a flat
-symbol. Don't run it while an engine is trading on the same account (D-14).
+close -> the leftover stop is cancelled. Then the kill switch: a second entry, the kill
+switch fired by hand, how soon income history shows its close (D-30), and a restart that
+must come up halted (D-27). The trial's halt record goes to a temporary directory, never
+`engine/state/`.
+
+Refuses to run against mainnet, while the engine is halted, and on a symbol that isn't
+flat. Don't run it while an engine is trading on the same account (D-14).
 
 Run with ENGINE_LOG_LEVEL=DEBUG to log every user data payload as received.
 """
 
 import asyncio
 import contextlib
+import tempfile
+import time
 from decimal import Decimal
+from pathlib import Path
 
 from quantdeck_engine.binance.rest import BinanceRestClient
 from quantdeck_engine.binance.user_stream import (
@@ -22,9 +30,11 @@ from quantdeck_engine.binance.user_stream import (
     UserStreamConnected,
 )
 from quantdeck_engine.config import Settings, TradingConfig
-from quantdeck_engine.trading.balance import BaseBalance
-from quantdeck_engine.trading.executor import SymbolTrader
+from quantdeck_engine.trading.balance import BaseBalance, fetch_income
+from quantdeck_engine.trading.executor import SymbolTrader, TradingHalted
+from quantdeck_engine.trading.halt import HaltStore
 from quantdeck_engine.trading.order_ids import ClientIdFactory
+from quantdeck_engine.trading.risk import RiskGuard
 from quantdeck_engine.trading.rules import Side, SymbolRules
 from quantdeck_engine.trading.state import (
     AccountState,
@@ -35,6 +45,7 @@ from quantdeck_engine.trading.state import (
 
 CONNECT_TIMEOUT_SECONDS = 30
 EVENT_WAIT_SECONDS = 3  # time for user data events to arrive after each step
+INCOME_POLLS = 10  # once a second; each read costs weight 30
 
 
 class TrialFailed(Exception):
@@ -80,7 +91,23 @@ async def run_trial(
     config = trading.symbols.get(symbol)
     if config is None:
         raise TrialFailed(f"{symbol} is not in config.toml [symbols]")
+    if (record := HaltStore().load()) is not None:
+        raise TrialFailed(f"the engine is halted by the kill switch ({record.reason})")
 
+    with tempfile.TemporaryDirectory() as state_dir:
+        store = HaltStore(Path(state_dir) / "halt.json")
+        await _run(settings, trading, config.symbol, side, stop_percent, store)
+
+
+async def _run(
+    settings: Settings,
+    trading: TradingConfig,
+    symbol: str,
+    side: Side,
+    stop_percent: Decimal,
+    store: HaltStore,
+) -> None:
+    config = trading.symbols[symbol]
     async with BinanceRestClient(settings) as client:
         await client.sync_time()
         if (await client.account_config())["dualSidePosition"]:
@@ -90,14 +117,10 @@ async def run_trial(
         if symbol_info is None:
             raise TrialFailed(f"{symbol} is not in exchangeInfo")
         rules = SymbolRules.from_exchange_info(symbol_info)
-        trader = SymbolTrader(
-            client,
-            config,
-            trading,
-            rules,
-            BaseBalance(client, rules.margin_asset),
-            ClientIdFactory(),
-        )
+        base = BaseBalance(client, rules.margin_asset)
+        guard = RiskGuard(client, trading, base, store)
+        trader = SymbolTrader(client, config, trading, rules, base, guard, ClientIdFactory())
+        guard.attach([trader])
 
         connected = asyncio.Event()
 
@@ -109,6 +132,7 @@ async def run_trial(
         async def on_change(change: StateChange) -> None:
             if isinstance(change, PositionClosed):
                 await trader.on_position_closed()
+                await guard.check()
 
         follower = asyncio.create_task(
             follow_user_stream(
@@ -118,7 +142,10 @@ async def run_trial(
         try:
             async with asyncio.timeout(CONNECT_TIMEOUT_SECONDS):
                 await connected.wait()
-            await _steps(client, trader, symbol, side, stop_percent)
+            await _steps(client, trader, guard, symbol, side, stop_percent)
+            await _kill_switch_steps(
+                client, trading, trader, guard, base, store, side, stop_percent
+            )
         finally:
             # Never leave a testnet position behind, whatever went wrong.
             with contextlib.suppress(Exception):
@@ -133,16 +160,20 @@ async def run_trial(
 async def _steps(
     client: BinanceRestClient,
     trader: SymbolTrader,
+    guard: RiskGuard,
     symbol: str,
     side: Side,
     stop_percent: Decimal,
 ) -> None:
-    print("1. Startup check (margin type, leverage, leftover orders)")
+    print("1. Startup check (margin type, leverage, leftover orders, today's loss)")
     await trader.prepare()
     if await trader.position() is not None:
         raise TrialFailed(f"{symbol} already has a position; the trial needs a flat symbol")
     if trader.halted:
         raise TrialFailed(f"trading is halted: {trader.halt_reason}")
+    await guard.start()
+    if guard.halted:
+        raise TrialFailed(f"the kill switch fired at startup: {guard.halt_reason}")
 
     mark = await client.mark_price(symbol)
     stop = mark * (1 - side.sign * stop_percent / 100)
@@ -175,10 +206,79 @@ async def _steps(
     print("5. Closing with a reduceOnly market order; the stop should be cancelled")
     await trader.close_position()
     await asyncio.sleep(EVENT_WAIT_SECONDS)
+    await _expect_flat(client, trader)
 
+
+async def _kill_switch_steps(
+    client: BinanceRestClient,
+    trading: TradingConfig,
+    trader: SymbolTrader,
+    guard: RiskGuard,
+    base: BaseBalance,
+    store: HaltStore,
+    side: Side,
+    stop_percent: Decimal,
+) -> None:
+    symbol = trader.symbol
+    mark = await client.mark_price(symbol)
+    stop = mark * (1 - side.sign * stop_percent / 100)
+    print(f"6. Entering {side} again (mark {mark}), then firing the kill switch by hand (D-27)")
+    if await trader.open_position(side, stop) is None:
+        raise TrialFailed("the second entry was skipped or closed; see the log")
+    await asyncio.sleep(EVENT_WAIT_SECONDS)
+    fired_ms = int(time.time() * 1000)
+    if not await guard.trip("trial: kill switch fired by hand"):
+        raise TrialFailed("the kill switch could not flatten; see the log")
+    await _report_income_delay(client, symbol, fired_ms)
+    await asyncio.sleep(EVENT_WAIT_SECONDS)
+    await _expect_flat(client, trader)
+    if store.load() is None:
+        raise TrialFailed("the kill switch wrote no halt record")
+    try:
+        await trader.open_position(side, stop)
+    except TradingHalted:
+        print("   halted: an entry was refused")
+    else:
+        raise TrialFailed("an entry went through while halted")
+
+    print("7. Restart: a new guard reading the same halt record must start halted")
+    restarted = RiskGuard(client, trading, base, store)
+    restarted.attach([trader])
+    await restarted.start()
+    if not restarted.halted:
+        raise TrialFailed("the restarted guard is not halted")
+    store.clear()
+    if store.load() is not None:
+        raise TrialFailed("the halt record is still there after lifting")
+    print("   halted after the restart; the trial's halt record is lifted")
+
+    print("8. Today's loss from income history (D-24, D-30)")
+    daily = await guard.daily_loss()
+    print(f"   {daily.describe(base.asset)}")
+    print("Trial passed: flat, no open orders, kill switch and halt record work.")
+
+
+async def _report_income_delay(client: BinanceRestClient, symbol: str, fired_ms: int) -> None:
+    """How soon income history shows the kill-switch close (D-30)."""
+    flattened = time.monotonic()
+    # Income record times are whole seconds (testnet 2026-10-16): a start time in the middle
+    # of the close's second would leave its records out.
+    since = fired_ms - fired_ms % 1000
+    for poll in range(1, INCOME_POLLS + 1):
+        incomes = await fetch_income(client, since, int(time.time() * 1000))
+        if any(i["incomeType"] == "REALIZED_PNL" and i["symbol"] == symbol for i in incomes):
+            print(
+                f"   income history showed the close {time.monotonic() - flattened:.1f} s "
+                f"after the kill switch finished (read {poll} time(s))"
+            )
+            return
+        await asyncio.sleep(1)
+    print(f"   no REALIZED_PNL record within {INCOME_POLLS} reads: income history lags")
+
+
+async def _expect_flat(client: BinanceRestClient, trader: SymbolTrader) -> None:
     if await trader.position() is not None:
         raise TrialFailed("the position is still open")
-    left = await client.open_algo_orders(symbol) + await client.open_orders(symbol)
+    left = await client.open_algo_orders(trader.symbol) + await client.open_orders(trader.symbol)
     if left:
-        raise TrialFailed(f"{len(left)} order(s) still open on {symbol}")
-    print("Trial passed: flat, no open orders.")
+        raise TrialFailed(f"{len(left)} order(s) still open on {trader.symbol}")

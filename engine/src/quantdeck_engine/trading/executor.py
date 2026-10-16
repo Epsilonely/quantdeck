@@ -6,6 +6,8 @@
   an exchange-side `closePosition` stop right after the fill (D-18, D-19).
 - An order whose outcome is unknown is looked up by its client ID, never blindly resent
   (D-20). Client IDs encode the order's role (D-21).
+- Each entry's risk is capped by an account-wide gate: the room left under the daily loss
+  limit (D-24). The kill switch flattens each symbol through `flatten` (D-27).
 
 Every decision that protects a position re-reads the exchange first (D-06). A symbol whose
 trading is halted still closes and protects positions; it only refuses new entries.
@@ -15,7 +17,7 @@ import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from decimal import Decimal
-from typing import Any
+from typing import Any, Protocol
 
 import httpx
 
@@ -52,7 +54,8 @@ REQUEST_ERRORS = (BinanceAPIError, httpx.HTTPError)
 
 
 class TradingHalted(Exception):
-    """Trading on this symbol was stopped (D-19, D-20, D-16); entries are refused."""
+    """Entries are refused: this symbol was stopped (D-16, D-19, D-20), or the account was
+    halted by the kill switch (D-27)."""
 
 
 class OrderOutcomeUnclear(Exception):
@@ -63,6 +66,16 @@ class StopNotPlaced(Exception):
     """An exchange-side stop could not be placed or confirmed (D-19)."""
 
 
+class EntryGate(Protocol):
+    async def entry_risk(self, per_trade: Decimal) -> Decimal:
+        """The risk amount an entry may take, at most `per_trade` (D-24).
+
+        Called while the trader holds its lock, so it must not close or cancel anything.
+        Raises `TradingHalted` when no entry may be made.
+        """
+        ...
+
+
 class SymbolTrader:
     def __init__(
         self,
@@ -71,6 +84,7 @@ class SymbolTrader:
         trading: TradingConfig,
         rules: SymbolRules,
         base_balance: BaseBalance,
+        gate: EntryGate,
         ids: ClientIdFactory,
         *,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -81,6 +95,7 @@ class SymbolTrader:
         self._trading = trading
         self._rules = rules
         self._base = base_balance
+        self._gate = gate
         self._ids = ids
         self._sleep = sleep
         self._lock = asyncio.Lock()
@@ -136,12 +151,21 @@ class SymbolTrader:
                 return None
 
             base = await self._base.get()
+            per_trade = risk_amount(base, self._trading.risk_per_trade_percent)
+            risk = await self._gate.entry_risk(per_trade)
+            if risk < per_trade:
+                logger.info(
+                    "%s: entry risk capped at %s %s by the daily loss limit (D-24)",
+                    self.symbol,
+                    risk.quantize(Decimal("0.01")),
+                    self._base.asset,
+                )
             try:
                 plan = size_entry(
                     side=side,
                     reference_price=await self._client.mark_price(self.symbol),
                     stop_price=stop_price,
-                    risk_amount=risk_amount(base, self._trading.risk_per_trade_percent),
+                    risk_amount=risk,
                     base_balance=base,
                     max_notional_multiple=self._trading.max_notional_multiple,
                     available_balance=await self._available_balance(),
@@ -220,6 +244,22 @@ class SymbolTrader:
         async with self._lock:
             if await self.position() is None:
                 await self._cancel_leftovers()
+
+    async def flatten(self) -> bool:
+        """Kill switch (D-27): close the position, then cancel every order on the symbol.
+
+        Orders are cancelled only once the position is gone, so its stop keeps protecting it
+        until then. Returns True when the symbol is flat with no open orders.
+        """
+        async with self._lock:
+            await self._close(Role.KILL)
+            if await self.position() is not None:
+                return False
+            await self._client.cancel_all_open_orders(self.symbol)
+            await self._client.cancel_all_algo_open_orders(self.symbol)
+            left = await self._client.open_orders(self.symbol)
+            left += await self._client.open_algo_orders(self.symbol)
+            return not left
 
     # Exchange reads
 

@@ -13,6 +13,7 @@ from quantdeck_engine.check import CheckFailed, run_check
 from quantdeck_engine.config import ConfigError, load_settings, load_trading_config
 from quantdeck_engine.logs import setup_logging
 from quantdeck_engine.trading.executor import OrderOutcomeUnclear, TradingHalted
+from quantdeck_engine.trading.halt import HaltStore
 from quantdeck_engine.trading.rules import Side
 from quantdeck_engine.trial import TrialFailed, run_trial
 
@@ -27,14 +28,25 @@ def main() -> None:
     check.add_argument("--interval", default="1m")
     check.add_argument("--count", type=int, default=3, help="kline updates to wait for")
     trial = commands.add_parser(
-        "trial", help="TESTNET ONLY: run entry, stop, and close once (places orders)"
+        "trial",
+        help="TESTNET ONLY: run entry, stop, close, and the kill switch once (places orders)",
     )
     trial.add_argument("--symbol", help="a symbol from config.toml (default: the first)")
     trial.add_argument("--side", choices=["long", "short"], default="long")
     trial.add_argument("--stop-percent", type=Decimal, default=Decimal(1))
+    commands.add_parser("lift-halt", help="lift the kill switch's halt (D-27)")
     args = parser.parse_args()
 
     log_file = setup_logging()
+
+    if args.command == "lift-halt":
+        # Needs no settings or exchange access: the halt is a local record (D-29).
+        try:
+            lift_halt(HaltStore())
+        except OSError as e:
+            logger.error("Could not lift the halt: %s", e)
+            raise SystemExit(1) from None
+        return
 
     try:
         settings = load_settings()
@@ -87,3 +99,20 @@ def main() -> None:
 
     print(f"QuantDeck engine: settings loaded ({network}, {settings.endpoints.rest}).")
     print("The trading loop is not implemented yet. Run `quantdeck-engine check`.")
+
+
+def lift_halt(store: HaltStore) -> None:
+    record = store.load()
+    if record is None:
+        print("Not halted: there is no halt record.")
+        return
+    store.clear()
+    logger.warning(
+        "Kill-switch halt lifted by the user (fired at %s: %s)",
+        record.halted_at or "an unknown time",
+        record.reason,
+    )
+    print(
+        "Halt lifted. Restart the engine to trade again. On the same UTC day the entry gate "
+        "still blocks entries while today's loss is at the limit (D-27)."
+    )

@@ -81,6 +81,8 @@ Source: [Trade](https://developers.binance.com/en/docs/catalog/core-trading-deri
 | `POST /fapi/v1/leverage` | 1 | Response `{"leverage", "maxNotionalValue", "symbol"}` |
 | `POST /fapi/v1/listenKey` | 1 | USER_STREAM. Returns the active key if there is one |
 | `PUT /fapi/v1/listenKey` | 1 | USER_STREAM. Response `{"listenKey": ...}`; `-1125` if no key is active |
+| `DELETE /fapi/v1/allOpenOrders` | 1 | `symbol` required. Docs response `{"code": 200, "msg": "The operation of cancel all open order is done."}`. Succeeded on testnet with no open orders (2026-10-16) |
+| `DELETE /fapi/v1/algoOpenOrders` | 1 | `symbol` required. Cancels every open algo order on the symbol, stops included. Same docs response as above. Succeeded on testnet with no open orders (2026-10-16) |
 
 - Boolean request parameters (`reduceOnly`, `closePosition`, `priceProtect`) are the strings `true`/`false`; boolean response fields are JSON booleans. Prices and quantities in responses are strings; IDs and times are numbers.
 - Changing margin type and leverage with no position worked on testnet (2026-10-10). The margin type change also pushes `ACCOUNT_UPDATE` with `m: "MARGIN_TYPE_CHANGE"`; the leverage change pushes `ACCOUNT_CONFIG_UPDATE` `{"ac": {"s": "BTCUSDT", "l": 5}}`.
@@ -150,8 +152,12 @@ Source: [Trade](https://developers.binance.com/en/docs/catalog/core-trading-deri
 Source: [Account — Income History](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/account), testnet response
 
 - `GET /fapi/v1/income` (USER_DATA, weight 30): `startTime`/`endTime` in ms, both inclusive; `page`; `limit` default 100, max 1000. Without times it returns the last 7 days; only the last three months are kept. Results are oldest first.
-- Fields: `symbol`, `incomeType`, `income` (string), `asset`, `info`, `time`, `tranId`, `tradeId`. Types include `TRANSFER`, `REALIZED_PNL`, `FUNDING_FEE`, `COMMISSION`, `INSURANCE_CLEAR`, and about twenty more.
+- Fields: `symbol`, `incomeType`, `income` (string), `asset`, `info`, `time`, `tranId`, `tradeId`.
+- The 23 `incomeType` values listed in the docs (2026-10-16): `TRANSFER`, `WELCOME_BONUS`, `REALIZED_PNL`, `FUNDING_FEE`, `COMMISSION`, `INSURANCE_CLEAR`, `REFERRAL_KICKBACK`, `COMMISSION_REBATE`, `API_REBATE`, `CONTEST_REWARD`, `CROSS_COLLATERAL_TRANSFER`, `OPTIONS_PREMIUM_FEE`, `OPTIONS_SETTLE_PROFIT`, `INTERNAL_TRANSFER`, `AUTO_EXCHANGE`, `DELIVERED_SETTELMENT` (sic), `COIN_SWAP_DEPOSIT`, `COIN_SWAP_WITHDRAW`, `POSITION_LIMIT_INCREASE_FEE`, `STRATEGY_UMFUTURES_TRANSFER`, `FEE_RETURN`, `BFUSD_REWARD`, `SPECIAL_FUNDING_FEE`. Which ones count toward today's loss is in D-24.
 - Testnet: one entry-and-close produced two `COMMISSION` records and one `REALIZED_PNL`, and the day's records summed exactly to the wallet balance change — the basis for rebuilding the day's base balance (D-23).
+- Record `time` is truncated to whole seconds (testnet 2026-10-16): a fill at …701.4 s was recorded as …701000. A `startTime` in the middle of a second leaves out that second's records.
+- One record pair per trade, not per order (testnet 2026-10-16): a market close that filled in 18 trades produced 18 `REALIZED_PNL` and 18 `COMMISSION` records, each with its `tradeId`. A busy day reaches the 1000-record page sooner than the order count suggests.
+- Testnet market-order commission was 0.04% of notional (2026-10-16).
 
 ### Liquidation price (2026-10-10)
 
@@ -170,4 +176,6 @@ Check each item while implementing the related feature:
 - [ ] `GET /fapi/v1/openOrders` with a non-empty result (the engine reads `clientOrderId`, `orderId`, `side`, `type`, `origQty`, `reduceOnly`).
 - [ ] Margin type and leverage: the errors when changing them with a position or open orders (docs: `-4047`, `-4048`, `-4161`).
 - [ ] Income history paging past 1000 records within one day.
+- [ ] Income history delay: how soon `REALIZED_PNL` and `COMMISSION` appear after a fill (D-30). The `trial` prints it; its first run (2026-10-16) queried from a mid-second start time and missed the records, so no number yet. They were there by the end of that run, within about 15 s of the fill.
+- [ ] Bulk cancels with orders actually open: on 2026-10-16 the stop had already expired with its position, so both calls ran on an empty book.
 - [ ] Liquidation price before entry (D-25): compare the engine's estimate with `liquidationPrice` from `positionRisk` while a position is open. The estimate uses notional ÷ leverage as WB, which runs one opening commission higher than the real `iw`.

@@ -53,6 +53,7 @@ These apply to all code in this repo. If a task would break one, stop and ask th
 - For Binance API details, check `docs/memory-bank/binanceNotes.md` and the official docs instead of relying on memory — the API changes.
 - Talk to the user in their language (usually Korean). This doesn't change the English-only rule for the memory bank.
 - Track work as GitHub issues (`gh`). Write issue titles and bodies in Korean, keeping code identifiers, API names, and paths verbatim. The repo is public: never put balances, keys, or raw log contents in an issue.
+- Commits: tag the related issue in the message: the title ends with `(#N)`, and the body ends with `Refs #N`, or `Closes #N` when the commit finishes the issue. Before committing, show the user the plan (files, title, body) and commit only after they approve it.
 
 ## Commands
 
@@ -71,7 +72,8 @@ Engine — run in `engine/`:
 - `uv run ruff check .` — lint
 - `uv run ruff format .` — format
 - `uv run quantdeck-engine check` — read-only connection check against the configured network (places no orders)
-- `uv run quantdeck-engine trial` — TESTNET ONLY, places orders: entry → stop → emergency stop → close, once. Needs `engine/config.toml` and a flat symbol; refuses mainnet. Ask the user before running it
+- `uv run quantdeck-engine trial` — TESTNET ONLY, places orders: entry → stop → emergency stop → close, then a second entry closed by the kill switch, once. Its halt record goes to a temporary directory. Needs `engine/config.toml` and a flat symbol; refuses mainnet and a halted engine. Ask the user before running it
+- `uv run quantdeck-engine lift-halt` — lift the kill switch's halt by deleting `engine/state/halt.json` (D-29). Only the user decides to lift a halt: never run it on your own
 - `uv add <pkg>` / `uv add --dev <pkg>` — add a dependency (updates `uv.lock`; commit both files)
 
 Bot: not implemented yet.
