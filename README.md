@@ -19,27 +19,66 @@ Python 매매 엔진이 전략 판단과 주문을 담당하고, Electron 데스
 
 ## 아키텍처
 
-엔진과 GUI는 별도의 프로세스로 실행됩니다. GUI를 닫아도 엔진은 계속 동작하며, 매매 판단은 항상 엔진에서만 이루어집니다.
+엔진과 GUI는 별도의 프로세스로 실행됩니다. GUI를 닫아도 엔진은 계속 동작하며, 매매 판단과 바이낸스 접속은 항상 엔진에서만 이루어집니다.
 
+```mermaid
+flowchart TB
+    BOT["디스코드 봇 (예정)"]
+
+    subgraph GUI["GUI · Electron"]
+        R["렌더러 (React 화면)<br/>상태 · 포지션 · 로그"]
+        M["main 프로세스<br/>엔진 접속 · 명령 확인 창"]
+    end
+
+    subgraph ENG["엔진 · Python"]
+        S["클라이언트 서버<br/>WebSocket · 127.0.0.1"]
+        C["상태 관리 · 리스크 가드<br/>킬 스위치"]
+        B["바이낸스 클라이언트<br/>API 키는 여기에만"]
+    end
+
+    subgraph BN["Binance USDⓈ-M Futures"]
+        REST["REST API<br/>주문 · 손절 · 잔고 · 손익 내역"]
+        WS["스트림<br/>체결 · 포지션 이벤트<br/>마크 가격"]
+    end
+
+    R <-->|"IPC (preload)"| M
+    M <-->|"WebSocket (토큰 인증)<br/>상태 · 로그 / 명령"| S
+    M -.->|"엔진이 없으면 시작"| ENG
+    BOT -.->|"WebSocket (예정)"| S
+    S <--> C
+    C <--> B
+    B -->|"서명된 요청 (HMAC)"| REST
+    B -->|"실시간 구독"| WS
 ```
-                 ┌─────────────────────────────────────────┐
-                 │ Binance USDⓈ-M Futures                 │
-                 │  - Market Streams (시세, 캔들)            │
-                 │  - REST API (주문)                       │
-                 │  - User Data Stream (체결, 포지션 변경)     │
-                 └────────────────────┬────────────────────┘
-                                      │
-                 ┌────────────────────┴────────────────────┐
-                 │ Engine (Python)                          │
-                 │  - 전략 판단 / 주문 실행 / 리스크 관리         │
-                 │  - SQLite 기록                            │
-                 └──────────┬──────────────────┬───────────┘
-                            │ WebSocket         │ WebSocket
-                            │ (localhost)       │
-                 ┌──────────┴─────────┐ ┌──────┴────────────┐
-                 │ GUI (Electron)     │ │ Discord Bot       │
-                 │ 모니터링 / 제어       │ │ 조회 / 정지         │
-                 └────────────────────┘ └───────────────────┘
+
+- **GUI ↔ 엔진:** GUI의 main 프로세스가 `engine/state/connection.json`에서 포트와 토큰을 읽어 `127.0.0.1`의 엔진에 WebSocket으로 접속합니다. 포트와 토큰은 엔진을 시작할 때마다 바뀝니다. 화면(렌더러)은 토큰을 모르고, preload가 열어 둔 함수로만 main과 통신합니다.
+- **엔진 ↔ 바이낸스:** API 키는 엔진만 가지고 있습니다. 주문과 조회는 서명한 REST 요청으로 보내고, 체결·포지션 변화와 마크 가격은 스트림으로 받습니다. 손절 주문은 거래소에 걸려 있어서 엔진이 멈춰도 동작합니다.
+
+GUI가 엔진에 접속해 상태를 받고, 긴급 청산 명령을 보내는 흐름입니다.
+
+```mermaid
+sequenceDiagram
+    actor U as 사용자
+    participant G as GUI (main)
+    participant E as 엔진
+    participant X as Binance
+
+    opt 엔진이 없으면 (GUI를 켤 때 한 번)
+        G->>E: 엔진 시작 (창 없이 백그라운드)
+    end
+    G->>E: 접속 후 hello (connection.json의 토큰)
+    E-->>G: welcome → 최근 로그 → 전체 상태
+    loop 실행 중
+        X-->>E: 체결 · 포지션 이벤트, 마크 가격
+        E-->>G: 바뀐 전체 상태 (약 1초마다), 새 로그
+    end
+    U->>G: 긴급 청산 클릭
+    G->>U: 확인 창
+    U->>G: 확인
+    G->>E: 명령 emergency_close
+    E->>X: 포지션 청산 (reduceOnly 시장가), 주문 · 손절 취소
+    E-->>G: 결과 (성공 여부, 메시지)
+    E-->>G: 전체 상태 (거래 정지 중)
 ```
 
 ## 디렉터리 구조
