@@ -7,7 +7,8 @@ so it places no entries; it protects what it finds and fires the kill switch whe
 loss limit is reached. Clients (the GUI) connect through the WebSocket server in `server.py`
 (D-32, D-33).
 
-Only one engine process runs at a time (D-31). Stop it with Ctrl+C.
+Only one engine process runs at a time (D-31). Stop it with Ctrl+C or a client's
+`stop_engine` command (D-34).
 """
 
 import asyncio
@@ -115,6 +116,7 @@ class Engine:
         self.checker = checker or RiskChecker(guard)
         self.state = AccountState(list(self.traders))
         self.mark_prices: dict[str, Decimal] = {}  # for display only (D-33)
+        self.stop_requested = asyncio.Event()
 
     async def run(self) -> None:
         """Follow the account until cancelled."""
@@ -136,6 +138,14 @@ class Engine:
 
     async def lift_halt(self) -> bool:
         return await self.guard.lift()
+
+    async def stop(self) -> None:
+        """Stop the engine as Ctrl+C does (D-34), once any kill switch in progress is done.
+
+        Exchange-side stops keep protecting open positions while it is stopped.
+        """
+        await self.guard.wait_idle()
+        self.stop_requested.set()
 
     # The state clients see (D-33)
 
@@ -300,9 +310,18 @@ async def run_engine(settings: Settings, trading: TradingConfig) -> None:
                     logger.warning("Engine running for %s, halted: no new orders (D-27)", symbols)
                 else:
                     logger.info("Engine running for %s; no strategy yet, so no entries", symbols)
+                server = ClientServer(engine, logs)
                 async with asyncio.TaskGroup() as tasks:
-                    tasks.create_task(engine.run())
-                    tasks.create_task(_serve_clients(ClientServer(engine, logs)))
+                    running = [
+                        tasks.create_task(engine.run()),
+                        tasks.create_task(_serve_clients(server)),
+                    ]
+                    await engine.stop_requested.wait()
+                    # Let the stop command's result reach the client that sent it.
+                    await server.flush()
+                    for task in running:
+                        task.cancel()
+                logger.info("Engine stopped by a client (D-34)")
     finally:
         root.removeHandler(logs)
 

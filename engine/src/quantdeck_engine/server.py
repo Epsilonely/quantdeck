@@ -7,7 +7,8 @@
 - After the hello the client gets `welcome`, the recent log records, and the whole state.
   The state is sent again whenever it changes, and log records as they happen.
 - Commands are `{"type": "command", "id": ..., "name": ...}`; the reply is a `result` with
-  the same `id`. Names: `emergency_close` (the kill switch, D-27) and `lift_halt`.
+  the same `id`. Names: `emergency_close` (the kill switch, D-27), `lift_halt`, and
+  `stop_engine` (D-34).
 
 Message shapes are recorded in `docs/memory-bank/techContext.md`.
 """
@@ -41,6 +42,7 @@ AUTH_TIMEOUT = 5.0  # seconds for a client to send its hello
 PUBLISH_INTERVAL = 0.25  # seconds between checks for a changed state
 LOG_BACKLOG = 200  # records sent to a client when it connects
 OUTBOX_LIMIT = 1000  # messages waiting for one client before it is dropped as too slow
+FLUSH_TIMEOUT = 2.0  # seconds to wait for queued messages before the engine stops
 
 # engine/src/quantdeck_engine/server.py -> engine/state, wherever the engine is started from
 DEFAULT_CONNECTION_FILE = Path(__file__).resolve().parents[2] / "state" / "connection.json"
@@ -57,6 +59,10 @@ class EngineControl(Protocol):
 
     async def lift_halt(self) -> bool:
         """Lift the kill switch's halt; False if there was none."""
+        ...
+
+    async def stop(self) -> None:
+        """Ask the engine to stop once any kill switch in progress is done (D-34)."""
         ...
 
 
@@ -198,6 +204,14 @@ class ClientServer:
         with suppress(ConnectionClosed):
             while True:
                 await client.conn.send(await client.outbox.get())
+                client.outbox.task_done()
+
+    async def flush(self) -> None:
+        """Wait until every connected client's queued messages are sent, or FLUSH_TIMEOUT."""
+        with suppress(TimeoutError):
+            async with asyncio.timeout(FLUSH_TIMEOUT):
+                for client in list(self._clients):
+                    await client.outbox.join()
 
     # Commands
 
@@ -218,6 +232,7 @@ class ClientServer:
         commands: dict[object, Callable[[], Awaitable[tuple[bool, str]]]] = {
             "emergency_close": self._emergency_close,
             "lift_halt": self._lift_halt,
+            "stop_engine": self._stop_engine,
         }
         command = commands.get(name)
         if command is None:
@@ -240,6 +255,11 @@ class ClientServer:
         if await self._engine.lift_halt():
             return True, "halt lifted"
         return True, "not halted"
+
+    async def _stop_engine(self) -> tuple[bool, str]:
+        logger.warning("Engine stop requested by a client (D-34)")
+        await self._engine.stop()
+        return True, "engine stopping; exchange-side stops keep protecting open positions"
 
     # Broadcasting
 

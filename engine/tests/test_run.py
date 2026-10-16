@@ -250,6 +250,16 @@ async def test_snapshot_of_a_protected_position(store: HaltStore) -> None:
     }
 
 
+async def test_stop_waits_for_a_kill_switch_in_progress(store: HaltStore) -> None:
+    engine = await started(FakeExchange(), store)
+    async with engine.guard._kill_lock:  # as a running kill switch holds it
+        stopping = asyncio.create_task(engine.stop())
+        await asyncio.sleep(0.01)
+        assert not engine.stop_requested.is_set()
+    await asyncio.wait_for(stopping, 1)
+    assert engine.stop_requested.is_set()
+
+
 def test_amounts_are_never_in_exponent_notation() -> None:
     assert _text(D("0E-8")) == "0.00000000"
     assert _text(D("1E+3")) == "1000"

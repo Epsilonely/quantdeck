@@ -20,6 +20,7 @@ class FakeEngine:
         self.state: dict[str, Any] = {"halted": False}
         self.closes = 0
         self.lift_error: Exception | None = None
+        self.stopped = asyncio.Event()
 
     def snapshot(self) -> dict[str, Any]:
         return dict(self.state)
@@ -36,6 +37,9 @@ class FakeEngine:
         self.state["halted"] = False
         return was_halted
 
+    async def stop(self) -> None:
+        self.stopped.set()
+
 
 @dataclass
 class Served:
@@ -43,6 +47,7 @@ class Served:
     logs: LogBuffer
     file: ConnectionFile
     server: ClientServer
+    task: asyncio.Task[None]
 
 
 @pytest.fixture
@@ -54,7 +59,7 @@ async def served(tmp_path: Path) -> AsyncIterator[Served]:
     )
     task = asyncio.create_task(server.run())
     await asyncio.wait_for(server.listening.wait(), 2)
-    yield Served(engine, logs, file, server)
+    yield Served(engine, logs, file, server, task)
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task
@@ -191,6 +196,18 @@ async def test_lift_halt_refused_at_the_limit(served: Served) -> None:
         result = await command(ws, "lift_halt", 7)
     assert (result["id"], result["ok"]) == (7, False)
     assert "at the limit" in result["message"]
+
+
+async def test_stop_result_reaches_the_client_before_the_server_stops(served: Served) -> None:
+    async with await hello(served.file) as ws:
+        await ws.send(json.dumps({"type": "command", "id": 3, "name": "stop_engine"}))
+        # What run_engine does once the engine is asked to stop (D-34).
+        await asyncio.wait_for(served.engine.stopped.wait(), 2)
+        await served.server.flush()
+        served.task.cancel()
+        result = await receive(ws, "result")
+    assert (result["id"], result["ok"]) == (3, True)
+    assert "stopping" in result["message"]
 
 
 async def test_unknown_command_and_bad_message(served: Served) -> None:

@@ -222,6 +222,12 @@ class RiskGuard:
             self._record()
             return await self._flatten()
 
+    async def wait_idle(self) -> None:
+        """Return once no kill switch is running, so stopping the engine never cuts one short
+        (D-34)."""
+        async with self._kill_lock:
+            pass
+
     async def lift(self) -> bool:
         """Lift the halt at the user's request (D-27, D-33): delete the record and resume.
 
