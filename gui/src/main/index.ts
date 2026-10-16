@@ -3,11 +3,19 @@ import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
 import { EngineClient } from './engine-client'
-import { COMMAND_NAMES, type CommandName, type CommandResult } from '../shared/engine'
+import { EngineLauncher } from './engine-launcher'
+import {
+  COMMAND_NAMES,
+  type CommandName,
+  type CommandResult,
+  type EngineSnapshot
+} from '../shared/engine'
 
-// engine/state/connection.json in this checkout (D-32). When run from source, the app path is
-// gui/. A packaged app would need another way to find it; that is still open.
-const CONNECTION_FILE = join(app.getAppPath(), '..', 'engine', 'state', 'connection.json')
+// engine/ in this checkout, for the connection file (D-32) and starting the engine (D-34). When
+// run from source, the app path is gui/. A packaged app would need another way to find it; that
+// is still open.
+const ENGINE_DIR = join(app.getAppPath(), '..', 'engine')
+const CONNECTION_FILE = join(ENGINE_DIR, 'state', 'connection.json')
 
 const CONFIRMATIONS: Record<CommandName, { message: string; detail: string; button: string }> = {
   emergency_close: {
@@ -22,6 +30,14 @@ const CONFIRMATIONS: Record<CommandName, { message: string; detail: string; butt
     detail:
       '킬스위치의 정지를 해제합니다. 오늘 손실이 아직 한도에 있으면 엔진이 거부합니다 (D-33).',
     button: '정지 해제'
+  },
+  stop_engine: {
+    message: '엔진을 정지할까요?',
+    detail:
+      '엔진 프로세스를 종료합니다. 정지된 동안에는 일일 손실 확인과 킬스위치가 동작하지 않고, ' +
+      '열린 포지션은 거래소에 걸린 손절 주문만 지킵니다. 진행 중인 킬스위치가 있으면 끝난 뒤에 ' +
+      '정지합니다 (D-34).',
+    button: '엔진 정지'
   }
 }
 
@@ -29,11 +45,25 @@ function broadcast(channel: string, value: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) window.webContents.send(channel, value)
 }
 
+const launcher = new EngineLauncher(ENGINE_DIR, (launch) => broadcast('engine:launch', launch))
+
+// The first connection attempt decides whether to start the engine (D-34): if none answers, start
+// one; if one is running, leave it as it is. Later disconnects never start one by themselves.
+let firstAttempt = true
 const engine = new EngineClient(CONNECTION_FILE, {
-  status: (status) => broadcast('engine:status', status),
+  status: (status) => {
+    broadcast('engine:status', status)
+    if (status.phase === 'connected') launcher.connected()
+    else if (status.phase === 'disconnected' && firstAttempt) launcher.start()
+    if (status.phase !== 'connecting') firstAttempt = false
+  },
   state: (state) => broadcast('engine:state', state),
   logs: (update) => broadcast('engine:logs', update)
 })
+
+function snapshot(): EngineSnapshot {
+  return { ...engine.snapshot(), launch: launcher.state }
+}
 
 function createWindow(): void {
   const mainWindow = new BrowserWindow({
@@ -77,7 +107,13 @@ app.whenReady().then(() => {
     optimizer.watchWindowShortcuts(window)
   })
 
-  ipcMain.handle('engine:snapshot', () => engine.snapshot())
+  ipcMain.handle('engine:snapshot', () => snapshot())
+  ipcMain.handle('engine:start', (event) => {
+    // Starting needs no confirmation: a running engine is the normal state, and the instance
+    // lock refuses a second one (D-31, D-34).
+    if (!BrowserWindow.fromWebContents(event.sender)) return
+    if (snapshot().status.phase !== 'connected') launcher.start()
+  })
   ipcMain.handle('engine:command', async (event, name: unknown): Promise<CommandResult | null> => {
     const window = BrowserWindow.fromWebContents(event.sender)
     if (!window || !COMMAND_NAMES.includes(name as CommandName)) {

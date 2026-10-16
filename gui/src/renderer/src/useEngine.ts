@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import type { ConnectionStatus, EngineState, LogRecord } from '../../shared/engine'
+import type { ConnectionStatus, EngineState, LaunchState, LogRecord } from '../../shared/engine'
 
 const LOG_CAPACITY = 1000
 
 export interface EngineView {
   status: ConnectionStatus | null // null until the main process first answers
+  launch: LaunchState
   state: EngineState | null
   logs: LogRecord[]
 }
@@ -13,6 +14,7 @@ export function useEngine(): EngineView {
   const [status, setStatus] = useState<ConnectionStatus | null>(null)
   const [state, setState] = useState<EngineState | null>(null)
   const [logs, setLogs] = useState<LogRecord[]>([])
+  const [launch, setLaunch] = useState<LaunchState>({ phase: 'idle', message: null })
 
   useEffect(() => {
     const { engine } = window.api
@@ -21,6 +23,7 @@ export function useEngine(): EngineView {
     const unsubscribe = [
       engine.onStatus(setStatus),
       engine.onState(setState),
+      engine.onLaunch(setLaunch),
       engine.onLogs((update) =>
         setLogs((shown) =>
           update.reset ? update.records : [...shown, ...update.records].slice(-LOG_CAPACITY)
@@ -31,6 +34,7 @@ export function useEngine(): EngineView {
     engine.snapshot().then((snapshot) => {
       if (!active) return
       setStatus(snapshot.status)
+      setLaunch(snapshot.launch)
       setState(snapshot.state)
       setLogs(snapshot.logs)
     })
@@ -40,5 +44,5 @@ export function useEngine(): EngineView {
     }
   }, [])
 
-  return { status, state, logs }
+  return { status, launch, state, logs }
 }

@@ -64,7 +64,7 @@ export interface LogRecord {
   message: string
 }
 
-export const COMMAND_NAMES = ['emergency_close', 'lift_halt'] as const
+export const COMMAND_NAMES = ['emergency_close', 'lift_halt', 'stop_engine'] as const
 export type CommandName = (typeof COMMAND_NAMES)[number]
 
 export interface CommandResult {
@@ -83,8 +83,15 @@ export interface LogsUpdate {
   records: LogRecord[]
 }
 
+// The engine process this GUI started (D-34).
+export interface LaunchState {
+  phase: 'idle' | 'starting' | 'failed'
+  message: string | null // why it failed
+}
+
 export interface EngineSnapshot {
   status: ConnectionStatus
+  launch: LaunchState
   state: EngineState | null // the last state received; stale while disconnected
   logs: LogRecord[]
 }
@@ -93,7 +100,9 @@ export interface EngineApi {
   snapshot(): Promise<EngineSnapshot>
   // The main process asks the user to confirm first; null means the user cancelled.
   command(name: CommandName): Promise<CommandResult | null>
+  startEngine(): Promise<void>
   onStatus(listener: (status: ConnectionStatus) => void): () => void
   onState(listener: (state: EngineState) => void): () => void
   onLogs(listener: (update: LogsUpdate) => void): () => void
+  onLaunch(listener: (launch: LaunchState) => void): () => void
 }

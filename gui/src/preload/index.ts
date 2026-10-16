@@ -14,9 +14,11 @@ function subscribe<T>(channel: string, listener: (value: T) => void): () => void
 const engine: EngineApi = {
   snapshot: () => ipcRenderer.invoke('engine:snapshot'),
   command: (name) => ipcRenderer.invoke('engine:command', name),
+  startEngine: () => ipcRenderer.invoke('engine:start'),
   onStatus: (listener) => subscribe('engine:status', listener),
   onState: (listener) => subscribe('engine:state', listener),
-  onLogs: (listener) => subscribe('engine:logs', listener)
+  onLogs: (listener) => subscribe('engine:logs', listener),
+  onLaunch: (listener) => subscribe('engine:launch', listener)
 }
 
 contextBridge.exposeInMainWorld('api', { engine })

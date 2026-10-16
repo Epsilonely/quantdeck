@@ -7,7 +7,8 @@ import { useEngine } from './useEngine'
 
 const COMMAND_LABELS: Record<CommandName, string> = {
   emergency_close: '긴급 청산',
-  lift_halt: '정지 해제'
+  lift_halt: '정지 해제',
+  stop_engine: '엔진 정지'
 }
 
 interface ShownResult extends CommandResult {
@@ -15,7 +16,7 @@ interface ShownResult extends CommandResult {
 }
 
 function App(): React.JSX.Element {
-  const { status, state, logs } = useEngine()
+  const { status, launch, state, logs } = useEngine()
   const [busy, setBusy] = useState<CommandName | null>(null)
   const [result, setResult] = useState<ShownResult | null>(null)
 
@@ -41,6 +42,9 @@ function App(): React.JSX.Element {
   } else if (connected) {
     statusText = `연결됨 · ${clock(status.since)} UTC부터`
     statusClass = 'ok'
+  } else if (launch.phase === 'starting') {
+    statusText = '엔진 시작 중'
+    statusClass = 'info'
   } else {
     statusText = `연결 끊김 · ${status.detail ?? ''}`
     statusClass = 'danger'
@@ -61,6 +65,18 @@ function App(): React.JSX.Element {
         )}
         <span className={`tag ${statusClass}`}>{statusText}</span>
         <span className="spacer" />
+        {connected ? (
+          <button disabled={busy !== null} onClick={() => run('stop_engine')}>
+            {busy === 'stop_engine' ? '정지 중…' : '엔진 정지'}
+          </button>
+        ) : (
+          <button
+            disabled={!status || launch.phase === 'starting'}
+            onClick={() => window.api.engine.startEngine()}
+          >
+            {launch.phase === 'starting' ? '시작 중…' : '엔진 시작'}
+          </button>
+        )}
         <button
           className="danger"
           disabled={!connected || busy !== null}
@@ -69,6 +85,15 @@ function App(): React.JSX.Element {
           {busy === 'emergency_close' ? '청산 중…' : '긴급 청산'}
         </button>
       </header>
+
+      {!connected && launch.phase === 'failed' && (
+        <div className="banner danger">
+          <div>
+            <strong>엔진이 실행되고 있지 않습니다</strong>
+            <div className="detail">{launch.message}</div>
+          </div>
+        </div>
+      )}
 
       {status && !connected && state && (
         <div className="banner warn">
@@ -146,10 +171,7 @@ function App(): React.JSX.Element {
           </section>
         </>
       ) : (
-        <p className="muted">
-          엔진 상태를 아직 받지 못했습니다. <code>uv run quantdeck-engine run</code>으로 엔진을
-          시작하세요.
-        </p>
+        <p className="muted">엔진 상태를 아직 받지 못했습니다.</p>
       )}
 
       <section className="log-section">

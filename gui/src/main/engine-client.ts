@@ -62,7 +62,7 @@ export class EngineClient {
     this.socket = null
   }
 
-  snapshot(): EngineSnapshot {
+  snapshot(): Omit<EngineSnapshot, 'launch'> {
     return { status: this.status, state: this.state, logs: [...this.logs] }
   }
 
