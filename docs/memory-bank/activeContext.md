@@ -1,19 +1,24 @@
 # Active Context
 
-_Last updated: 2026-10-18_
+_Last updated: 2026-10-19_
 
 ## Current focus
 
-The backtest module (GitHub issue #8). On 2026-10-18 the user and Claude settled the strategy interface live and backtest share (D-36), the backtest's reuse of the live sizing and risk rules (D-37), and where its candles come from (D-38). The first strategy will be picked by backtest from two candidates, a Donchian breakout and a Bollinger Band mean reversion (D-39); nothing goes to the testnet forward test on a guess.
+The backtest module (GitHub issue #8) is built: the strategy interface (D-36), historical data from the archive and REST (D-38), the simulator with the live sizing and risk rules (D-37) and the fill model (D-40), both candidates, a report, and `quantdeck-engine backtest`.
 
-Done before this: the engine ↔ GUI connection and the GUI's monitoring, start/stop, and emergency close (#5, 2026-10-16), and the GUI theme (#6, D-35). Work items are tracked as GitHub issues.
+First results, BTCUSDT 1h, 2020-01-01 to 2026-10-17, default parameters (Donchian 20/10; Bollinger 20, 2σ bands, stop 1σ beyond the close), default costs, 5000 USDT, testnet risk values (2026-10-19):
+
+- Donchian breakout: −27.0%, 1538 trades, win rate 31.7%, −0.010 R per trade, max drawdown 56.0%, longest losing streak 22, daily limit never hit. Before fees (3585 USDT) and funding (−383 USDT) it was about +2600 USDT, so costs turned a small edge into a loss.
+- Bollinger mean reversion: −99.5%, 2192 trades, win rate 29.2%, −0.321 R per trade, daily limit hit on 143 days. Its stops averaged about 0.9% from entry, so fees and slippage cost about 0.2–0.3 R per trade, and it lost even before costs. From 2023 its balance was too small for the minimum order.
+
+Neither holds up, so under D-39 the candidates change before anything goes to the forward test. The user hasn't decided how yet.
 
 ## Open questions
 
 Roughly in the order they're needed:
 
-- **Backtest fill model (#8):** entry fill price and slippage, how a stop triggers (mark price klines, D-18) and where it fills, fees (regular-tier taker 0.05% on mainnet; testnet charged 0.04%), funding from the archive, which symbol rules and leverage brackets to size with, the test period, and the report's form.
-- **Strategy:** each candidate's parameters and timeframe come out of the backtest. Pausing and resuming entries from the GUI waits for the strategy (D-33). Adding to an open position is out of scope for now (D-22).
+- **Next candidates (D-39):** what to change after the first results. Options raised: longer candles (4h) so stops are wider and costs a smaller share of each trade; Donchian's classic 55/20 periods; a wider Bollinger stop or a trend filter. Any search over parameters needs a holdout period (choose on early years, confirm on later ones) so the choice isn't fitted to history. 4h data isn't downloaded yet.
+- **Strategy:** pausing and resuming entries from the GUI waits for the strategy (D-33). Adding to an open position is out of scope for now (D-22).
   - Take profit, discussed 2026-10-16 and undecided: an optional take-profit price on the entry signal, placed like the stop as a `TAKE_PROFIT_MARKET` `closePosition` algo order. `TRAILING_STOP_MARKET` can't use `closePosition` (D-18), so trailing is deferred. Neither candidate needs either (D-36).
 - **Engine operation:** the GUI starts `run` when none is running and stops it on request (D-34). Still open: running it without the GUI (a Windows service or scheduled task) and what restarts it after a crash.
 - **Storage:** what SQLite records, and whether logs go there (D-12; D-33 keeps recent logs in memory for now). Historical candles (D-38) and the halt record (D-29) are settled.
@@ -24,7 +29,7 @@ Roughly in the order they're needed:
 
 ## Next steps
 
-1. Backtest module (#8): candle download and checks (D-38), the simulator (D-37) and its fill model, the two candidates on the D-36 interface, and the comparison report. Then pick the first strategy and check it on two or three other major coins with the same parameters (D-39).
+1. Decide the next candidates (see Open questions), backtest them, and pick the first strategy; then check it on two or three other major coins with the same parameters (D-39). Issue #8 stays open until then.
 2. Closed-candle feed (GitHub issue #9): backfill klines missed during stream reconnects (Known issues in `progress.md`) and load warm-up candles from REST at startup (D-36). Required before a strategy trades. Then connect the strategy to `run` for the forward test.
 3. How a packaged GUI finds `engine/` (`techContext.md`, GUI notes).
 4. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.

@@ -317,7 +317,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - The backtest sizes entries with the live code (D-22, D-25): the risk amount from the day's base balance, `stepSize` rounding, `MIN_NOTIONAL`, the notional caps, and the liquidation-distance check. It also applies the daily loss limit and the entry gate (D-23, D-24).
   - When the simulated day's loss reaches the limit, the backtest closes the position and takes no entries for the rest of that UTC day, then resumes the next UTC day as if the user had lifted the halt (D-27). The report counts how often this happened.
 - **Why:** The results then include what the live engine would really skip or trim, such as entries below `MIN_NOTIONAL` or entries capped by the room left under the limit. How often the limit fires is one of the criteria for choosing a strategy (D-39). Live, a halt waits for the user; a backtest has no user, so it lifts at the next day boundary, the earliest a lift changes anything (D-27).
-- **Note:** The rest of the fill model (entry fill price and slippage, stop trigger and fill, fees, funding) is decided in GitHub issue #8.
+- **Note:** The rest of the fill model is D-40.
 - **Date:** 2026-10-18
 
 ## D-38 Backtest candles come from Binance's mainnet archive and REST, kept as the downloaded zip files
@@ -336,3 +336,16 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Why:** Which strategy is profitable can't be known before measuring it. Win rate alone doesn't decide it: a trend follower loses often and wins big, a mean reverter wins often and loses big, and either can end up ahead or behind after costs. The two cover both styles, have few parameters, and derive their stop price from their own rules (D-22). The daily limit is a small number of stop-outs (three on testnet, D-24), so long losing streaks mean halts, which is why they are a criterion. A strategy that works only on the coin it was chosen on has likely been fitted to that coin's history; tuning parameters per coin would make that more likely, not less. BTCUSDT comes first for its liquidity (backtest fills closest to real ones) and its archive back to 2020. Trading several coins at once is a separate step (D-15, D-24 Limitation).
 - **Not a candidate for now:** A volatility breakout, which enters inside a forming candle and exits on time; it doesn't fit D-36.
 - **Date:** 2026-10-18
+
+## D-40 Backtest fill model: next open with slippage, mark-price stops, taker fees, archived funding
+
+- **Decision:**
+  - A strategy's entry or exit fills at the next candle's open, moved against the trade by a market slippage (default 0.02%). Entries are sized at that candle's mark price open.
+  - Stops trigger when a candle's mark price range reaches them (D-18). They fill at the stop, or at the candle's last price open if the mark price opened past the stop, moved against the trade by a stop slippage (default 0.05%). A fill past the estimated liquidation price is cut at that price.
+  - Every fill pays the taker fee (default 0.05%, the regular tier).
+  - Funding from the archive settles while a position is open: quantity × mark price × rate. A funding at a candle's open time comes before that candle's fills.
+  - Symbol rules and leverage brackets are the configured network's current values (testnet by default); risk settings come from `engine/config.toml` (D-37). The starting balance defaults to 5000 USDT, the period to 2020-01-01 through yesterday, and the report breaks results down by year.
+  - All costs are command-line options.
+- **Why:** The live engine sends its market order right after a candle closes (D-17, D-36), so the next open is where it fills, and funding at that instant settles first. Triggering on the mark price matches the live stop; mark price candles are in the archive (D-38). Slippage and fees are set on the pessimistic side of a small BTCUSDT order, since an edge that only survives optimistic costs isn't one. The testnet rules and brackets match the forward test's conditions.
+- **Limitations:** With hourly candles, where the last price traded when a mark price stop fired is unknown, so the stop price stands in for it. Candles longer than the funding interval settle a funding inside a candle at its open. Current rules and brackets are applied to all of history.
+- **Date:** 2026-10-19
