@@ -151,7 +151,7 @@ def test_example_config_is_valid() -> None:
     assert config.risk_per_trade_percent == Decimal("1")
     assert config.daily_loss_limit_percent == Decimal("3")
     assert config.max_notional_multiple == Decimal("2")
-    assert config.symbols["BTCUSDT"].leverage == 5
+    assert config.symbols["BTCUSDT"].leverage == 2
 
 
 def test_decimals_stay_exact(tmp_path: Path) -> None:

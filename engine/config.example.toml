@@ -1,6 +1,6 @@
 # QuantDeck engine settings (D-28). Copy to config.toml (gitignored) and adjust.
 # Secrets and the network (testnet/mainnet) stay in the repo-root .env.
-# The values below are testnet starting values (D-23 to D-25), not mainnet values.
+# The values below are testnet starting values (D-23 to D-25, D-41), not mainnet values.
 
 [risk]
 # Percentages are of the day's base balance: the USDT wallet balance at 00:00 UTC.
@@ -10,4 +10,4 @@ max_notional_multiple = 2       # position notional <= this x base balance (max 
 
 # One table per symbol. Margin type is always isolated.
 [symbols.BTCUSDT]
-leverage = 5                    # 1 to 10
+leverage = 2                    # 1 to 10; 2 leaves room for the 4h Donchian stops (D-41)

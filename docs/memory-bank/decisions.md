@@ -184,6 +184,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - Before every entry, the stop must sit no farther from the entry price than half the distance to the estimated liquidation price; otherwise the entry is skipped with a WARNING.
 - **Why:** D-22 sizing grows as the stop tightens: 1% risk with a 0.25% stop is a notional of 4× the base. With isolated margin and an exchange-side stop, leverage doesn't change the planned loss (quantity × stop distance). It sets two other things: the liquidation distance (about 1/leverage) and the margin, which is what a failed stop can lose. At 5×, liquidation sits about 20% away, leaving room for stops up to about 10%, and a full 2× position ties up about 40% of the base. Keeping the stop within half the liquidation distance leaves room for maintenance margin, fees, and mark/last price divergence.
 - **Revisit:** The leverage, once the first strategy's typical stop distance is known.
+- **Note (2026-10-19):** Revisited with the first strategy: testnet leverage is now 2× (D-41). Its stops are often wider than 5× allows, and the reasoning above (leverage sets the liquidation distance and the margin, not the planned loss) is unchanged.
 - **Date:** 2026-10-10
 
 ## D-26 Emergency stop where the loss equals one risk amount
@@ -336,6 +337,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Why:** Which strategy is profitable can't be known before measuring it. Win rate alone doesn't decide it: a trend follower loses often and wins big, a mean reverter wins often and loses big, and either can end up ahead or behind after costs. The two cover both styles, have few parameters, and derive their stop price from their own rules (D-22). The daily limit is a small number of stop-outs (three on testnet, D-24), so long losing streaks mean halts, which is why they are a criterion. A strategy that works only on the coin it was chosen on has likely been fitted to that coin's history; tuning parameters per coin would make that more likely, not less. BTCUSDT comes first for its liquidity (backtest fills closest to real ones) and its archive back to 2020. Trading several coins at once is a separate step (D-15, D-24 Limitation).
 - **Not a candidate for now:** A volatility breakout, which enters inside a forming candle and exits on time; it doesn't fit D-36.
 - **Date:** 2026-10-18
+- **Note (2026-10-19):** Both first candidates lost on BTCUSDT 1h after costs, so the candidates changed as this entry says; the choice is D-41.
 
 ## D-40 Backtest fill model: next open with slippage, mark-price stops, taker fees, archived funding
 
@@ -348,4 +350,16 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - All costs are command-line options.
 - **Why:** The live engine sends its market order right after a candle closes (D-17, D-36), so the next open is where it fills, and funding at that instant settles first. Triggering on the mark price matches the live stop; mark price candles are in the archive (D-38). Slippage and fees are set on the pessimistic side of a small BTCUSDT order, since an edge that only survives optimistic costs isn't one. The testnet rules and brackets match the forward test's conditions.
 - **Limitations:** With hourly candles, where the last price traded when a mark price stop fired is unknown, so the stop price stands in for it. Candles longer than the funding interval settle a funding inside a candle at its open. Current rules and brackets are applied to all of history.
+- **Date:** 2026-10-19
+
+## D-41 First strategy: Donchian breakout 55/20 on BTCUSDT 4h, at 2× leverage on testnet
+
+- **Decision:** The first strategy for the testnet forward test is the Donchian breakout with entry period 55 and exit period 20 on 4h candles, trading BTCUSDT. Testnet leverage goes from 5× to 2× (D-25). The Bollinger mean reversion is dropped.
+- **How it was chosen (D-39), all with D-40 costs and the testnet risk values:**
+  - On BTCUSDT 1h with default parameters, both first candidates lost: Donchian 20/10 −27.0% (−0.010 R per trade), Bollinger −99.5% (−0.321 R). Donchian was ahead before costs; Bollinger lost even before them.
+  - A grid fixed in advance, Donchian {1h, 4h} × {20/10, 55/20}, was chosen on 2020–2023 and checked on 2024-01-01 to 2026-10-17. 1h was near zero or negative in both periods. On 2020–2023, 4h 55/20 led 4h 20/10 on expectancy (+0.455 vs +0.442 R), drawdown (10.4% vs 11.1%), and losing streak (5 vs 9). On the holdout it stayed positive but weaker: +9.2%, +0.141 R over 68 trades (t ≈ 0.8).
+  - The same parameters on other coins, full history through 2026-10-17, at 2×: ETHUSDT +0.080 R (179 trades), XRPUSDT +0.201 R (159), SOLUSDT +0.289 R (151); BTCUSDT +0.199 R (172). Max drawdowns 8–14%. The daily limit never fired in any run.
+  - At 5×, the D-25 check skipped more entry signals than were traded on the altcoins (ETH 326, XRP 240, SOL 509) and 106 on BTC; a breakout repeats its signal each candle while flat, so these count signals, not distinct trades. The 20-candle exit channel is often more than the ~10% from entry that 5× allows. At 2× BTC skipped none, with similar results, so the 5× results came from a filtered subset of the strategy's trades.
+- **Why:** It was positive in the selection period, the holdout, and on three other coins with unchanged parameters, so the result isn't fitted to one coin's history. The forward test on testnet costs nothing, and its job is to show the live engine trades as the backtest does (D-36). Lower leverage doesn't change the planned loss per trade (D-25); it moves the liquidation price to about 50% away and ties up more margin, which is fine with one symbol.
+- **Limits of the evidence:** Each result alone is not statistically clear (t between about 0.8 and 2), coins move together so the four don't count as four independent tests, and the holdout expectancy was a third of the selection period's. That is enough for a forward test, not for mainnet; go-live criteria are still open. Funding cost more than fees in most 4h runs, since positions are held for days.
 - **Date:** 2026-10-19
