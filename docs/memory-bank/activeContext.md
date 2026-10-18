@@ -6,7 +6,7 @@ _Last updated: 2026-10-19_
 
 The backtest module is done (GitHub issue #8, 2026-10-19), and it picked the first strategy: the Donchian breakout 55/20 on BTCUSDT 4h, with testnet leverage lowered to 2× (D-41; the user's `engine/config.toml` was changed too). The evidence is positive but weak, which is enough for a testnet forward test and not for mainnet (D-41).
 
-Next is getting the strategy trading on testnet: the closed-candle feed (#9), then connecting the strategy to `run`. Work items are tracked as GitHub issues.
+The closed-candle feed is done too (GitHub issue #9, D-42): warm-up from REST, gaps filled from REST after reconnects, and the strategy waiting while REST fails. It isn't used by `run` yet. Next is connecting the strategy to `run` for the testnet forward test. Work items are tracked as GitHub issues.
 
 ## Open questions
 
@@ -23,8 +23,7 @@ Roughly in the order they're needed:
 
 ## Next steps
 
-1. Closed-candle feed (GitHub issue #9): backfill klines missed during stream reconnects (Known issues in `progress.md`) and load warm-up candles from REST at startup (D-36). Required before a strategy trades.
-2. Connect the strategy to `run` and start the testnet forward test (no issue yet); see Open questions.
-3. How a packaged GUI finds `engine/` (`techContext.md`, GUI notes).
-4. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
-5. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet, and the kill switch's bulk cancels have only run on an empty book.
+1. Connect the strategy to `run` through the closed-candle feed and start the testnet forward test (no issue yet); see Open questions.
+2. How a packaged GUI finds `engine/` (`techContext.md`, GUI notes).
+3. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
+4. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet, and the kill switch's bulk cancels have only run on an empty book.

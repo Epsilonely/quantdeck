@@ -363,3 +363,14 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Why:** It was positive in the selection period, the holdout, and on three other coins with unchanged parameters, so the result isn't fitted to one coin's history. The forward test on testnet costs nothing, and its job is to show the live engine trades as the backtest does (D-36). Lower leverage doesn't change the planned loss per trade (D-25); it moves the liquidation price to about 50% away and ties up more margin, which is fine with one symbol.
 - **Limits of the evidence:** Each result alone is not statistically clear (t between about 0.8 and 2), coins move together so the four don't count as four independent tests, and the holdout expectancy was a third of the selection period's. That is enough for a forward test, not for mainnet; go-live criteria are still open. Funding cost more than fees in most 4h runs, since positions are held for days.
 - **Date:** 2026-10-19
+
+## D-42 The strategy reads closed candles through a feed that fills gaps from REST and waits rather than skip
+
+- **Decision:**
+  - At startup the feed loads the strategy's warm-up candles from REST. After every stream (re)connect, when a closed candle arrives after a gap, and when the stream hasn't sent the next close by the time REST's copy can be trusted, it fills the missing candles from REST before handing out anything newer.
+  - REST's copy of a candle is used only once the candle closed at least a minute ago. The stream's closed message is used at once.
+  - While REST fails, the feed retries every 5 s and hands out nothing, so the strategy waits instead of deciding on a series with a hole in it. Open positions keep their exchange-side stops meanwhile (D-19).
+  - A candle REST doesn't have either is treated as a real gap once a later closed candle exists: logged and passed over, as the backtest's data loader does (D-38).
+- **Why:** The strategy decides on closed candles only (D-36), so one lost candle makes it act differently from the backtest. The stream loses whatever is sent while it reconnects, and Binance drops every connection within 24 hours. On testnet REST still showed a smaller volume, once a different close, for 10 s or more after a close the stream had already sent in full (`binanceNotes.md`). A minute leaves room for that; the cost is a candle up to a minute late after a reconnect near a close, nothing for a 4h strategy. The user chose waiting over deciding with a gap.
+- **Alternatives:** Keep deciding through a gap with a warning; trust REST right after the close.
+- **Date:** 2026-10-19

@@ -196,6 +196,14 @@ Source: [Market Data](https://developers.binance.com/en/docs/catalog/core-tradin
 | `GET /fapi/v1/markPriceKlines` | As klines | Volume fields are "Ignore" |
 | `GET /fapi/v1/fundingRate` | Shares 500 per 5 min per IP with `GET /fapi/v1/fundingInfo`; no weight header | `limit` default 100, max 1000; `startTime`/`endTime` inclusive. Without times it returned 100 rows, and 500 with `limit=1000` (docs: the most recent 200). `startTime=0` counts as not sent; use 1. Fields: `fundingRate`, `fundingTime` (can be a few ms past the hour), `markPrice` (`""` on old rows), `rateType` (`Regular`, or `Special` for stock dividends). BTCUSDT history starts 2019-09-10 08:00 UTC |
 
+### Kline stream and REST around a close (2026-10-19)
+
+Source: testnet responses, BTCUSDT 1m
+
+- The stream's closed message (`x: true`) carried the same values as the candle's last update before it.
+- REST `GET /fapi/v1/klines` lags the stream. Right after a close, REST returned the candle with a smaller volume, and once a different close (at 0.3 s). Of the candles polled at fixed delays, one first matched the stream at 10 s, one still differed at 10 s, and one matched at 15 s and stayed matched at 30 and 60 s. The closed-candle feed therefore trusts REST only a minute after the close (D-42); whether mainnet lags too is unchecked.
+- A stream left disconnected for 130 s and reconnected missed two closes; the feed read both from REST and continued on the stream with no gap or duplicate.
+
 ### Testnet market data is not mainnet's (2026-10-18)
 
 Source: mainnet and testnet responses. No official statement for futures; the spot [Demo Mode](https://developers.binance.com/en/docs/products/spot/demo-mode/general-info) page calls its market data realistic, not real.
