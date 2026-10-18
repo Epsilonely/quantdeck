@@ -7,9 +7,10 @@ streams reconnect forever instead of ending.
 
 import json
 import logging
-from collections.abc import AsyncIterator, Iterable
+from collections.abc import AsyncIterator, Iterable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
+from typing import Any
 
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
@@ -17,7 +18,8 @@ from websockets.exceptions import ConnectionClosed
 logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
+# Slots: a backtest holds every candle of its period in memory.
+@dataclass(frozen=True, slots=True)
 class Kline:
     symbol: str
     interval: str
@@ -48,6 +50,27 @@ def parse_kline(message: str | bytes) -> Kline:
         close=Decimal(k["c"]),
         volume=Decimal(k["v"]),
         closed=k["x"],
+    )
+
+
+def kline_from_row(row: Sequence[Any], symbol: str, interval: str) -> Kline:
+    """A closed candle from a `GET /fapi/v1/klines` row or an archive CSV row.
+
+    Both share the column order open time, open, high, low, close, volume, close time, ...
+    REST sends times as numbers and prices as strings; the archive CSV has only strings.
+    The caller drops candles that are still open.
+    """
+    return Kline(
+        symbol=symbol,
+        interval=interval,
+        open_time=int(row[0]),
+        close_time=int(row[6]),
+        open=Decimal(row[1]),
+        high=Decimal(row[2]),
+        low=Decimal(row[3]),
+        close=Decimal(row[4]),
+        volume=Decimal(row[5]),
+        closed=True,
     )
 
 
