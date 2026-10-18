@@ -27,6 +27,6 @@ Keep in sync with the roadmap section of README.md.
 
 ## Known issues
 
-- Kline updates sent while the stream is reconnecting are lost. Strategies act on closed candles (D-36), so before one trades, backfill the gap from REST klines after each reconnect.
+- Kline updates sent while the stream is reconnecting are lost. Strategies act on closed candles (D-36), so before one trades, backfill the gap from REST klines after each reconnect (GitHub issue #9).
 - Closing a stream takes 5–7 s on testnet (`websockets` default `close_timeout`), which slows `check` and the shutdown of `run`; see `binanceNotes.md`. A GUI start pressed during that time is refused by the instance lock, and the GUI shows the lock error.
 - The entry gate doesn't count the risk of positions open on other symbols (D-24 Limitation). Fix before a second symbol trades.

@@ -25,7 +25,7 @@ Roughly in the order they're needed:
 ## Next steps
 
 1. Backtest module (#8): candle download and checks (D-38), the simulator (D-37) and its fill model, the two candidates on the D-36 interface, and the comparison report. Then pick the first strategy and check it on two or three other major coins with the same parameters (D-39).
-2. Connect the strategy to `run` for the forward test: backfill klines missed during stream reconnects (Known issues in `progress.md`), load warm-up candles from REST at startup, and pass closed candles to the strategy (D-36). The backfill issue drafted on 2026-10-03 is still on hold at the user's request, but D-36 makes it required before a strategy trades.
+2. Closed-candle feed (GitHub issue #9): backfill klines missed during stream reconnects (Known issues in `progress.md`) and load warm-up candles from REST at startup (D-36). Required before a strategy trades. Then connect the strategy to `run` for the forward test.
 3. How a packaged GUI finds `engine/` (`techContext.md`, GUI notes).
 4. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
 5. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet, and the kill switch's bulk cancels have only run on an empty book.
