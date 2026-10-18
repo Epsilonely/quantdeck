@@ -30,6 +30,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Why:** _not recorded_
 - **Date:** initial
 - **Note:** The engine's diagnostic logs go to rolling files (D-12); whether log lines are also stored in SQLite is still open.
+- **Note (2026-10-18):** Parquet for historical candles is deferred by D-38: candles stay in Binance's downloaded zip files until the data outgrows them. The SQLite part stands.
 
 ## D-05 One-way position mode
 
@@ -48,6 +49,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Decision:** The backtest module runs the exact strategy code the live engine runs.
 - **Why:** Backtest results then reflect what the live code actually does.
 - **Date:** initial
+- **Note (2026-10-18):** The interface the two share is D-36; the backtest also reuses the live sizing and risk code (D-37).
 
 ## D-08 The GUI never handles Binance API keys
 
@@ -130,7 +132,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - After an entry fills, the engine places its stop at once. If that fails, it retries a few times within a few seconds, checking before each retry whether the stop was in fact placed (the outcome of a failed request can be unknown). If the stop is still not confirmed, or its trigger price has already been crossed, the engine closes the position with a market `reduceOnly` order, stops trading that symbol, and logs an ERROR.
   - At startup, a position without a stop gets an emergency stop (placed per D-26) and is adopted. If that trigger price is already crossed, would sit beyond the liquidation price (D-16), or can't be placed (as above), the engine closes the position instead. Either way it logs an ERROR.
 - **Why:** Safety principle 6. Brief retries ride out transient errors without leaving the position unprotected for long. For a position found at startup, the user chose an emergency stop over closing at whatever price the restart happens to meet; because the engine no longer knows where the strategy meant to stop out, the distance comes from the risk settings rather than the strategy.
-- **Open:** Whether the strategy manages an adopted position is decided with the strategy interface.
+- **Settled (2026-10-18):** The strategy manages an adopted position like any other position on its symbol (D-36).
 - **Date:** 2026-10-03
 
 ## D-20 Unknown order outcomes are resolved by lookup, never by blind retry
@@ -295,3 +297,42 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Why:** The user chose three options with system as the default. With `nativeTheme` one setting drives both the page and the Windows title bar, and system mode follows a change of the Windows app mode without code in the renderer. Saving in the main process keeps one setting for dev and packaged builds, whose renderer origins (`localhost` and `file://`) would each have their own `localStorage`. The theme is a GUI preference, so it stays out of the engine's files.
 - **Alternatives:** Light and dark only; dark by default; text labels (the first version); renderer `localStorage` with a `data-theme` attribute, which leaves the title bar on the Windows setting.
 - **Date:** 2026-10-16
+
+## D-36 A strategy sees closed candles and the exchange's position, and returns an entry with a stop, an exit, or nothing
+
+- **Decision:**
+  - A strategy is plain synchronous code with no I/O. For each closed candle of its symbol and timeframe it gets the candle and the current position (none, or its side, size, and entry price), and returns one of: enter (side and stop price), exit (close the whole position), or nothing. Live, the engine carries these out through the existing entry and close paths (D-17, D-18, D-22); in the backtest, the simulator fills them (D-07, D-37).
+  - Only closed candles are passed in, never a forming one.
+  - Its decisions depend only on recent candles and the position. Any state it keeps, such as indicators, must be rebuildable from candles: each strategy declares how many past candles it needs, and the engine loads that many from REST at startup before acting on its output.
+  - So it manages every position on its symbol, including one adopted at startup (D-14, D-19).
+  - The stop is set once at entry and never moved. No take profit or trailing stop yet. At most one action per candle: an exit and an opposite entry never happen on the same candle.
+- **Why:** The backtest must run the same code (D-07). With closed candles as the only input, live and backtest runs see identical inputs, so a forward test can be checked by replaying its candles through the backtest and comparing the signals. Deciding from candles and the exchange's position means a restart (the GUI stops and starts the engine, D-34) doesn't change a decision, in line with D-06, and settles D-19's open question without a local record of which positions are the strategy's. Order handling, sizing, and risk stay outside the strategy, so the safety code lives in one place.
+- **Consequences:** Strategies that act inside a forming candle (an intrabar breakout such as a volatility breakout) or need to remember when they entered (exit after N candles) don't fit; revisit when one is wanted. A missed closed candle changes the signals, so the live kline feed must backfill the gap after every reconnect (`progress.md`, Known issues) before a strategy trades.
+- **Alternatives:** Strategies driven by ticks or forming candles; strategies that keep their own record of their positions.
+- **Date:** 2026-10-18
+
+## D-37 The backtest reuses the live sizing and risk rules
+
+- **Decision:**
+  - The backtest sizes entries with the live code (D-22, D-25): the risk amount from the day's base balance, `stepSize` rounding, `MIN_NOTIONAL`, the notional caps, and the liquidation-distance check. It also applies the daily loss limit and the entry gate (D-23, D-24).
+  - When the simulated day's loss reaches the limit, the backtest closes the position and takes no entries for the rest of that UTC day, then resumes the next UTC day as if the user had lifted the halt (D-27). The report counts how often this happened.
+- **Why:** The results then include what the live engine would really skip or trim, such as entries below `MIN_NOTIONAL` or entries capped by the room left under the limit. How often the limit fires is one of the criteria for choosing a strategy (D-39). Live, a halt waits for the user; a backtest has no user, so it lifts at the next day boundary, the earliest a lift changes anything (D-27).
+- **Note:** The rest of the fill model (entry fill price and slippage, stop trigger and fill, fees, funding) is decided in GitHub issue #8.
+- **Date:** 2026-10-18
+
+## D-38 Backtest candles come from Binance's mainnet archive and REST, kept as the downloaded zip files
+
+- **Decision:**
+  - Backtests run on mainnet data: monthly zips from data.binance.vision (`futures/um`), daily zips for the current month, and REST `GET /fapi/v1/klines` for the days not yet archived. Every zip is checked against its `.CHECKSUM`, and loaded candles are checked for gaps and duplicates. Mark price klines and funding rates come from the same archive when the fill model needs them.
+  - To check a forward test (D-36), the backtest replays the testnet candles the engine actually saw, fetched from testnet REST, not mainnet data.
+  - The zip files are kept as downloaded in `engine/data/` (gitignored) and read directly, with no conversion step. Parquet (D-04) waits until the data outgrows this, such as years of 1m candles or trade data.
+- **Why:** Testnet prices and volume differ from mainnet's, and there is no testnet archive (`binanceNotes.md`), so mainnet data is the closest to the market a strategy would eventually trade. The archive is free, needs no key, and comes with checksums; REST fills in the days not archived yet. Keeping the original files means they can always be re-verified against Binance's checksums. Seven years of BTCUSDT 1h candles is about 60,000 rows, small enough to read from the zips on every run, so Parquet would add a large dependency (pyarrow or similar) and a conversion step for no gain yet.
+- **Alternatives:** Parquet from the start (D-04); REST only (slow paging, rate limits, no checksums); testnet data.
+- **Date:** 2026-10-18
+
+## D-39 The first strategy is picked by backtest
+
+- **Decision:** The candidates are a Donchian channel breakout (trend following) and a Bollinger Band mean reversion, both on closed candles (D-36), tested on BTCUSDT first (D-15). Both run through the backtest with costs, and the first strategy is the one that does better on: expectancy per trade after fees, slippage, and funding; maximum drawdown and longest losing streak; and how often the daily loss limit would have fired (D-37). If neither holds up, the candidates change; nothing goes to the forward test on a guess.
+- **Why:** Which strategy is profitable can't be known before measuring it. Win rate alone doesn't decide it: a trend follower loses often and wins big, a mean reverter wins often and loses big, and either can end up ahead or behind after costs. The two cover both styles, have few parameters, and derive their stop price from their own rules (D-22). The daily limit is a small number of stop-outs (three on testnet, D-24), so long losing streaks mean halts, which is why they are a criterion.
+- **Not a candidate for now:** A volatility breakout, which enters inside a forming candle and exits on time; it doesn't fit D-36.
+- **Date:** 2026-10-18

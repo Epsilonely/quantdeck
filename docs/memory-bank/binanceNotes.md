@@ -4,13 +4,13 @@ Binance USDⓈ-M Futures behavior the code can't tell you: quirks, limits, and g
 
 Move an item to **Verified** only after confirming it against the official docs or an actual testnet/mainnet response. Include the date and the source (doc URL or "testnet response"). Binance changes its API, so re-check old entries when something behaves unexpectedly.
 
-Reading the docs: developers.binance.com is a JS-rendered site, and plain page fetches often return the wrong section. Open pages in a browser, or search the index at `https://developers.binance.com/en/docs/llms.txt`.
+Reading the docs: developers.binance.com is a JS-rendered site, and plain page fetches often return the wrong section. Open pages in a browser, or search the index at `https://developers.binance.com/en/docs/llms.txt`, which lists a plain Markdown version of each page (the page URL plus `.md`). Pages under the old `/docs/derivatives/usds-margined-futures/...` paths moved to `/en/docs/products/derivatives-trading-usds-futures/...` (2026-10-18); old links no longer reach the page.
 
 ## Verified
 
 ### Base URLs (2026-10-02)
 
-Source: [General Info](https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info), [WebSocket Market Streams — Connect](https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams/Connect)
+Source: [General Info](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/general-info), [WebSocket Market Streams — Connect](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/websocket-market-streams/Connect)
 
 | | REST | WebSocket root |
 |---|---|---|
@@ -21,15 +21,15 @@ Source: [General Info](https://developers.binance.com/docs/derivatives/usds-marg
 
 ### Futures testnet is Binance Demo Trading (2026-10-02)
 
-Source: [Derivatives Quick Start](https://developers.binance.com/docs/derivatives/quick-start), testnet response
+Source: [Derivatives Quick Start](https://developers.binance.com/en/docs/products/common/derivatives-trading/quick-start), testnet response
 
-- The Futures Testnet supports `FUTURES` trading, API only. Demo Trading API keys are set up from the [Futures Demo Trading page](https://demo.binance.com/en/futures/BTCUSDT).
+- The Futures Testnet is for practicing `FUTURES` trading. Demo Trading API keys are set up from the [Futures Demo Trading page](https://demo.binance.com/en/futures/BTCUSDT).
 - Demo Trading keys (HMAC) authenticate on `demo-fapi.binance.com`. These are the keys to put in `.env` while `BINANCE_TESTNET` is unset or `true`.
 - A new demo account starts in one-way position mode with 5000 USDT, 5000 USDC, and 0.01 BTC.
 
 ### WebSocket routing (2026-10-02)
 
-Source: [Important WebSocket Change Notice](https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams/Important-WebSocket-Change-Notice), [Connect](https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams/Connect), testnet response
+Source: [Important WebSocket Change Notice](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/websocket-market-streams/Important-WebSocket-Change-Notice), [Connect](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/websocket-market-streams/Connect), testnet response
 
 Mainnet streams must go through a routed path. Legacy unrouted URLs were supported only until 2026-04-23; an unrouted connection now receives `/public` data only. Testnet accepts the same routes (klines received on `/market`).
 
@@ -44,7 +44,7 @@ Mainnet streams must go through a routed path. Legacy unrouted URLs were support
 
 ### WebSocket connection rules (2026-10-02)
 
-Source: [Connect](https://developers.binance.com/docs/derivatives/usds-margined-futures/websocket-market-streams/Connect)
+Source: [Connect](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/websocket-market-streams/Connect)
 
 - A connection is valid for 24 hours, then the server disconnects it. Reconnect logic is mandatory.
 - The server sends a ping frame every 3 minutes; no pong within 10 minutes → disconnected.
@@ -61,7 +61,7 @@ Source: testnet response
 
 ### Signed requests (2026-10-02)
 
-Source: [General Info](https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info), testnet response
+Source: [General Info](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/general-info), testnet response
 
 - Security types: USER_DATA (and TRADE) requests are signed as below; USER_STREAM requests (`listenKey`) send only the `X-MBX-APIKEY` header, with no timestamp or signature. Without the header Binance answers HTTP 401, code `-2014` (testnet response).
 - HMAC SHA256 with the secret key over `totalParams` (query string + request body), sent as the `signature` parameter. API key goes in the `X-MBX-APIKEY` header. GET parameters must be in the query string.
@@ -105,7 +105,7 @@ Source: testnet response, [Common Definition](https://developers.binance.com/en/
 
 ### Rate-limit signals (2026-10-02)
 
-Source: [General Info](https://developers.binance.com/docs/derivatives/usds-margined-futures/general-info), testnet response
+Source: [General Info](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/general-info), testnet response
 
 - Headers: `X-MBX-USED-WEIGHT-<n><unit>` (per IP) on every response; `X-MBX-ORDER-COUNT-<n><unit>` (per account) on order responses.
 - 429 = rate limit hit, 418 = IP auto-banned after repeated 429s, 403 = WAF block, 5xx = server error (outcome of an order unknown).
@@ -172,6 +172,42 @@ Source: Binance FAQ "How to Calculate Liquidation Price of USDⓈ-M Futures Cont
 
 - For an isolated one-way position, with Q the absolute size, EP the entry price, WB the isolated wallet balance, and MMR/`cum` from the position's bracket: long LP = (Q·EP − WB − cum) / (Q·(1 − MMR)); short LP = (Q·EP + WB + cum) / (Q·(1 + MMR)). If the notional at LP falls in another bracket, recompute with that bracket.
 
+### Historical data archive: data.binance.vision (2026-10-18)
+
+Source: [binance-public-data](https://github.com/binance/binance-public-data) README and `python/utility.py`, the archive's listing and files
+
+- Public, no key. USDⓈ-M data is under `data/futures/um/`: `klines`, `markPriceKlines`, `indexPriceKlines`, `premiumIndexKlines`, `aggTrades`, and `trades` come monthly and daily; `fundingRate` monthly only; `metrics` and `bookDepth` daily only. The README lists only `aggTrades`, `klines`, and `trades`; the others exist anyway. There is no testnet data.
+- URL: `https://data.binance.vision/data/futures/um/<monthly|daily>/klines/<SYMBOL>/<interval>/<SYMBOL>-<interval>-<YYYY-MM|YYYY-MM-DD>.zip`. The checksum file is the same URL plus `.CHECKSUM` and holds `<sha256 hex>  <file name>` (matched on `BTCUSDT-1h-2026-09.zip`). The S3 ETag is not a SHA-256.
+- Intervals: the REST ones (1m to 1w), with `1mo` as the folder for 1M. No `1s`.
+- Kline CSV, 12 columns: `open_time, open, high, low, close, volume, close_time, quote_volume, count, taker_buy_volume, taker_buy_quote_volume, ignore`. Some files start with a header row and some don't, with no clean cutoff (BTCUSDT 1h monthly: none through 2021-12, a header from 2022-01; daily files around 2022 are mixed), so detect it. Times are milliseconds; the README's switch to microseconds from 2025 applies to spot only.
+- `markPriceKlines` and `premiumIndexKlines` have the same columns with zero volumes. `fundingRate` has `calc_time, funding_interval_hours, last_funding_rate`, no mark price; `calc_time` can be a few ms past the hour.
+- BTCUSDT coverage: klines from 2019-12-31 (daily) and 2020-01 (monthly), while REST history starts 2019-09-08; `fundingRate` from 2020-01.
+- Publishing: daily BTCUSDT 1h files appeared the next day between 07:51 and 14:17 UTC (2026-10-02 to 2026-10-17), monthly ones on the 2nd of the next month around 09:00–12:00 UTC, not on "the first Monday" the README gives. Times are from LastModified, which a re-upload can change.
+- Files are sometimes replaced later (the README lists fixes), and the repo's issues report missing rows that were backfilled afterwards. Build URLs from the pattern rather than crawling listings, which hold stray objects, and check the candles for gaps after loading.
+
+### Klines and funding rate history over REST (2026-10-18)
+
+Source: [Market Data](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/market-data), mainnet response
+
+| Endpoint | Weight | Notes |
+|---|---|---|
+| `GET /fapi/v1/klines` | By `limit`: 1–100 → 1, 101–500 → 2, 501–1000 → 5, 1001–1500 → 10 (measured; the docs' table puts each edge one lower) | `limit` default 500, max 1500 (`-1130` above). Ascending. Without times: the most recent candles. With only `endTime`: ends at the candle that opens at `endTime`. Paging from `startTime` reaches the first candle (BTCUSDT: 2019-09-08 17:00 UTC). The last candle can still be open; drop any whose `closeTime` is at or after the server time. `1s` → `-1120` |
+| `GET /fapi/v1/markPriceKlines` | As klines | Volume fields are "Ignore" |
+| `GET /fapi/v1/fundingRate` | Shares 500 per 5 min per IP with `GET /fapi/v1/fundingInfo`; no weight header | `limit` default 100, max 1000; `startTime`/`endTime` inclusive. Without times it returned 100 rows, and 500 with `limit=1000` (docs: the most recent 200). `startTime=0` counts as not sent; use 1. Fields: `fundingRate`, `fundingTime` (can be a few ms past the hour), `markPrice` (`""` on old rows), `rateType` (`Regular`, or `Special` for stock dividends). BTCUSDT history starts 2019-09-10 08:00 UTC |
+
+### Testnet market data is not mainnet's (2026-10-18)
+
+Source: mainnet and testnet responses. No official statement for futures; the spot [Demo Mode](https://developers.binance.com/en/docs/products/spot/demo-mode/general-info) page calls its market data realistic, not real.
+
+- Over the same three BTCUSDT 1h candles, testnet OHLC differed from mainnet's by up to about 0.1% and volume was about 20 times higher. The latest funding rates differed too. Testnet kline history starts 2019-09-02, before mainnet's. Backtests therefore use mainnet data (D-38).
+
+### Fees (2026-10-18)
+
+Source: [USDⓈ-M fee rates](https://www.binance.com/en/fee/futureFee), [Account — User Commission Rate](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/account)
+
+- Regular tier, USDT-margined: maker 0.0200%, taker 0.0500%; 0.0180% and 0.0450% with the BNB discount. Testnet charged 0.04% (Income history above).
+- `GET /fapi/v1/commissionRate` (USER_DATA, weight 20, `symbol` required) returns the account's `makerCommissionRate`, `takerCommissionRate`, and `rpiCommissionRate`. The docs' example values are illustrative, not current rates.
+
 ## To verify
 
 Check each item while implementing the related feature:
@@ -186,3 +222,4 @@ Check each item while implementing the related feature:
 - [ ] Income history delay: how soon `REALIZED_PNL` and `COMMISSION` appear after a fill (D-30). The `trial` prints it. Its first run (2026-10-16) queried from a mid-second start time and missed the records. After the fix, the second run (2026-10-16) saw the close 1.1 s after the kill switch finished, on the second read. Only one sample on testnet; repeat it, and check mainnet before relying on it.
 - [ ] Bulk cancels with orders actually open: on 2026-10-16 the stop had already expired with its position, so both calls ran on an empty book.
 - [ ] Liquidation price before entry (D-25): compare the engine's estimate with `liquidationPrice` from `positionRisk` while a position is open. The estimate uses notional ÷ leverage as WB, which runs one opening commission higher than the real `iw`.
+- [ ] `GET /fapi/v1/commissionRate` with testnet keys, if the backtest reads the fee rate from it.

@@ -99,7 +99,7 @@ quantdeck/
 | --- | --- |
 | GUI | Electron, React, TypeScript, electron-vite, lightweight-charts |
 | Engine | Python |
-| 데이터 저장 | SQLite (거래 기록, 로그), Parquet (과거 캔들 데이터) |
+| 데이터 저장 | SQLite (거래 기록, 로그), 과거 캔들은 바이낸스에서 받은 zip 파일 그대로 (데이터가 커지면 Parquet) |
 | 통신 | WebSocket (엔진 ↔ GUI, 엔진 ↔ 봇) |
 | 거래소 | Binance USDⓈ-M Futures |
 
