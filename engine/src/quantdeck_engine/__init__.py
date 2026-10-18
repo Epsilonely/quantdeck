@@ -3,11 +3,23 @@
 import argparse
 import asyncio
 import logging
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 
 import httpx
 from websockets.exceptions import WebSocketException
 
+from quantdeck_engine.backtest.data import DataError
+from quantdeck_engine.backtest.run import (
+    STRATEGIES,
+    BacktestFailed,
+    fetch_market,
+    leverage_for,
+    make_strategy,
+    run_backtest,
+)
+from quantdeck_engine.backtest.simulator import Costs
 from quantdeck_engine.binance.rest import BinanceAPIError
 from quantdeck_engine.check import CheckFailed, run_check
 from quantdeck_engine.config import ConfigError, load_settings, load_trading_config
@@ -40,6 +52,24 @@ def main() -> None:
     trial.add_argument("--side", choices=["long", "short"], default="long")
     trial.add_argument("--stop-percent", type=Decimal, default=Decimal(1))
     commands.add_parser("lift-halt", help="lift the kill switch's halt (D-27)")
+    yesterday = datetime.now(UTC).date() - timedelta(days=1)
+    backtest = commands.add_parser(
+        "backtest", help="run a strategy over mainnet history (places no orders)"
+    )
+    backtest.add_argument("--strategy", choices=sorted(STRATEGIES), required=True)
+    backtest.add_argument("--symbol", default="BTCUSDT")
+    backtest.add_argument("--interval", default="1h")
+    backtest.add_argument("--start", type=date.fromisoformat, default=date(2020, 1, 1))
+    backtest.add_argument("--end", type=date.fromisoformat, default=yesterday)
+    backtest.add_argument(
+        "--param", action="append", default=[], metavar="KEY=VALUE", help="strategy parameter"
+    )
+    backtest.add_argument("--balance", type=Decimal, default=Decimal(5000), help="USDT")
+    backtest.add_argument("--fee", type=Decimal, default=Decimal("0.0005"), help="taker fee")
+    backtest.add_argument("--slippage", type=Decimal, default=Decimal("0.0002"))
+    backtest.add_argument("--stop-slippage", type=Decimal, default=Decimal("0.0005"))
+    backtest.add_argument("--leverage", type=int, help="default: the symbol's in config.toml")
+    backtest.add_argument("--trades-csv", type=Path, help="write every trade to this file")
     args = parser.parse_args()
     if args.command is None:
         parser.print_help()
@@ -86,6 +116,30 @@ def main() -> None:
     except ConfigError as e:
         logger.error("Config error: %s", e)
         raise SystemExit(1) from None
+
+    if args.command == "backtest":
+        symbol = args.symbol.upper()
+        try:
+            strategy = make_strategy(args.strategy, args.interval, args.param)
+            leverage = leverage_for(trading, symbol, args.leverage)
+            market = asyncio.run(fetch_market(settings, symbol, leverage))
+            costs = Costs(args.fee, args.slippage, args.stop_slippage)
+            report = run_backtest(
+                strategy,
+                symbol,
+                args.start,
+                args.end,
+                market,
+                trading,
+                costs,
+                args.balance,
+                trades_csv=args.trades_csv,
+            )
+        except (BacktestFailed, DataError, BinanceAPIError, httpx.HTTPError, OSError) as e:
+            logger.error("Backtest failed: %s", e)
+            raise SystemExit(1) from None
+        print(report)
+        return
 
     if args.command == "run":
         try:

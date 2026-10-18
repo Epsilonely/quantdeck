@@ -48,8 +48,15 @@ Action = Enter | Exit
 
 
 class Strategy(Protocol):
-    interval: str  # the candle interval it trades on, e.g. "1h"
-    warmup: int  # closed candles it needs before its first decision
+    @property
+    def interval(self) -> str:
+        """The candle interval it trades on, e.g. `1h`."""
+        ...
+
+    @property
+    def warmup(self) -> int:
+        """How many closed candles it needs, the current one included, to decide."""
+        ...
 
     def on_candle(self, candle: Kline, position: Position | None) -> Action | None:
         """Called once per closed candle, oldest first. At most one action per candle.

@@ -1,10 +1,11 @@
-"""Historical candles for backtests (D-38).
+"""Historical candles and funding rates for backtests (D-38).
 
 Mainnet data only, since testnet prices differ: monthly zips from Binance's public archive
-(data.binance.vision), daily zips for a month not archived yet, and REST klines for days
-not archived yet. Every zip is checked against its `.CHECKSUM` and kept as downloaded,
-with its checksum file, under `engine/data/` (gitignored) in the archive's own layout.
-Archive details are in docs/memory-bank/binanceNotes.md.
+(data.binance.vision), daily zips for a month not archived yet, and REST for days not
+archived yet. Candles come in last price and mark price; the backtest triggers stops on
+the mark price, as the live stops do (D-18). Every zip is checked against its `.CHECKSUM`
+and kept as downloaded, with its checksum file, under `engine/data/` (gitignored) in the
+archive's own layout. Archive details are in docs/memory-bank/binanceNotes.md.
 """
 
 import csv
@@ -15,6 +16,7 @@ import os
 import zipfile
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from decimal import Decimal
 from itertools import pairwise
 from pathlib import Path
 from typing import Any
@@ -31,6 +33,7 @@ ARCHIVE_URL = "https://data.binance.vision"
 DEFAULT_DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 TIMEOUT_SECONDS = 30.0
 REST_KLINES_LIMIT = 1500  # the maximum per request
+REST_FUNDING_LIMIT = 1000  # the maximum per request
 MAX_GAPS_LOGGED = 10
 
 DAY_MS = 24 * 60 * 60 * 1000
@@ -52,6 +55,13 @@ INTERVAL_MS = {
 }
 
 
+# Candle datasets: the archive's name and the REST endpoint with the same rows.
+KLINE_DATASETS = {
+    "klines": "/fapi/v1/klines",  # last price
+    "markPriceKlines": "/fapi/v1/markPriceKlines",  # volumes are 0
+}
+
+
 class DataError(Exception):
     """Historical data couldn't be fetched, or doesn't add up."""
 
@@ -62,6 +72,12 @@ class Candles:
     interval: str
     klines: list[Kline]  # closed, oldest first, no duplicates
     gaps: list[tuple[int, int]]  # open times (ms) of the candles on either side of each gap
+
+
+@dataclass(frozen=True)
+class FundingRate:
+    time: int  # ms, on the minute: the archive's times can be a few ms past the hour
+    rate: Decimal  # positive: longs pay shorts
 
 
 def archive_path(dataset: str, symbol: str, period: str, interval: str | None = None) -> str:
@@ -81,17 +97,29 @@ def archive_path(dataset: str, symbol: str, period: str, interval: str | None = 
 
 
 def read_klines(zip_path: Path, symbol: str, interval: str) -> list[Kline]:
-    """The candles in one archive kline zip.
+    """The candles in one archive kline or mark price kline zip."""
+    return [kline_from_row(row, symbol, interval) for row in _csv_rows(zip_path)]
+
+
+def read_funding_rates(zip_path: Path) -> list[FundingRate]:
+    """The rates in one archive `fundingRate` zip: calc_time, interval hours, rate."""
+    return [
+        FundingRate(_on_the_minute(int(row[0])), Decimal(row[2])) for row in _csv_rows(zip_path)
+    ]
+
+
+def _csv_rows(zip_path: Path) -> list[list[str]]:
+    """The data rows of an archive zip's one CSV file, without any header row.
 
     Some files start with a header row and some don't, so a first row that doesn't start
     with a number is skipped.
     """
-    klines: list[Kline] = []
     with zipfile.ZipFile(zip_path) as z:
         names = z.namelist()
         if len(names) != 1:
             raise DataError(f"{zip_path.name}: expected one file inside, found {names}")
         with z.open(names[0]) as f:
+            data: list[list[str]] = []
             rows = csv.reader(io.TextIOWrapper(f, encoding="utf-8", newline=""))
             for line, row in enumerate(rows):
                 if not row:
@@ -102,9 +130,13 @@ def read_klines(zip_path: Path, symbol: str, interval: str) -> list[Kline]:
                     raise DataError(f"{zip_path.name}: unexpected row {line + 1}: {row[:3]}")
                 if len(row[0]) != 13:
                     # Spot files switched to microseconds in 2025; futures still use ms.
-                    raise DataError(f"{zip_path.name}: open time {row[0]} is not in milliseconds")
-                klines.append(kline_from_row(row, symbol, interval))
-    return klines
+                    raise DataError(f"{zip_path.name}: time {row[0]} is not in milliseconds")
+                data.append(row)
+    return data
+
+
+def _on_the_minute(ms: int) -> int:
+    return ms - ms % 60_000
 
 
 def day_ms(day: date) -> int:
@@ -123,27 +155,34 @@ class HistoricalData:
         self._dir = data_dir
 
     def candles(
-        self, symbol: str, interval: str, start: date, end: date, *, today: date | None = None
+        self,
+        symbol: str,
+        interval: str,
+        start: date,
+        end: date,
+        *,
+        dataset: str = "klines",
+        today: date | None = None,
     ) -> Candles:
         """Closed candles opening from `start` 00:00 UTC through the end of `end`.
 
-        Gaps are logged and returned rather than raised: the exchange produces no candles
-        while trading is down, so some gaps are real.
+        `dataset` is `klines` (last price) or `markPriceKlines`. A gap in the archive files
+        is filled from REST: the BTCUSDT mark price files lack whole days that REST has.
+        Gaps REST can't fill either are logged and returned rather than raised: the
+        exchange produces no candles while trading is down, so some gaps are real.
         """
         if interval not in INTERVAL_MS:
             raise DataError(f"Unsupported interval {interval!r}")
-        today = today or datetime.now(UTC).date()
-        if start > end:
-            raise DataError(f"Start {start} is after end {end}")
-        if end > today:
-            raise DataError(f"End {end} is in the future")
+        if dataset not in KLINE_DATASETS:
+            raise DataError(f"Unsupported dataset {dataset!r}")
+        today = _check_range(start, end, today)
 
         klines: list[Kline] = []
         month = start.replace(day=1)
         while month <= end:
-            next_month = (month + timedelta(days=32)).replace(day=1)
+            next_month = _next_month(month)
             if next_month <= today:
-                path = archive_path("klines", symbol, f"{month:%Y-%m}", interval)
+                path = archive_path(dataset, symbol, f"{month:%Y-%m}", interval)
                 local = self.fetch(path)
                 if local is not None:
                     klines += read_klines(local, symbol, interval)
@@ -152,13 +191,62 @@ class HistoricalData:
             # Not archived as a month (yet): day by day.
             day = max(month, start)
             while day < next_month and day <= end:
-                klines += self._day_klines(symbol, interval, day, today)
+                klines += self._day_klines(dataset, symbol, interval, day, today)
                 day += timedelta(days=1)
             month = next_month
 
+        label = f"{symbol} {interval} {dataset}"
         start_ms, end_ms = day_ms(start), day_ms(end + timedelta(days=1))
-        klines = [k for k in klines if start_ms <= k.open_time < end_ms]
-        return _checked(symbol, interval, klines)
+        klines = _unique(label, [k for k in klines if start_ms <= k.open_time < end_ms])
+        step = INTERVAL_MS[interval]
+        gaps = _gaps(klines, step)
+        if gaps:
+            filled: list[Kline] = []
+            for before, after in gaps:
+                filled += self.rest_klines(symbol, interval, before + step, after, dataset=dataset)
+            if filled:
+                logger.info(
+                    "%s: read %d candle(s) missing from the archive from REST", label, len(filled)
+                )
+                klines = _unique(label, klines + filled)
+                gaps = _gaps(klines, step)
+        for before, after in gaps[:MAX_GAPS_LOGGED]:
+            logger.warning(
+                "%s: no candles between %s and %s UTC", label, utc_text(before), utc_text(after)
+            )
+        if len(gaps) > MAX_GAPS_LOGGED:
+            logger.warning("%s: %d more gaps", label, len(gaps) - MAX_GAPS_LOGGED)
+        return Candles(symbol=symbol, interval=interval, klines=klines, gaps=gaps)
+
+    def funding_rates(
+        self, symbol: str, start: date, end: date, *, today: date | None = None
+    ) -> list[FundingRate]:
+        """Funding rates settled from `start` 00:00 UTC through the end of `end`, oldest first.
+
+        The archive has them monthly only; a month not archived yet comes from REST.
+        """
+        today = _check_range(start, end, today)
+        rates: list[FundingRate] = []
+        month = start.replace(day=1)
+        while month <= end:
+            next_month = _next_month(month)
+            local = None
+            if next_month <= today:
+                local = self.fetch(archive_path("fundingRate", symbol, f"{month:%Y-%m}"))
+            if local is not None:
+                rates += read_funding_rates(local)
+            else:
+                logger.info(
+                    "%s funding for %s is not archived (yet); reading it from REST",
+                    symbol,
+                    f"{month:%Y-%m}",
+                )
+                rates += self.rest_funding_rates(symbol, day_ms(month), day_ms(next_month))
+            month = next_month
+
+        start_ms, end_ms = day_ms(start), day_ms(end + timedelta(days=1))
+        by_time = {r.time: r for r in rates if start_ms <= r.time < end_ms}
+        return [by_time[t] for t in sorted(by_time)]
 
     def fetch(self, path: str) -> Path | None:
         """The local copy of an archive file, downloaded first if there is none.
@@ -189,8 +277,11 @@ class HistoricalData:
         logger.info("Downloaded %s (%d bytes)", path, len(content))
         return local
 
-    def rest_klines(self, symbol: str, interval: str, start_ms: int, end_ms: int) -> list[Kline]:
-        """Closed mainnet candles opening in [start_ms, end_ms), from `GET /fapi/v1/klines`."""
+    def rest_klines(
+        self, symbol: str, interval: str, start_ms: int, end_ms: int, *, dataset: str = "klines"
+    ) -> list[Kline]:
+        """Closed mainnet candles opening in [start_ms, end_ms), from `GET /fapi/v1/klines`
+        or, for `markPriceKlines`, `GET /fapi/v1/markPriceKlines`."""
         server_ms = int(self._get_rest("/fapi/v1/time", {})["serverTime"])
         step = INTERVAL_MS[interval]
         klines: list[Kline] = []
@@ -203,7 +294,7 @@ class HistoricalData:
                 "endTime": end_ms - 1,  # matched against open times, inclusive
                 "limit": REST_KLINES_LIMIT,
             }
-            rows = self._get_rest("/fapi/v1/klines", params)
+            rows = self._get_rest(KLINE_DATASETS[dataset], params)
             for row in rows:
                 if int(row[6]) >= server_ms:
                     return klines  # the last candle is still open
@@ -213,13 +304,46 @@ class HistoricalData:
             cursor = int(rows[-1][0]) + step
         return klines
 
-    def _day_klines(self, symbol: str, interval: str, day: date, today: date) -> list[Kline]:
+    def rest_funding_rates(self, symbol: str, start_ms: int, end_ms: int) -> list[FundingRate]:
+        """Funding rates settled in [start_ms, end_ms), from `GET /fapi/v1/fundingRate`."""
+        rates: list[FundingRate] = []
+        cursor = max(start_ms, 1)  # startTime=0 counts as not sent
+        while cursor < end_ms:
+            params = {
+                "symbol": symbol,
+                "startTime": cursor,
+                "endTime": end_ms - 1,
+                "limit": REST_FUNDING_LIMIT,
+            }
+            rows = self._get_rest("/fapi/v1/fundingRate", params)
+            if not rows:
+                break
+            rates += [
+                FundingRate(_on_the_minute(int(r["fundingTime"])), Decimal(r["fundingRate"]))
+                for r in rows
+            ]
+            # Keep paging until a page comes back empty: it returned fewer rows than
+            # `limit` asked for when tried without times (binanceNotes.md).
+            cursor = int(rows[-1]["fundingTime"]) + 1
+        return rates
+
+    def _day_klines(
+        self, dataset: str, symbol: str, interval: str, day: date, today: date
+    ) -> list[Kline]:
         if day < today:
-            local = self.fetch(archive_path("klines", symbol, f"{day:%Y-%m-%d}", interval))
+            local = self.fetch(archive_path(dataset, symbol, f"{day:%Y-%m-%d}", interval))
             if local is not None:
                 return read_klines(local, symbol, interval)
-        logger.info("%s %s %s is not archived (yet); reading it from REST", symbol, interval, day)
-        return self.rest_klines(symbol, interval, day_ms(day), day_ms(day + timedelta(days=1)))
+        logger.info(
+            "%s %s %s %s is not archived (yet); reading it from REST",
+            symbol,
+            interval,
+            dataset,
+            day,
+        )
+        return self.rest_klines(
+            symbol, interval, day_ms(day), day_ms(day + timedelta(days=1)), dataset=dataset
+        )
 
     def _get_archive(self, path: str) -> bytes | None:
         response = self._http.get(f"{ARCHIVE_URL}/{path}", timeout=TIMEOUT_SECONDS)
@@ -236,33 +360,35 @@ class HistoricalData:
         return response.json()
 
 
-def _checked(symbol: str, interval: str, klines: list[Kline]) -> Candles:
-    """Sort, drop exact duplicates, refuse conflicting ones, and find gaps."""
-    klines.sort(key=lambda k: k.open_time)
+def _check_range(start: date, end: date, today: date | None) -> date:
+    today = today or datetime.now(UTC).date()
+    if start > end:
+        raise DataError(f"Start {start} is after end {end}")
+    if end > today:
+        raise DataError(f"End {end} is in the future")
+    return today
+
+
+def _next_month(month: date) -> date:
+    return (month + timedelta(days=32)).replace(day=1)
+
+
+def _unique(label: str, klines: list[Kline]) -> list[Kline]:
+    """Sorted by open time, exact duplicates dropped; conflicting duplicates refused."""
     unique: list[Kline] = []
-    for k in klines:
+    for k in sorted(klines, key=lambda k: k.open_time):
         if unique and k.open_time == unique[-1].open_time:
             if k != unique[-1]:
-                raise DataError(
-                    f"{symbol} {interval}: two different candles open at {utc_text(k.open_time)}"
-                )
+                raise DataError(f"{label}: two different candles open at {utc_text(k.open_time)}")
             continue
         unique.append(k)
-    step = INTERVAL_MS[interval]
-    gaps = [
-        (a.open_time, b.open_time) for a, b in pairwise(unique) if b.open_time - a.open_time != step
+    return unique
+
+
+def _gaps(klines: list[Kline], step: int) -> list[tuple[int, int]]:
+    return [
+        (a.open_time, b.open_time) for a, b in pairwise(klines) if b.open_time - a.open_time != step
     ]
-    for before, after in gaps[:MAX_GAPS_LOGGED]:
-        logger.warning(
-            "%s %s: no candles between %s and %s UTC",
-            symbol,
-            interval,
-            utc_text(before),
-            utc_text(after),
-        )
-    if len(gaps) > MAX_GAPS_LOGGED:
-        logger.warning("%s %s: %d more gaps", symbol, interval, len(gaps) - MAX_GAPS_LOGGED)
-    return Candles(symbol=symbol, interval=interval, klines=unique, gaps=gaps)
 
 
 def _expected_sha256(checksum_text: str, file_name: str) -> str:
