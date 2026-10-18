@@ -7,14 +7,12 @@ halted even without it. A file that exists but can't be read counts as halted.
 
 import json
 import logging
-import os
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
-logger = logging.getLogger(__name__)
+from quantdeck_engine.paths import HALT_FILE, write_atomic
 
-# engine/src/quantdeck_engine/trading/halt.py -> engine/state, wherever the engine is started from
-DEFAULT_HALT_FILE = Path(__file__).resolve().parents[3] / "state" / "halt.json"
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -24,7 +22,7 @@ class HaltRecord:
 
 
 class HaltStore:
-    def __init__(self, path: Path = DEFAULT_HALT_FILE) -> None:
+    def __init__(self, path: Path = HALT_FILE) -> None:
         self.path = path
 
     def load(self) -> HaltRecord | None:
@@ -42,12 +40,9 @@ class HaltStore:
             return self._unreadable(e)
 
     def save(self, record: HaltRecord) -> None:
-        """Write the record atomically. Raises OSError if it can't be written."""
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_name(self.path.name + ".tmp")
-        temporary.write_text(json.dumps(asdict(record), indent=2) + "\n", encoding="utf-8")
-        # On Windows this fails while another program has the file open (D-12, D-29).
-        os.replace(temporary, self.path)
+        """Write the record atomically. Raises OSError if it can't be written, which on
+        Windows includes another program having the file open (D-12, D-29)."""
+        write_atomic(self.path, json.dumps(asdict(record), indent=2) + "\n")
 
     def clear(self) -> None:
         """Delete the record. Raises OSError if it exists and can't be deleted."""

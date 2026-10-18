@@ -3,11 +3,19 @@ from decimal import Decimal
 
 import httpx
 import pytest
-from fake_exchange import Failure, FakeExchange, api_error
+from fake_exchange import (
+    RULES,
+    TRADING,
+    Failure,
+    FakeExchange,
+    api_error,
+    no_sleep,
+    open_long,
+)
 
 from quantdeck_engine.binance.rest import BinanceAPIError, outcome_unknown
-from quantdeck_engine.config import SymbolConfig, TradingConfig
-from quantdeck_engine.trading.balance import BaseBalance, base_from_income, day_start_ms
+from quantdeck_engine.times import day_start_ms
+from quantdeck_engine.trading.balance import BaseBalance, base_from_income
 from quantdeck_engine.trading.executor import (
     STOP_ATTEMPTS,
     OrderOutcomeUnclear,
@@ -15,32 +23,12 @@ from quantdeck_engine.trading.executor import (
     TradingHalted,
 )
 from quantdeck_engine.trading.order_ids import ClientIdFactory, Role, parse_client_id
-from quantdeck_engine.trading.rules import Side, SymbolRules
+from quantdeck_engine.trading.rules import Side
 
 D = Decimal
 
-RULES = SymbolRules(
-    symbol="BTCUSDT",
-    margin_asset="USDT",
-    tick_size=D("0.1"),
-    step_size=D("0.001"),
-    min_qty=D("0.001"),
-    max_qty=D(120),
-    min_notional=D(100),
-)
-TRADING = TradingConfig(
-    risk_per_trade_percent=D(1),
-    daily_loss_limit_percent=D(3),
-    max_notional_multiple=D(2),
-    symbols={"BTCUSDT": SymbolConfig("BTCUSDT", 5)},
-)
-
 ORDER = ("POST", "/fapi/v1/order")
 ALGO = ("POST", "/fapi/v1/algoOrder")
-
-
-async def no_sleep(_: float) -> None:
-    pass
 
 
 class FixedGate:
@@ -65,12 +53,6 @@ def make_trader(exchange: FakeExchange, gate: FixedGate | None = None) -> Symbol
         ClientIdFactory(),
         sleep=no_sleep,
     )
-
-
-def open_long(exchange: FakeExchange, amount: str = "0.083", entry: str = "60000") -> None:
-    exchange.position_amount = D(amount)
-    exchange.entry_price = D(entry)
-    exchange.liquidation_price = D(48000)
 
 
 def roles(params: list[dict[str, str]], key: str) -> list[str]:

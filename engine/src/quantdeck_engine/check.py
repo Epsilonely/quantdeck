@@ -30,10 +30,7 @@ async def run_check(settings: Settings, symbol: str, interval: str, count: int) 
         offset = await client.sync_time()
         print(f"Server time OK; local clock offset {offset:+d} ms")
 
-        info = await client.exchange_info()
-        symbol_info = next((s for s in info["symbols"] if s["symbol"] == symbol), None)
-        if symbol_info is None:
-            raise CheckFailed(f"{symbol} is not in exchangeInfo")
+        symbol_info = await client.symbol_info(symbol)
         print(f"{symbol}: status {symbol_info['status']}")
         for f in symbol_info["filters"]:
             if f["filterType"] in SHOWN_FILTERS:

@@ -7,65 +7,34 @@ default, so the same conditions as the forward test), and the risk settings in
 
 import csv
 import logging
-from dataclasses import fields
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from pathlib import Path
 
 import httpx
 
-from quantdeck_engine.backtest.data import HistoricalData, utc_text
+from quantdeck_engine.backtest.data import HistoricalData
 from quantdeck_engine.backtest.report import format_report
 from quantdeck_engine.backtest.simulator import Costs, Market, Simulator, Trade
 from quantdeck_engine.binance.rest import BinanceRestClient
 from quantdeck_engine.config import MAX_LEVERAGE, Settings, TradingConfig
 from quantdeck_engine.strategy.base import Strategy
-from quantdeck_engine.strategy.bollinger import BollingerReversion
-from quantdeck_engine.strategy.donchian import DonchianBreakout
+from quantdeck_engine.times import utc_text
 from quantdeck_engine.trading.rules import SymbolRules
 from quantdeck_engine.trading.sizing import Bracket
 
 logger = logging.getLogger(__name__)
-
-STRATEGIES: dict[str, type[DonchianBreakout] | type[BollingerReversion]] = {
-    "donchian": DonchianBreakout,
-    "bollinger": BollingerReversion,
-}
 
 
 class BacktestFailed(Exception):
     """The backtest couldn't run."""
 
 
-def make_strategy(name: str, interval: str, params: list[str]) -> Strategy:
-    """Build a strategy from `KEY=VALUE` parameters, typed by its fields."""
-    cls = STRATEGIES[name]
-    types = {f.name: f.type for f in fields(cls) if f.init and f.name != "interval"}
-    kwargs: dict[str, object] = {"interval": interval}
-    for item in params:
-        key, sep, text = item.partition("=")
-        if not sep or key not in types:
-            raise BacktestFailed(
-                f"{name} has no parameter {key!r}; it takes {', '.join(sorted(types))}"
-            )
-        try:
-            kwargs[key] = int(text) if types[key] is int else Decimal(text)
-        except (ValueError, InvalidOperation):
-            raise BacktestFailed(f"{key}={text!r} is not a valid {types[key]}") from None
-    try:
-        return cls(**kwargs)  # type: ignore[arg-type]
-    except ValueError as e:
-        raise BacktestFailed(str(e)) from None
-
-
 async def fetch_market(settings: Settings, symbol: str, leverage: int) -> Market:
     """The symbol's current rules and brackets from the configured network (read only)."""
     async with BinanceRestClient(settings) as client:
         await client.sync_time()
-        info = await client.exchange_info()
-        symbol_info = next((s for s in info["symbols"] if s["symbol"] == symbol), None)
-        if symbol_info is None:
-            raise BacktestFailed(f"{symbol} is not in exchangeInfo")
+        symbol_info = await client.symbol_info(symbol)
         brackets = [Bracket.from_api(b) for b in await client.leverage_brackets(symbol)]
     return Market(SymbolRules.from_exchange_info(symbol_info), brackets, leverage)
 

@@ -16,8 +16,8 @@ from datetime import UTC, datetime, timedelta, tzinfo
 from pathlib import Path
 from typing import BinaryIO
 
-# engine/src/quantdeck_engine/logs.py -> engine/logs, wherever the engine is started from
-DEFAULT_LOG_DIR = Path(__file__).resolve().parents[2] / "logs"
+from quantdeck_engine.paths import LOG_DIR
+
 MAX_BYTES = 10 * 1024 * 1024
 RETENTION_DAYS = 30
 FILE_PREFIX = "engine_"
@@ -117,7 +117,7 @@ class RollingFileHandler(logging.Handler):
             self._stream = None
 
 
-def setup_logging(log_dir: Path = DEFAULT_LOG_DIR) -> Path:
+def setup_logging(log_dir: Path = LOG_DIR) -> Path:
     """Send logs to the console and to rolling files, and return the first file's path.
 
     Call once at startup, before loading settings, so configuration errors and the mainnet

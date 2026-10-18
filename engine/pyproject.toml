@@ -10,7 +10,7 @@ dependencies = [
 ]
 
 [project.scripts]
-quantdeck-engine = "quantdeck_engine:main"
+quantdeck-engine = "quantdeck_engine.cli:main"
 
 [build-system]
 requires = ["uv_build>=0.12.22,<0.13.0"]

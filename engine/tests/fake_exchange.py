@@ -14,9 +14,27 @@ from urllib.parse import parse_qsl
 import httpx
 
 from quantdeck_engine.binance.rest import BinanceRestClient
-from quantdeck_engine.config import parse_settings
+from quantdeck_engine.config import SymbolConfig, TradingConfig, parse_settings
+from quantdeck_engine.trading.rules import SymbolRules
 
 SETTINGS = parse_settings({"BINANCE_API_KEY": "test-key", "BINANCE_API_SECRET": "test-secret"})
+
+# The rules `FakeExchange.exchange_info` answers with.
+RULES = SymbolRules(
+    symbol="BTCUSDT",
+    margin_asset="USDT",
+    tick_size=Decimal("0.1"),
+    step_size=Decimal("0.001"),
+    min_qty=Decimal("0.001"),
+    max_qty=Decimal(120),
+    min_notional=Decimal(100),
+)
+TRADING = TradingConfig(
+    risk_per_trade_percent=Decimal(1),
+    daily_loss_limit_percent=Decimal(3),
+    max_notional_multiple=Decimal(2),
+    symbols={"BTCUSDT": SymbolConfig("BTCUSDT", 5)},
+)
 
 BRACKETS = [
     {
@@ -211,7 +229,7 @@ class FakeExchange:
         return httpx.Response(200, json=order)
 
     def _symbol_info(self) -> dict[str, Any]:
-        """The same rules as `test_executor.RULES`."""
+        """The same rules as `RULES`."""
         lot = {"stepSize": "0.001", "minQty": "0.001", "maxQty": "120"}
         return {
             "symbol": self.symbol,
@@ -250,3 +268,13 @@ class FakeExchange:
             "priceProtect": False,
             "reduceOnly": False,
         }
+
+
+async def no_sleep(_: float) -> None:
+    pass
+
+
+def open_long(exchange: FakeExchange, amount: str = "0.083", entry: str = "60000") -> None:
+    exchange.position_amount = Decimal(amount)
+    exchange.entry_price = Decimal(entry)
+    exchange.liquidation_price = Decimal(48000)

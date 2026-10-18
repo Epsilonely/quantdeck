@@ -13,11 +13,10 @@ from quantdeck_engine.backtest.data import (
     DataError,
     HistoricalData,
     archive_path,
-    day_ms,
     read_klines,
 )
-from quantdeck_engine.binance.streams import DAY_MS
 from quantdeck_engine.config import MAINNET
+from quantdeck_engine.times import DAY_MS, day_ms
 
 HOUR_MS = 60 * 60 * 1000
 HEADER = (

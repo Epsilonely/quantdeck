@@ -4,6 +4,6 @@ The GUI starts the engine this way with the virtualenv's `pythonw` (D-34), which
 console, so Windows opens no console window for it.
 """
 
-from quantdeck_engine import main
+from quantdeck_engine.cli import main
 
 main()

@@ -15,16 +15,8 @@ from decimal import Decimal
 from typing import Protocol
 
 from quantdeck_engine.binance.streams import Kline
+from quantdeck_engine.trading.position import Position
 from quantdeck_engine.trading.rules import Side
-
-
-@dataclass(frozen=True)
-class Position:
-    """The symbol's open position: the exchange's live (D-06), the simulator's in a backtest."""
-
-    side: Side
-    quantity: Decimal  # absolute size
-    entry_price: Decimal
 
 
 @dataclass(frozen=True)

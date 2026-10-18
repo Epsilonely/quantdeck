@@ -8,6 +8,7 @@ streams reconnect forever instead of ending.
 import json
 import logging
 from collections.abc import AsyncIterator, Callable, Iterable, Sequence
+from contextlib import aclosing
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -15,9 +16,10 @@ from typing import Any
 from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
+from quantdeck_engine.times import DAY_MS
+
 logger = logging.getLogger(__name__)
 
-DAY_MS = 24 * 60 * 60 * 1000
 # Candle lengths. 1M is left out: months differ in length.
 INTERVAL_MS = {
     "1m": 60_000,
@@ -35,6 +37,9 @@ INTERVAL_MS = {
     "3d": 3 * DAY_MS,
     "1w": 7 * DAY_MS,
 }
+# How long after its close REST's copy of a candle is trusted. The stream's closed message
+# is final at once; REST lagged it by more than 10 s on testnet (2026-10-19, D-42).
+SETTLE_MS = 60_000
 
 
 # Slots: a backtest holds every candle of its period in memory.
@@ -93,6 +98,44 @@ def kline_from_row(row: Sequence[Any], symbol: str, interval: str) -> Kline:
     )
 
 
+def settled_klines(
+    rows: Sequence[Sequence[Any]], symbol: str, interval: str, server_ms: int
+) -> list[Kline]:
+    """The candles in `GET /fapi/v1/klines` rows that closed `SETTLE_MS` or more before
+    `server_ms`, oldest first.
+
+    The rows stop at the first candle that is still open or closed only just now, so a
+    result shorter than `rows` means the end of the settled history was reached.
+    """
+    candles = []
+    for row in rows:
+        candle = kline_from_row(row, symbol, interval)
+        if candle.close_time >= server_ms - SETTLE_MS:
+            break
+        candles.append(candle)
+    return candles
+
+
+async def _messages(
+    url: str, name: str, on_connect: Callable[[], None] | None = None
+) -> AsyncIterator[str | bytes]:
+    """Raw messages from `url` forever, reconnecting whenever the connection drops.
+
+    Messages sent while reconnecting are lost; `on_connect` runs on every (re)connect.
+    """
+    async for ws in connect(url):
+        async with ws:
+            logger.info("%s stream %s connected", name, url)
+            if on_connect is not None:
+                on_connect()
+            try:
+                async for message in ws:
+                    yield message
+            except ConnectionClosed:
+                pass
+        logger.warning("%s stream %s closed; reconnecting", name, url)
+
+
 async def kline_stream(
     ws_root: str,
     symbol: str,
@@ -107,17 +150,9 @@ async def kline_stream(
     `contextlib.aclosing` so the connection closes as soon as you stop iterating.
     """
     url = kline_stream_url(ws_root, symbol, interval)
-    async for ws in connect(url):
-        async with ws:
-            logger.info("Kline stream %s connected", url)
-            if on_connect is not None:
-                on_connect()
-            try:
-                async for message in ws:
-                    yield parse_kline(message)
-            except ConnectionClosed:
-                pass
-        logger.warning("Kline stream %s closed; reconnecting", url)
+    async with aclosing(_messages(url, "Kline", on_connect)) as messages:
+        async for message in messages:
+            yield parse_kline(message)
 
 
 @dataclass(frozen=True)
@@ -145,17 +180,11 @@ async def mark_price_stream(ws_root: str, symbols: Iterable[str]) -> AsyncIterat
     parsed is logged and skipped. Wrap the call in `contextlib.aclosing`.
     """
     url = mark_price_stream_url(ws_root, symbols)
-    async for ws in connect(url):
-        async with ws:
-            logger.info("Mark price stream %s connected", url)
+    async with aclosing(_messages(url, "Mark price")) as messages:
+        async for message in messages:
             try:
-                async for message in ws:
-                    try:
-                        update = parse_mark_price(message)
-                    except (KeyError, TypeError, ValueError, InvalidOperation):
-                        logger.warning("Could not parse a mark price message: %.200s", message)
-                        continue
-                    yield update
-            except ConnectionClosed:
-                pass
-        logger.warning("Mark price stream %s closed; reconnecting", url)
+                update = parse_mark_price(message)
+            except (KeyError, TypeError, ValueError, InvalidOperation):
+                logger.warning("Could not parse a mark price message: %.200s", message)
+                continue
+            yield update

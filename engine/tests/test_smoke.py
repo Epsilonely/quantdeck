@@ -1,5 +1,7 @@
 import quantdeck_engine
+from quantdeck_engine import cli
 
 
 def test_package_imports() -> None:
-    assert callable(quantdeck_engine.main)
+    assert quantdeck_engine.__doc__
+    assert callable(cli.main)

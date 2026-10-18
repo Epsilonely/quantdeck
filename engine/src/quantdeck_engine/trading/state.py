@@ -16,9 +16,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
 
-import httpx
-
-from quantdeck_engine.binance.rest import BinanceAPIError, BinanceRestClient
+from quantdeck_engine.binance.rest import REQUEST_ERRORS, BinanceRestClient
 from quantdeck_engine.binance.user_stream import (
     AccountUpdate,
     AlgoUpdate,
@@ -234,7 +232,7 @@ async def follow_user_stream(
             if isinstance(event, UserStreamConnected):
                 try:
                     changes = await resync(client, state)
-                except (BinanceAPIError, httpx.HTTPError):
+                except REQUEST_ERRORS:
                     logger.exception("Resync after connect failed; state may be stale")
                     continue
                 logger.info("Account state resynced from REST")
@@ -243,6 +241,6 @@ async def follow_user_stream(
             for change in changes:
                 try:
                     await on_change(change)
-                except (BinanceAPIError, httpx.HTTPError):
+                except REQUEST_ERRORS:
                     # Keep following: the next resync shows the exchange's state again.
                     logger.exception("Handling %s failed", change)

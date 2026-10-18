@@ -28,6 +28,13 @@ class Side(StrEnum):
     def sign(self) -> int:
         return 1 if self is Side.LONG else -1
 
+    @classmethod
+    def from_amount(cls, amount: Decimal) -> "Side":
+        """The side of a signed position amount, as Binance reports it (negative = short)."""
+        if amount == 0:
+            raise ValueError("a flat position has no side")
+        return cls.LONG if amount > 0 else cls.SHORT
+
 
 @dataclass(frozen=True)
 class SymbolRules:

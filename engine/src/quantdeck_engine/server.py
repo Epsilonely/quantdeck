@@ -17,7 +17,6 @@ import asyncio
 import hmac
 import json
 import logging
-import os
 import secrets
 from collections import deque
 from collections.abc import Awaitable, Callable
@@ -30,8 +29,10 @@ from typing import Any, Protocol
 from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
+from quantdeck_engine.binance.rest import REQUEST_ERRORS
 from quantdeck_engine.config import Secret
-from quantdeck_engine.trading.executor import REQUEST_ERRORS, OrderOutcomeUnclear
+from quantdeck_engine.paths import CONNECTION_FILE, write_atomic
+from quantdeck_engine.trading.executor import OrderOutcomeUnclear
 from quantdeck_engine.trading.risk import LiftRefused
 
 logger = logging.getLogger(__name__)
@@ -43,9 +44,6 @@ PUBLISH_INTERVAL = 0.25  # seconds between checks for a changed state
 LOG_BACKLOG = 200  # records sent to a client when it connects
 OUTBOX_LIMIT = 1000  # messages waiting for one client before it is dropped as too slow
 FLUSH_TIMEOUT = 2.0  # seconds to wait for queued messages before the engine stops
-
-# engine/src/quantdeck_engine/server.py -> engine/state, wherever the engine is started from
-DEFAULT_CONNECTION_FILE = Path(__file__).resolve().parents[2] / "state" / "connection.json"
 
 
 class EngineControl(Protocol):
@@ -69,16 +67,13 @@ class EngineControl(Protocol):
 class ConnectionFile:
     """Where clients find the server: the port and the token, present only while serving."""
 
-    def __init__(self, path: Path = DEFAULT_CONNECTION_FILE) -> None:
+    def __init__(self, path: Path = CONNECTION_FILE) -> None:
         self.path = path
 
     def write(self, port: int, token: Secret) -> None:
         """Write atomically, like the halt record (D-29). Raises OSError on failure."""
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        temporary = self.path.with_name(self.path.name + ".tmp")
         data = {"protocol": PROTOCOL_VERSION, "port": port, "token": token.reveal()}
-        temporary.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-        os.replace(temporary, self.path)
+        write_atomic(self.path, json.dumps(data, indent=2) + "\n")
 
     def clear(self) -> None:
         try:

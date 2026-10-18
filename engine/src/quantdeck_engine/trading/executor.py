@@ -19,11 +19,10 @@ from collections.abc import Awaitable, Callable
 from decimal import Decimal
 from typing import Any, Protocol
 
-import httpx
-
 from quantdeck_engine.binance.rest import (
     NO_NEED_TO_CHANGE_MARGIN_TYPE,
     NO_SUCH_ORDER,
+    REQUEST_ERRORS,
     STOP_WOULD_TRIGGER_CODES,
     BinanceAPIError,
     BinanceRestClient,
@@ -32,6 +31,7 @@ from quantdeck_engine.binance.rest import (
 from quantdeck_engine.config import SymbolConfig, TradingConfig
 from quantdeck_engine.trading.balance import BaseBalance
 from quantdeck_engine.trading.order_ids import ClientIdFactory, Role
+from quantdeck_engine.trading.position import ExchangePosition
 from quantdeck_engine.trading.rules import Side, SymbolRules
 from quantdeck_engine.trading.sizing import (
     Bracket,
@@ -49,8 +49,6 @@ STOP_ATTEMPTS = 3  # D-19: "a few times within a few seconds"
 STOP_RETRY_DELAY = 1.0  # seconds
 LOOKUP_DELAY = 1.0  # D-20: wait briefly before looking an order up
 FINAL_ORDER_STATUSES = {"FILLED", "CANCELED", "EXPIRED", "EXPIRED_IN_MATCH", "REJECTED"}
-
-REQUEST_ERRORS = (BinanceAPIError, httpx.HTTPError)
 
 
 class TradingHalted(Exception):
@@ -263,11 +261,11 @@ class SymbolTrader:
 
     # Exchange reads
 
-    async def position(self) -> dict[str, Any] | None:
-        """This symbol's open position from REST (one-way mode: positionSide BOTH)."""
+    async def position(self) -> ExchangePosition | None:
+        """This symbol's open position from REST, or None when it is flat."""
         for p in await self._client.positions(self.symbol):
-            if p["positionSide"] == "BOTH" and Decimal(p["positionAmt"]) != 0:
-                return p
+            if (position := ExchangePosition.from_position_risk(p)) is not None:
+                return position
         return None
 
     async def open_stops(self, side: Side) -> list[dict[str, Any]]:
@@ -327,33 +325,31 @@ class SymbolTrader:
 
     # Protection (D-19, D-26)
 
-    async def _ensure_stop(self, position: dict[str, Any]) -> None:
-        amount = Decimal(position["positionAmt"])
-        side = Side.LONG if amount > 0 else Side.SHORT
+    async def _ensure_stop(self, position: ExchangePosition) -> None:
+        side = position.side
         stops = await self.open_stops(side)
         if stops:
             logger.info(
                 "%s: adopted %s position %s with stop %s at %s",
                 self.symbol,
                 side,
-                amount,
+                position.quantity,
                 stops[0]["clientAlgoId"],
                 stops[0]["triggerPrice"],
             )
             return
         risk = risk_amount(await self._base.get(), self._trading.risk_per_trade_percent)
         stop = emergency_stop_price(
-            side, Decimal(position["entryPrice"]), amount, risk, self._rules
+            side, position.entry_price, position.quantity, risk, self._rules
         )
         logger.error(
             "%s: %s position %s has no exchange-side stop; placing an emergency stop at %s (D-26)",
             self.symbol,
             side,
-            amount,
+            position.quantity,
             stop,
         )
-        liquidation = Decimal(position["liquidationPrice"])
-        await self._protect(side, stop, liquidation=liquidation or None)
+        await self._protect(side, stop, liquidation=position.liquidation_price)
 
     async def _protect(self, side: Side, stop: Decimal, *, liquidation: Decimal | None) -> bool:
         """Place the stop, or close the position if it can't be (D-19). True if protected."""
@@ -432,9 +428,8 @@ class SymbolTrader:
         position = await self.position()
         if position is None:
             return
-        amount = Decimal(position["positionAmt"])
-        side = Side.LONG if amount > 0 else Side.SHORT
-        remaining = abs(amount)
+        side = position.side
+        remaining = position.quantity
         while remaining > 0:
             quantity = min(remaining, self._rules.max_qty)
             client_id = self._ids.new(role, self.symbol)
@@ -455,7 +450,7 @@ class SymbolTrader:
             if filled == 0:
                 raise OrderOutcomeUnclear(f"close {client_id} did not fill ({result['status']})")
             remaining -= filled
-        logger.info("%s: closed %s position %s", self.symbol, side, amount)
+        logger.info("%s: closed %s position %s", self.symbol, side, position.quantity)
         if await self.position() is None:
             await self._cancel_leftovers()
 

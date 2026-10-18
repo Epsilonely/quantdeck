@@ -19,12 +19,9 @@ from typing import Any
 
 from dotenv import dotenv_values
 
-logger = logging.getLogger(__name__)
+from quantdeck_engine.paths import CONFIG_FILE, ENV_FILE
 
-# engine/src/quantdeck_engine/config.py -> repo root
-DEFAULT_ENV_FILE = Path(__file__).resolve().parents[3] / ".env"
-# engine/src/quantdeck_engine/config.py -> engine/
-DEFAULT_CONFIG_FILE = Path(__file__).resolve().parents[2] / "config.toml"
+logger = logging.getLogger(__name__)
 
 # Hard bounds (D-28). Raising one takes a code change on purpose.
 MAX_RISK_PER_TRADE_PERCENT = Decimal(2)
@@ -83,7 +80,7 @@ class Settings:
 
 
 def load_settings(
-    env_file: Path | None = DEFAULT_ENV_FILE,
+    env_file: Path | None = ENV_FILE,
     environ: Mapping[str, str] | None = None,
 ) -> Settings:
     values: dict[str, str | None] = {}
@@ -163,7 +160,7 @@ class TradingConfig:
     symbols: Mapping[str, SymbolConfig]
 
 
-def load_trading_config(path: Path = DEFAULT_CONFIG_FILE) -> TradingConfig:
+def load_trading_config(path: Path = CONFIG_FILE) -> TradingConfig:
     if not path.is_file():
         raise ConfigError(f"{path.name} not found; copy config.example.toml to {path} first")
     try:

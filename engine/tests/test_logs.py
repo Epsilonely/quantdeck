@@ -9,12 +9,12 @@ import pytest
 from quantdeck_engine.binance.rest import BinanceRestClient
 from quantdeck_engine.config import parse_settings
 from quantdeck_engine.logs import (
-    DEFAULT_LOG_DIR,
     LocalTimeFormatter,
     RollingFileHandler,
     delete_old_logs,
     setup_logging,
 )
+from quantdeck_engine.paths import LOG_DIR
 
 KST = timezone(timedelta(hours=9))
 START = datetime(2026, 10, 3, 14, 30, 5, tzinfo=KST)
@@ -37,8 +37,8 @@ def file_names(directory: Path) -> list[str]:
 
 
 def test_default_log_dir_is_engine_logs() -> None:
-    assert DEFAULT_LOG_DIR.name == "logs"
-    assert (DEFAULT_LOG_DIR.parent / "pyproject.toml").is_file()
+    assert LOG_DIR.name == "logs"
+    assert (LOG_DIR.parent / "pyproject.toml").is_file()
 
 
 def test_first_file_is_named_after_start_with_index_000(tmp_path: Path) -> None:

@@ -23,12 +23,19 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from quantdeck_engine.backtest.data import FundingRate
-from quantdeck_engine.binance.streams import DAY_MS, INTERVAL_MS, Kline
+from quantdeck_engine.binance.streams import INTERVAL_MS, Kline
 from quantdeck_engine.config import TradingConfig
 from quantdeck_engine.strategy.base import Enter, Exit, Position, Strategy
-from quantdeck_engine.trading.risk import DailyLoss
+from quantdeck_engine.times import day_start_ms
 from quantdeck_engine.trading.rules import Side, SymbolRules
-from quantdeck_engine.trading.sizing import Bracket, EntryRejected, risk_amount, size_entry
+from quantdeck_engine.trading.sizing import (
+    Bracket,
+    DailyLoss,
+    EntryRejected,
+    daily_limit,
+    risk_amount,
+    size_entry,
+)
 
 
 @dataclass(frozen=True)
@@ -140,7 +147,7 @@ class Simulator:
     # Steps of one candle
 
     def _new_day_if_needed(self, time: int) -> None:
-        day = time - time % DAY_MS
+        day = day_start_ms(time)
         if day != self._day:
             self._day = day
             self._base = self._wallet  # the wallet balance at 00:00 UTC (D-23)
@@ -252,7 +259,7 @@ class Simulator:
         return DailyLoss(
             base=self._base,
             loss=-self._day_pnl,
-            limit=self._base * self._trading.daily_loss_limit_percent / 100,
+            limit=daily_limit(self._base, self._trading.daily_loss_limit_percent),
         )
 
     def _slipped(self, price: Decimal, *, closing: bool, side: Side | None = None) -> Decimal:

@@ -12,15 +12,11 @@ from decimal import Decimal
 from typing import Any
 
 from quantdeck_engine.binance.rest import BinanceRestClient
+from quantdeck_engine.times import day_start_ms
 
 logger = logging.getLogger(__name__)
 
-DAY_MS = 24 * 60 * 60 * 1000
 INCOME_PAGE_SIZE = 1000
-
-
-def day_start_ms(now_ms: int) -> int:
-    return now_ms - now_ms % DAY_MS
 
 
 async def fetch_income(

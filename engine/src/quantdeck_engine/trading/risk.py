@@ -2,30 +2,26 @@
 
 One guard covers the whole account. Today's loss is re-read from income history every time
 it is needed (D-30), never accumulated from stream events: the exchange stays the only
-source (D-06), and nothing is missed while the stream is disconnected. Call `check` whenever
-the loss may have changed (a position closed, a funding fee, a stream reconnect) and
-periodically, since income records may appear a little after a fill.
+source (D-06), and nothing is missed while the stream is disconnected. `RiskChecker` runs
+the guard's check whenever the loss may have changed (a position closed, a funding fee, a
+stream reconnect) and periodically, since income records may appear a little after a fill.
 """
 
 import asyncio
 import logging
 import time
 from collections.abc import Awaitable, Callable, Iterable, Sequence
-from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
-from quantdeck_engine.binance.rest import BinanceRestClient
+from quantdeck_engine.binance.rest import REQUEST_ERRORS, BinanceRestClient
 from quantdeck_engine.config import TradingConfig
-from quantdeck_engine.trading.balance import BaseBalance, day_start_ms, fetch_income
-from quantdeck_engine.trading.executor import (
-    REQUEST_ERRORS,
-    OrderOutcomeUnclear,
-    SymbolTrader,
-    TradingHalted,
-)
+from quantdeck_engine.times import day_start_ms
+from quantdeck_engine.trading.balance import BaseBalance, fetch_income
+from quantdeck_engine.trading.executor import OrderOutcomeUnclear, SymbolTrader, TradingHalted
 from quantdeck_engine.trading.halt import HaltRecord, HaltStore
+from quantdeck_engine.trading.sizing import DailyLoss, daily_limit
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +62,10 @@ UNCOUNTED_INCOME_TYPES = frozenset(
 
 KILL_ATTEMPTS = 3
 KILL_RETRY_DELAY = 2.0  # seconds
+CHECK_INTERVAL = 60.0  # seconds; D-30: "about once a minute"
+# Income records appeared 1.1 s after a fill on testnet (D-30), so a check run the moment a
+# position closes would usually miss its loss.
+CHECK_DELAY = 3.0  # seconds
 
 
 class LiftRefused(Exception):
@@ -85,27 +85,6 @@ def loss_from_income(incomes: Iterable[dict[str, Any]], asset: str) -> Decimal:
         ),
         Decimal(0),
     )
-
-
-@dataclass(frozen=True)
-class DailyLoss:
-    base: Decimal  # the day's base balance (D-23)
-    loss: Decimal  # negative after a net gain
-    limit: Decimal
-
-    @property
-    def room(self) -> Decimal:
-        return self.limit - self.loss
-
-    @property
-    def reached(self) -> bool:
-        return self.loss >= self.limit
-
-    def describe(self, asset: str) -> str:
-        return (
-            f"today's loss {self.loss:.2f} {asset}, daily limit {self.limit:.2f} {asset} "
-            f"(base {self.base:.2f})"
-        )
 
 
 class RiskGuard:
@@ -172,7 +151,7 @@ class RiskGuard:
         return DailyLoss(
             base=base,
             loss=loss_from_income(incomes, self._base.asset),
-            limit=base * self._trading.daily_loss_limit_percent / 100,
+            limit=daily_limit(base, self._trading.daily_loss_limit_percent),
         )
 
     async def check(self) -> DailyLoss:
@@ -325,3 +304,45 @@ class RiskGuard:
 def _log_kill_failure(task: asyncio.Task[bool]) -> None:
     if not task.cancelled() and (error := task.exception()) is not None:
         logger.critical("The kill switch failed: close positions manually", exc_info=error)
+
+
+class RiskChecker:
+    """Runs the guard's check (D-30): once at start, a few seconds after each request, and
+    every minute regardless. Requests that arrive close together share one check."""
+
+    def __init__(
+        self,
+        guard: RiskGuard,
+        *,
+        interval: float = CHECK_INTERVAL,
+        delay: float = CHECK_DELAY,
+        sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
+    ) -> None:
+        self._guard = guard
+        self._interval = interval
+        self._delay = delay
+        self._sleep = sleep
+        self._wake = asyncio.Event()
+        self.latest: DailyLoss | None = None
+
+    @property
+    def requested(self) -> bool:
+        return self._wake.is_set()
+
+    def request(self) -> None:
+        """Something may have changed today's loss: check soon."""
+        self._wake.set()
+
+    async def run(self) -> None:
+        while True:
+            self._wake.clear()
+            try:
+                self.latest = await self._guard.check()
+            except REQUEST_ERRORS as e:
+                logger.warning("Risk check failed (%s); trying again at the next check", e)
+            try:
+                async with asyncio.timeout(self._interval):
+                    await self._wake.wait()
+            except TimeoutError:
+                continue
+            await self._sleep(self._delay)

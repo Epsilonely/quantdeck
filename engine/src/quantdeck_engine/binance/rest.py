@@ -43,6 +43,14 @@ class BinanceAPIError(Exception):
         self.msg = msg
 
 
+# What a request can raise: an error answer, or a transport failure or timeout.
+REQUEST_ERRORS = (BinanceAPIError, httpx.HTTPError)
+
+
+class UnknownSymbol(Exception):
+    """The exchange doesn't list the symbol."""
+
+
 def sign(query: str, secret: str) -> str:
     """HMAC SHA256 signature over the exact query string that will be sent."""
     return hmac.new(secret.encode(), query.encode(), hashlib.sha256).hexdigest()
@@ -112,6 +120,14 @@ class BinanceRestClient:
 
     async def exchange_info(self) -> dict[str, Any]:
         return await self._request("GET", "/fapi/v1/exchangeInfo")
+
+    async def symbol_info(self, symbol: str) -> dict[str, Any]:
+        """The symbol's `exchangeInfo` entry: status, margin asset, filters. Raises
+        `UnknownSymbol` if the exchange doesn't list it."""
+        for entry in (await self.exchange_info())["symbols"]:
+            if entry["symbol"] == symbol:
+                return entry
+        raise UnknownSymbol(f"{symbol} is not in exchangeInfo")
 
     async def klines(
         self,

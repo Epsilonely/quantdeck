@@ -1,6 +1,8 @@
-"""Entry sizing (D-22, D-25), the liquidation check (D-16, D-25), and emergency stops (D-26).
+"""Entry sizing (D-22, D-25), the liquidation check (D-16, D-25), emergency stops (D-26),
+and the daily loss arithmetic (D-23, D-24).
 
-Pure functions: callers fetch prices, balances, rules, and brackets and pass them in.
+Pure functions and values: callers fetch prices, balances, rules, and brackets and pass
+them in, so the backtest reuses all of it (D-37).
 """
 
 from dataclasses import dataclass
@@ -184,5 +186,37 @@ def emergency_stop_price(
     return round_stop(side, entry_price - distance * side.sign, rules)
 
 
+# Daily loss (D-23, D-24)
+
+
 def risk_amount(base_balance: Decimal, risk_per_trade_percent: Decimal) -> Decimal:
+    """The loss one stop-out may cost: a fraction of the day's base balance (D-22, D-23)."""
     return base_balance * risk_per_trade_percent / 100
+
+
+def daily_limit(base_balance: Decimal, daily_loss_limit_percent: Decimal) -> Decimal:
+    """The net loss that fires the kill switch: a fraction of the day's base balance (D-24)."""
+    return base_balance * daily_loss_limit_percent / 100
+
+
+@dataclass(frozen=True)
+class DailyLoss:
+    """Today's loss against the daily limit, both from the day's base balance (D-23, D-24)."""
+
+    base: Decimal
+    loss: Decimal  # negative after a net gain
+    limit: Decimal
+
+    @property
+    def room(self) -> Decimal:
+        return self.limit - self.loss
+
+    @property
+    def reached(self) -> bool:
+        return self.loss >= self.limit
+
+    def describe(self, asset: str) -> str:
+        return (
+            f"today's loss {self.loss:.2f} {asset}, daily limit {self.limit:.2f} {asset} "
+            f"(base {self.base:.2f})"
+        )

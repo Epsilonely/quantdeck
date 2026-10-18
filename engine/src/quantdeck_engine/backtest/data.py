@@ -12,7 +12,6 @@ import csv
 import hashlib
 import io
 import logging
-import os
 import zipfile
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
@@ -23,15 +22,14 @@ from typing import Any
 
 import httpx
 
-from quantdeck_engine.binance.candle_feed import SETTLE_MS
-from quantdeck_engine.binance.streams import INTERVAL_MS, Kline, kline_from_row
+from quantdeck_engine.binance.streams import INTERVAL_MS, Kline, kline_from_row, settled_klines
 from quantdeck_engine.config import MAINNET
+from quantdeck_engine.paths import DATA_DIR, write_atomic
+from quantdeck_engine.times import day_ms, utc_text
 
 logger = logging.getLogger(__name__)
 
 ARCHIVE_URL = "https://data.binance.vision"
-# engine/src/quantdeck_engine/backtest/data.py -> engine/data
-DEFAULT_DATA_DIR = Path(__file__).resolve().parents[3] / "data"
 TIMEOUT_SECONDS = 30.0
 REST_KLINES_LIMIT = 1500  # the maximum per request
 REST_FUNDING_LIMIT = 1000  # the maximum per request
@@ -121,18 +119,10 @@ def _on_the_minute(ms: int) -> int:
     return ms - ms % 60_000
 
 
-def day_ms(day: date) -> int:
-    return int(datetime(day.year, day.month, day.day, tzinfo=UTC).timestamp() * 1000)
-
-
-def utc_text(ms: int) -> str:
-    return datetime.fromtimestamp(ms / 1000, UTC).strftime("%Y-%m-%d %H:%M")
-
-
 class HistoricalData:
     """Fetches mainnet candles: from the local copy, the archive, or REST, in that order."""
 
-    def __init__(self, http: httpx.Client, data_dir: Path = DEFAULT_DATA_DIR) -> None:
+    def __init__(self, http: httpx.Client, data_dir: Path = DATA_DIR) -> None:
         self._http = http
         self._dir = data_dir
 
@@ -254,8 +244,8 @@ class HistoricalData:
         actual = hashlib.sha256(content).hexdigest()
         if actual != expected:
             raise DataError(f"{path}: SHA-256 {actual} doesn't match the checksum {expected}")
-        _write_atomic(local, content)
-        _write_atomic(checksum_file, checksum)
+        write_atomic(local, content)
+        write_atomic(checksum_file, checksum)
         logger.info("Downloaded %s (%d bytes)", path, len(content))
         return local
 
@@ -265,7 +255,7 @@ class HistoricalData:
         """Closed mainnet candles opening in [start_ms, end_ms), from `GET /fapi/v1/klines`
         or, for `markPriceKlines`, `GET /fapi/v1/markPriceKlines`. A candle that closed
         less than a minute ago is left out: REST's copy may not be final yet."""
-        server_ms = int(self._get_rest("/fapi/v1/time", {})["serverTime"]) - SETTLE_MS
+        server_ms = int(self._get_rest("/fapi/v1/time", {})["serverTime"])
         step = INTERVAL_MS[interval]
         klines: list[Kline] = []
         cursor = start_ms
@@ -278,12 +268,10 @@ class HistoricalData:
                 "limit": REST_KLINES_LIMIT,
             }
             rows = self._get_rest(KLINE_DATASETS[dataset], params)
-            for row in rows:
-                if int(row[6]) >= server_ms:
-                    return klines  # still open, or closed only just now
-                klines.append(kline_from_row(row, symbol, interval))
-            if len(rows) < REST_KLINES_LIMIT:
-                break
+            settled = settled_klines(rows, symbol, interval, server_ms)
+            klines += settled
+            if len(rows) < REST_KLINES_LIMIT or len(settled) < len(rows):
+                break  # the end of the range, or a candle not settled yet
             cursor = int(rows[-1][0]) + step
         return klines
 
@@ -380,10 +368,3 @@ def _expected_sha256(checksum_text: str, file_name: str) -> str:
     if len(parts) != 2 or parts[1] != file_name or len(parts[0]) != 64:
         raise DataError(f"Unexpected checksum file for {file_name}: {checksum_text[:120]!r}")
     return parts[0].lower()
-
-
-def _write_atomic(path: Path, content: bytes) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(path.name + ".tmp")
-    temporary.write_bytes(content)
-    os.replace(temporary, path)

@@ -32,12 +32,12 @@ from quantdeck_engine.binance.user_stream import (
 )
 from quantdeck_engine.config import Settings, TradingConfig
 from quantdeck_engine.lock import InstanceLock
+from quantdeck_engine.startup import build_account
 from quantdeck_engine.trading.balance import BaseBalance, fetch_income
 from quantdeck_engine.trading.executor import SymbolTrader, TradingHalted
 from quantdeck_engine.trading.halt import HaltStore
-from quantdeck_engine.trading.order_ids import ClientIdFactory
 from quantdeck_engine.trading.risk import RiskGuard
-from quantdeck_engine.trading.rules import Side, SymbolRules
+from quantdeck_engine.trading.rules import Side
 from quantdeck_engine.trading.state import (
     AccountState,
     PositionClosed,
@@ -110,20 +110,9 @@ async def _run(
     stop_percent: Decimal,
     store: HaltStore,
 ) -> None:
-    config = trading.symbols[symbol]
     async with BinanceRestClient(settings) as client:
-        await client.sync_time()
-        if (await client.account_config())["dualSidePosition"]:
-            raise TrialFailed("the account is in hedge mode; QuantDeck needs one-way mode (D-05)")
-        info = await client.exchange_info()
-        symbol_info = next((s for s in info["symbols"] if s["symbol"] == symbol), None)
-        if symbol_info is None:
-            raise TrialFailed(f"{symbol} is not in exchangeInfo")
-        rules = SymbolRules.from_exchange_info(symbol_info)
-        base = BaseBalance(client, rules.margin_asset)
-        guard = RiskGuard(client, trading, base, store)
-        trader = SymbolTrader(client, config, trading, rules, base, guard, ClientIdFactory())
-        guard.attach([trader])
+        account = await build_account(client, trading, store, symbols=[symbol])
+        (trader,), guard, base = account.traders, account.guard, account.base
 
         connected = asyncio.Event()
 

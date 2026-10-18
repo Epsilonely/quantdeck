@@ -9,8 +9,7 @@ from pathlib import Path
 from types import TracebackType
 from typing import BinaryIO, Self
 
-# engine/src/quantdeck_engine/lock.py -> engine/state, wherever the engine is started from
-DEFAULT_LOCK_FILE = Path(__file__).resolve().parents[2] / "state" / "engine.lock"
+from quantdeck_engine.paths import LOCK_FILE
 
 
 class EngineAlreadyRunning(Exception):
@@ -18,7 +17,7 @@ class EngineAlreadyRunning(Exception):
 
 
 class InstanceLock:
-    def __init__(self, path: Path = DEFAULT_LOCK_FILE) -> None:
+    def __init__(self, path: Path = LOCK_FILE) -> None:
         self.path = path
         self._file: BinaryIO | None = None
 

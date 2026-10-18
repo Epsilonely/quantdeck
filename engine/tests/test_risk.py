@@ -3,8 +3,16 @@ from decimal import Decimal
 from pathlib import Path
 
 import pytest
-from fake_exchange import Failure, FakeExchange, api_error, income
-from test_executor import RULES, TRADING, no_sleep, open_long
+from fake_exchange import (
+    RULES,
+    TRADING,
+    Failure,
+    FakeExchange,
+    api_error,
+    income,
+    no_sleep,
+    open_long,
+)
 
 from quantdeck_engine.trading.balance import BaseBalance
 from quantdeck_engine.trading.executor import SymbolTrader, TradingHalted

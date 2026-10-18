@@ -5,8 +5,6 @@ from pathlib import Path
 import pytest
 
 from quantdeck_engine.config import (
-    DEFAULT_CONFIG_FILE,
-    DEFAULT_ENV_FILE,
     MAINNET,
     TESTNET,
     ConfigError,
@@ -14,6 +12,7 @@ from quantdeck_engine.config import (
     load_trading_config,
     parse_settings,
 )
+from quantdeck_engine.paths import CONFIG_FILE, ENV_FILE
 
 KEYS = {"BINANCE_API_KEY": "test-key-123", "BINANCE_API_SECRET": "test-secret-456"}
 
@@ -122,7 +121,7 @@ def test_missing_env_file_falls_back_to_environment(tmp_path: Path) -> None:
 
 
 def test_default_env_file_is_at_repo_root() -> None:
-    assert (DEFAULT_ENV_FILE.parent / ".env.example").is_file()
+    assert (ENV_FILE.parent / ".env.example").is_file()
 
 
 # engine/config.toml (D-28)
@@ -233,4 +232,4 @@ def test_lower_case_symbol_is_rejected(tmp_path: Path) -> None:
 
 
 def test_default_config_file_is_in_engine_dir() -> None:
-    assert DEFAULT_CONFIG_FILE.parent == EXAMPLE_CONFIG.parent
+    assert CONFIG_FILE.parent == EXAMPLE_CONFIG.parent

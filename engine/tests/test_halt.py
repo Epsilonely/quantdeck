@@ -3,7 +3,7 @@ from pathlib import Path
 
 import pytest
 
-from quantdeck_engine import lift_halt
+from quantdeck_engine.cli import lift_halt
 from quantdeck_engine.trading.halt import HaltRecord, HaltStore
 
 RECORD = HaltRecord(reason="today's loss reached the limit", halted_at="2026-10-16T03:00:00+00:00")

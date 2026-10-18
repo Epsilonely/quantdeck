@@ -20,11 +20,10 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-import httpx
 from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
-from quantdeck_engine.binance.rest import BinanceAPIError, BinanceRestClient
+from quantdeck_engine.binance.rest import REQUEST_ERRORS, BinanceRestClient
 
 logger = logging.getLogger(__name__)
 
@@ -256,7 +255,7 @@ async def user_data_stream(
                     with suppress(asyncio.CancelledError):
                         await keepalive
             logger.warning("User data stream closed; reconnecting")
-        except (BinanceAPIError, httpx.HTTPError, WebSocketException, OSError, ValueError) as e:
+        except (*REQUEST_ERRORS, WebSocketException, OSError, ValueError) as e:
             delay = retry_delays[min(failures, len(retry_delays) - 1)]
             failures += 1
             logger.warning("User data stream failed (%s); retrying in %s s", e, delay)
@@ -281,7 +280,7 @@ async def _keep_alive(client: BinanceRestClient, interval: float) -> None:
         await asyncio.sleep(interval)
         try:
             await client.keepalive_user_stream()
-        except (BinanceAPIError, httpx.HTTPError) as e:
+        except REQUEST_ERRORS as e:
             # If the key is gone, Binance sends listenKeyExpired on the connection (verified
             # after DELETE) and the stream reconnects with a new key.
             logger.warning("listenKey keepalive failed: %s", e)

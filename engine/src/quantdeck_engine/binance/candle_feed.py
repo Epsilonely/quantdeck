@@ -24,22 +24,21 @@ import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import aclosing, suppress
-from datetime import UTC, datetime
 from itertools import pairwise
 
-import httpx
-
-from quantdeck_engine.binance.rest import BinanceAPIError, BinanceRestClient
-from quantdeck_engine.binance.streams import INTERVAL_MS, Kline, kline_from_row, kline_stream
+from quantdeck_engine.binance.rest import REQUEST_ERRORS, BinanceRestClient
+from quantdeck_engine.binance.streams import (
+    INTERVAL_MS,
+    SETTLE_MS,
+    Kline,
+    kline_stream,
+    settled_klines,
+)
+from quantdeck_engine.times import utc_text
 
 logger = logging.getLogger(__name__)
 
-REQUEST_ERRORS = (BinanceAPIError, httpx.HTTPError)
-
 REST_LIMIT = 1500  # candles per request, the maximum
-# How long after its close REST's copy of a candle is trusted. The stream's closed message
-# is final at once; REST lagged it by more than 10 s on testnet (2026-10-19).
-SETTLE_MS = 60_000
 GRACE = 5.0  # seconds past SETTLE_MS before asking REST for a close the stream didn't send
 RETRY_DELAY = 5.0  # seconds between REST attempts
 
@@ -88,7 +87,8 @@ class ClosedCandleFeed:
         if not 1 <= count < REST_LIMIT:
             raise ValueError(f"Warm-up of {count} candles is outside 1 to {REST_LIMIT - 1}")
         rows = await self._client.klines(self.symbol, self.interval, limit=count + 2)
-        candles = self._settled(rows, await self._client.server_time())[-count:]
+        server_ms = await self._client.server_time()
+        candles = settled_klines(rows, self.symbol, self.interval, server_ms)[-count:]
         self._log_gaps(candles)
         if len(candles) < count:
             logger.warning(
@@ -185,7 +185,7 @@ class ClosedCandleFeed:
                     "waits, retrying in %.0f s",
                     self.symbol,
                     self.interval,
-                    _utc(start),
+                    utc_text(start),
                     attempt,
                     e,
                     self._retry_delay,
@@ -209,8 +209,8 @@ class ClosedCandleFeed:
                 self.symbol,
                 self.interval,
                 len(taken),
-                _utc(taken[0].open_time),
-                _utc(taken[-1].open_time),
+                utc_text(taken[0].open_time),
+                utc_text(taken[-1].open_time),
             )
         return taken
 
@@ -225,20 +225,12 @@ class ClosedCandleFeed:
                 end_time=None if before is None else before - 1,
                 limit=REST_LIMIT,
             )
-            settled = self._settled(rows, await self._client.server_time())
+            server_ms = await self._client.server_time()
+            settled = settled_klines(rows, self.symbol, self.interval, server_ms)
             candles += settled
             if len(rows) < REST_LIMIT or len(settled) < len(rows):
                 break
             cursor = int(rows[-1][0]) + self._step
-        return candles
-
-    def _settled(self, rows: list[list[object]], server_ms: int) -> list[Kline]:
-        candles = []
-        for row in rows:
-            candle = kline_from_row(row, self.symbol, self.interval)
-            if candle.close_time >= server_ms - SETTLE_MS:
-                break  # still open, or closed only just now
-            candles.append(candle)
         return candles
 
     # Bookkeeping
@@ -249,8 +241,8 @@ class ClosedCandleFeed:
                 "%s %s: no candles between %s and %s UTC, even from REST",
                 self.symbol,
                 self.interval,
-                _utc(self.last.open_time),
-                _utc(candle.open_time),
+                utc_text(self.last.open_time),
+                utc_text(candle.open_time),
             )
         self.last = candle
 
@@ -273,10 +265,6 @@ class ClosedCandleFeed:
                     "%s %s: no candles between %s and %s UTC",
                     self.symbol,
                     self.interval,
-                    _utc(a.open_time),
-                    _utc(b.open_time),
+                    utc_text(a.open_time),
+                    utc_text(b.open_time),
                 )
-
-
-def _utc(ms: int) -> str:
-    return datetime.fromtimestamp(ms / 1000, UTC).strftime("%Y-%m-%d %H:%M")

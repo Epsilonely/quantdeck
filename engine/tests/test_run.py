@@ -7,22 +7,18 @@ from pathlib import Path
 
 import httpx
 import pytest
-from fake_exchange import SETTINGS, FakeExchange
-from test_executor import TRADING, open_long
+from fake_exchange import SETTINGS, TRADING, FakeExchange, open_long
 
+from quantdeck_engine.binance.rest import UnknownSymbol
 from quantdeck_engine.binance.user_stream import AccountUpdate, UserStreamConnected
 from quantdeck_engine.config import SymbolConfig, TradingConfig, parse_settings
 from quantdeck_engine.lock import EngineAlreadyRunning, InstanceLock
-from quantdeck_engine.run import (
-    Engine,
-    RiskChecker,
-    RunFailed,
-    _text,
-    run_engine,
-    start_engine,
-)
+from quantdeck_engine.run import Engine, RunFailed, run_engine, start_engine
+from quantdeck_engine.snapshot import fixed_point
+from quantdeck_engine.startup import StartupFailed
 from quantdeck_engine.trading.halt import HaltRecord, HaltStore
-from quantdeck_engine.trading.risk import DailyLoss
+from quantdeck_engine.trading.risk import RiskChecker
+from quantdeck_engine.trading.sizing import DailyLoss
 from quantdeck_engine.trading.state import PositionClosed, resync
 
 D = Decimal
@@ -90,7 +86,7 @@ async def test_run_refuses_mainnet() -> None:
 
 async def test_hedge_mode_is_refused(store: HaltStore) -> None:
     exchange = FakeExchange(hedge_mode=True)
-    with pytest.raises(RunFailed, match="hedge mode"):
+    with pytest.raises(StartupFailed, match="hedge mode"):
         await start_engine(exchange.client(), SETTINGS, TRADING, store)
 
 
@@ -101,7 +97,7 @@ async def test_unknown_symbol_is_refused(store: HaltStore) -> None:
         max_notional_multiple=D(2),
         symbols={"ETHUSDT": SymbolConfig("ETHUSDT", 5)},
     )
-    with pytest.raises(RunFailed, match="ETHUSDT is not in exchangeInfo"):
+    with pytest.raises(UnknownSymbol, match="ETHUSDT is not in exchangeInfo"):
         await start_engine(FakeExchange().client(), SETTINGS, trading, store)
 
 
@@ -261,8 +257,8 @@ async def test_stop_waits_for_a_kill_switch_in_progress(store: HaltStore) -> Non
 
 
 def test_amounts_are_never_in_exponent_notation() -> None:
-    assert _text(D("0E-8")) == "0.00000000"
-    assert _text(D("1E+3")) == "1000"
+    assert fixed_point(D("0E-8")) == "0.00000000"
+    assert fixed_point(D("1E+3")) == "1000"
 
 
 async def test_emergency_close_halts_and_shows_in_the_snapshot(store: HaltStore) -> None:

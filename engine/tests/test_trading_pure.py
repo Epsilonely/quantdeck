@@ -9,10 +9,13 @@ from quantdeck_engine.trading.order_ids import (
     Role,
     parse_client_id,
 )
+from quantdeck_engine.trading.position import ExchangePosition
 from quantdeck_engine.trading.rules import Side, SymbolRules
 from quantdeck_engine.trading.sizing import (
     Bracket,
+    DailyLoss,
     EntryRejected,
+    daily_limit,
     emergency_stop_price,
     isolated_liquidation_price,
     max_notional_at,
@@ -219,3 +222,39 @@ def test_emergency_stop_is_tighter_for_an_oversized_position() -> None:
     normal = emergency_stop_price(Side.LONG, D(60000), D("0.083"), D(50), RULES)
     oversized = emergency_stop_price(Side.LONG, D(60000), D("0.830"), D(50), RULES)
     assert normal < oversized < D(60000)
+
+
+# Positions (D-05, D-06)
+
+
+def test_side_from_amount() -> None:
+    assert Side.from_amount(D("0.5")) is Side.LONG
+    assert Side.from_amount(D("-0.5")) is Side.SHORT
+    with pytest.raises(ValueError, match="flat"):
+        Side.from_amount(D(0))
+
+
+def test_exchange_position_from_position_risk() -> None:
+    row = {
+        "symbol": "BTCUSDT",
+        "positionSide": "BOTH",
+        "positionAmt": "-0.083",
+        "entryPrice": "60000.0",
+        "liquidationPrice": "0",
+    }
+    position = ExchangePosition.from_position_risk(row)
+    assert position == ExchangePosition(Side.SHORT, D("0.083"), D("60000.0"), None)
+    assert ExchangePosition.from_position_risk({**row, "positionAmt": "0"}) is None
+    assert ExchangePosition.from_position_risk({**row, "positionSide": "SHORT"}) is None
+    liquidated = ExchangePosition.from_position_risk({**row, "liquidationPrice": "72000"})
+    assert liquidated is not None and liquidated.liquidation_price == D(72000)
+
+
+# Daily loss (D-23, D-24)
+
+
+def test_daily_limit_is_a_fraction_of_the_base() -> None:
+    assert daily_limit(D(5000), D(3)) == D(150)
+    daily = DailyLoss(base=D(5000), loss=D(100), limit=D(150))
+    assert (daily.room, daily.reached) == (D(50), False)
+    assert DailyLoss(base=D(5000), loss=D(150), limit=D(150)).reached

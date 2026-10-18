@@ -6,6 +6,7 @@ from quantdeck_engine.binance.streams import Kline
 from quantdeck_engine.strategy.base import Enter, Exit, Position
 from quantdeck_engine.strategy.bollinger import BollingerReversion
 from quantdeck_engine.strategy.donchian import DonchianBreakout
+from quantdeck_engine.strategy.registry import StrategyError, make_strategy, parse_parameters
 from quantdeck_engine.trading.rules import Side
 
 HOUR_MS = 60 * 60 * 1000
@@ -125,3 +126,45 @@ def test_bollinger_does_nothing_on_a_flat_window() -> None:
     strategy = BollingerReversion(period=3)
     actions = [strategy.on_candle(k, None) for k in closes(["100", "100", "100"])]
     assert actions == [None, None, None]
+
+
+# Registry (D-28, D-39)
+
+
+def test_registry_builds_a_strategy_with_typed_parameters() -> None:
+    strategy = make_strategy("donchian", "4h", {"entry_period": 55, "exit_period": 20})
+    assert isinstance(strategy, DonchianBreakout)
+    assert (strategy.interval, strategy.entry_period, strategy.exit_period) == ("4h", 55, 20)
+
+
+def test_registry_takes_whole_numbers_for_decimal_parameters() -> None:
+    strategy = make_strategy("bollinger", "1h", {"width": 2, "stop_width": Decimal("1.5")})
+    assert isinstance(strategy, BollingerReversion)
+    assert strategy.width == 2 and isinstance(strategy.width, Decimal)
+    assert strategy.stop_width == Decimal("1.5")
+
+
+@pytest.mark.parametrize(
+    "name, params, message",
+    [
+        ("macd", {}, "unknown strategy"),
+        ("donchian", {"period": 20}, "no parameter 'period'"),
+        ("donchian", {"entry_period": Decimal("20.5")}, "whole number"),
+        ("donchian", {"entry_period": True}, "whole number"),
+        ("bollinger", {"width": "2"}, "must be a number"),
+        ("donchian", {"entry_period": 5, "exit_period": 10}, "exit_period <= entry_period"),
+    ],
+)
+def test_registry_refuses_bad_settings(name: str, params: dict[str, object], message: str) -> None:
+    with pytest.raises(StrategyError, match=message):
+        make_strategy(name, "1h", params)
+
+
+def test_command_line_parameters_are_typed_by_field() -> None:
+    params = parse_parameters("bollinger", ["period=30", "width=2.5"])
+    assert params == {"period": 30, "width": Decimal("2.5")}
+    assert isinstance(params["period"], int)
+    with pytest.raises(StrategyError, match="not a valid int"):
+        parse_parameters("donchian", ["entry_period=x"])
+    with pytest.raises(StrategyError, match="no parameter 'entry_period'"):
+        parse_parameters("donchian", ["entry_period"])
