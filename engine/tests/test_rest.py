@@ -63,6 +63,33 @@ async def test_public_request_is_not_signed() -> None:
     assert b"signature" not in seen[0].url.query
 
 
+async def test_klines_is_public_and_sends_only_the_given_times() -> None:
+    seen: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return httpx.Response(200, json=[[1, "1", "1", "1", "1", "0", 2]])
+
+    async with make_client(handler) as client:
+        rows = await client.klines("BTCUSDT", "4h", start_time=1000, limit=1500)
+        await client.klines("BTCUSDT", "4h", limit=10)
+
+    assert rows == [[1, "1", "1", "1", "1", "0", 2]]
+    assert seen[0].url.path == "/fapi/v1/klines"
+    assert dict(parse_qsl(seen[0].url.query.decode())) == {
+        "symbol": "BTCUSDT",
+        "interval": "4h",
+        "limit": "1500",
+        "startTime": "1000",
+    }
+    assert "X-MBX-APIKEY" not in seen[0].headers
+    assert dict(parse_qsl(seen[1].url.query.decode())) == {
+        "symbol": "BTCUSDT",
+        "interval": "4h",
+        "limit": "10",
+    }
+
+
 async def test_sync_time_corrects_signed_timestamps() -> None:
     seen: list[httpx.Request] = []
 

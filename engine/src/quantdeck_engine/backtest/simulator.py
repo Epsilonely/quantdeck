@@ -22,8 +22,8 @@ from collections import Counter
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from quantdeck_engine.backtest.data import DAY_MS, INTERVAL_MS, FundingRate
-from quantdeck_engine.binance.streams import Kline
+from quantdeck_engine.backtest.data import FundingRate
+from quantdeck_engine.binance.streams import DAY_MS, INTERVAL_MS, Kline
 from quantdeck_engine.config import TradingConfig
 from quantdeck_engine.strategy.base import Enter, Exit, Position, Strategy
 from quantdeck_engine.trading.risk import DailyLoss

@@ -94,6 +94,30 @@ async def test_kline_stream_reconnects_after_server_closes() -> None:
     assert connections == 3
 
 
+async def test_kline_stream_reports_every_connect() -> None:
+    async def handler(ws: ServerConnection) -> None:
+        await ws.send(json.dumps(SAMPLE))
+        await ws.close()
+
+    reported = 0
+
+    def on_connect() -> None:
+        nonlocal reported
+        reported += 1
+
+    async with serve(handler, "127.0.0.1", 0) as server:
+        port = server.sockets[0].getsockname()[1]
+        url = f"ws://127.0.0.1:{port}"
+        received = 0
+        async with aclosing(kline_stream(url, "BTCUSDT", "1m", on_connect=on_connect)) as stream:
+            async for _ in stream:
+                received += 1
+                if received == 2:
+                    break
+
+    assert reported == 2
+
+
 MARK_PRICE = {
     "stream": "btcusdt@markPrice@1s",
     "data": {

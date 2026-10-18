@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from fake_exchange import BRACKETS
 
-from quantdeck_engine.backtest.data import DAY_MS, FundingRate, day_ms
+from quantdeck_engine.backtest.data import FundingRate, day_ms
 from quantdeck_engine.backtest.report import (
     by_year,
     longest_losing_streak,
@@ -12,7 +12,7 @@ from quantdeck_engine.backtest.report import (
     summarize,
 )
 from quantdeck_engine.backtest.simulator import Costs, Market, Simulator
-from quantdeck_engine.binance.streams import Kline
+from quantdeck_engine.binance.streams import DAY_MS, Kline
 from quantdeck_engine.config import TradingConfig
 from quantdeck_engine.strategy.base import Action, Enter, Exit, Position
 from quantdeck_engine.trading.rules import Side, SymbolRules

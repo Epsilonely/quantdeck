@@ -7,7 +7,7 @@ streams reconnect forever instead of ending.
 
 import json
 import logging
-from collections.abc import AsyncIterator, Iterable, Sequence
+from collections.abc import AsyncIterator, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
@@ -16,6 +16,25 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosed
 
 logger = logging.getLogger(__name__)
+
+DAY_MS = 24 * 60 * 60 * 1000
+# Candle lengths. 1M is left out: months differ in length.
+INTERVAL_MS = {
+    "1m": 60_000,
+    "3m": 3 * 60_000,
+    "5m": 5 * 60_000,
+    "15m": 15 * 60_000,
+    "30m": 30 * 60_000,
+    "1h": 60 * 60_000,
+    "2h": 2 * 60 * 60_000,
+    "4h": 4 * 60 * 60_000,
+    "6h": 6 * 60 * 60_000,
+    "8h": 8 * 60 * 60_000,
+    "12h": 12 * 60 * 60_000,
+    "1d": DAY_MS,
+    "3d": 3 * DAY_MS,
+    "1w": 7 * DAY_MS,
+}
 
 
 # Slots: a backtest holds every candle of its period in memory.
@@ -74,16 +93,25 @@ def kline_from_row(row: Sequence[Any], symbol: str, interval: str) -> Kline:
     )
 
 
-async def kline_stream(ws_root: str, symbol: str, interval: str) -> AsyncIterator[Kline]:
+async def kline_stream(
+    ws_root: str,
+    symbol: str,
+    interval: str,
+    *,
+    on_connect: Callable[[], None] | None = None,
+) -> AsyncIterator[Kline]:
     """Yield kline updates forever, reconnecting whenever the connection drops.
 
-    Updates sent while reconnecting are lost. Wrap the call in `contextlib.aclosing` so the
-    connection closes as soon as you stop iterating.
+    Updates sent while reconnecting are lost; `on_connect` runs on every (re)connect so the
+    caller can fill the gap from REST (`candle_feed.py`). Wrap the call in
+    `contextlib.aclosing` so the connection closes as soon as you stop iterating.
     """
     url = kline_stream_url(ws_root, symbol, interval)
     async for ws in connect(url):
         async with ws:
             logger.info("Kline stream %s connected", url)
+            if on_connect is not None:
+                on_connect()
             try:
                 async for message in ws:
                     yield parse_kline(message)

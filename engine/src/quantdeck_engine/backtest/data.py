@@ -23,7 +23,8 @@ from typing import Any
 
 import httpx
 
-from quantdeck_engine.binance.streams import Kline, kline_from_row
+from quantdeck_engine.binance.candle_feed import SETTLE_MS
+from quantdeck_engine.binance.streams import INTERVAL_MS, Kline, kline_from_row
 from quantdeck_engine.config import MAINNET
 
 logger = logging.getLogger(__name__)
@@ -35,25 +36,6 @@ TIMEOUT_SECONDS = 30.0
 REST_KLINES_LIMIT = 1500  # the maximum per request
 REST_FUNDING_LIMIT = 1000  # the maximum per request
 MAX_GAPS_LOGGED = 10
-
-DAY_MS = 24 * 60 * 60 * 1000
-INTERVAL_MS = {
-    "1m": 60_000,
-    "3m": 3 * 60_000,
-    "5m": 5 * 60_000,
-    "15m": 15 * 60_000,
-    "30m": 30 * 60_000,
-    "1h": 60 * 60_000,
-    "2h": 2 * 60 * 60_000,
-    "4h": 4 * 60 * 60_000,
-    "6h": 6 * 60 * 60_000,
-    "8h": 8 * 60 * 60_000,
-    "12h": 12 * 60 * 60_000,
-    "1d": DAY_MS,
-    "3d": 3 * DAY_MS,
-    "1w": 7 * DAY_MS,
-}
-
 
 # Candle datasets: the archive's name and the REST endpoint with the same rows.
 KLINE_DATASETS = {
@@ -281,8 +263,9 @@ class HistoricalData:
         self, symbol: str, interval: str, start_ms: int, end_ms: int, *, dataset: str = "klines"
     ) -> list[Kline]:
         """Closed mainnet candles opening in [start_ms, end_ms), from `GET /fapi/v1/klines`
-        or, for `markPriceKlines`, `GET /fapi/v1/markPriceKlines`."""
-        server_ms = int(self._get_rest("/fapi/v1/time", {})["serverTime"])
+        or, for `markPriceKlines`, `GET /fapi/v1/markPriceKlines`. A candle that closed
+        less than a minute ago is left out: REST's copy may not be final yet."""
+        server_ms = int(self._get_rest("/fapi/v1/time", {})["serverTime"]) - SETTLE_MS
         step = INTERVAL_MS[interval]
         klines: list[Kline] = []
         cursor = start_ms
@@ -297,7 +280,7 @@ class HistoricalData:
             rows = self._get_rest(KLINE_DATASETS[dataset], params)
             for row in rows:
                 if int(row[6]) >= server_ms:
-                    return klines  # the last candle is still open
+                    return klines  # still open, or closed only just now
                 klines.append(kline_from_row(row, symbol, interval))
             if len(rows) < REST_KLINES_LIMIT:
                 break

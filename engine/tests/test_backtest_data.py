@@ -10,13 +10,13 @@ import pytest
 
 from quantdeck_engine.backtest.data import (
     ARCHIVE_URL,
-    DAY_MS,
     DataError,
     HistoricalData,
     archive_path,
     day_ms,
     read_klines,
 )
+from quantdeck_engine.binance.streams import DAY_MS
 from quantdeck_engine.config import MAINNET
 
 HOUR_MS = 60 * 60 * 1000
@@ -204,8 +204,9 @@ def test_read_klines_refuses_microsecond_times(tmp_path: Path) -> None:
 def test_rest_klines_pages_and_drops_the_open_candle(tmp_path: Path) -> None:
     sources = FakeSources()
     sources.rest_klines = [rest_row(i * 60_000, 60_000) for i in range(3200)]
-    # The candle at index 3100 is still open; it and anything after are dropped.
-    sources.server_ms = 3100 * 60_000 + 30_000
+    # Candle 3100 closed 30 s ago, too recently to trust REST's copy; it and anything after
+    # are dropped.
+    sources.server_ms = 3101 * 60_000 + 30_000
 
     klines = sources.data(tmp_path).rest_klines("BTCUSDT", "1m", 0, 3200 * 60_000)
 
