@@ -20,6 +20,13 @@ export function dateTime(iso: string): string {
   return `${date} ${clock(iso)}`
 }
 
+/** `2026-10-19T04:00:00+00:00` → `10-19 13:00` in local time, for candle times */
+export function shortDateTime(iso: string): string {
+  const time = new Date(iso)
+  if (Number.isNaN(time.getTime())) return iso
+  return `${pad(time.getMonth() + 1)}-${pad(time.getDate())} ${pad(time.getHours())}:${pad(time.getMinutes())}`
+}
+
 /** When the risk day starts in local time: 00:00 UTC (D-23), `09:00` in Korea. */
 export function riskDayStart(): string {
   const start = new Date(Date.UTC(2026, 0, 1))

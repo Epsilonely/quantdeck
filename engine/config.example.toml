@@ -11,3 +11,14 @@ max_notional_multiple = 2       # position notional <= this x base balance (max 
 # One table per symbol. Margin type is always isolated.
 [symbols.BTCUSDT]
 leverage = 2                    # 1 to 10; 2 leaves room for the 4h Donchian stops (D-41)
+
+# The strategy `run` trades on every symbol above, with the same parameters (D-43).
+# Leave this table out and `run` places no entries; it still protects positions and
+# watches the daily loss limit.
+[strategy]
+name = "donchian"               # donchian or bollinger
+interval = "4h"                 # a kline interval: 1m, 5m, 1h, 4h, 1d, ...
+
+[strategy.params]               # the first strategy (D-41)
+entry_period = 55
+exit_period = 20

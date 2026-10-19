@@ -46,7 +46,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(prog="quantdeck-engine")
     commands = parser.add_subparsers(dest="command")
     commands.add_parser(
-        "run", help="TESTNET ONLY: run the engine until Ctrl+C (protects positions, kill switch)"
+        "run",
+        help="TESTNET ONLY: run the engine until Ctrl+C (strategy, position protection, kill "
+        "switch)",
     )
     check = commands.add_parser("check", help="read-only connection check (places no orders)")
     check.add_argument("--symbol", default="BTCUSDT")

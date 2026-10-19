@@ -151,6 +151,8 @@ def test_example_config_is_valid() -> None:
     assert config.daily_loss_limit_percent == Decimal("3")
     assert config.max_notional_multiple == Decimal("2")
     assert config.symbols["BTCUSDT"].leverage == 2
+    assert config.strategy is not None
+    assert config.strategy.describe() == "donchian 4h (entry_period=55, exit_period=20)"
 
 
 def test_decimals_stay_exact(tmp_path: Path) -> None:
@@ -233,3 +235,56 @@ def test_lower_case_symbol_is_rejected(tmp_path: Path) -> None:
 
 def test_default_config_file_is_in_engine_dir() -> None:
     assert CONFIG_FILE.parent == EXAMPLE_CONFIG.parent
+
+
+# [strategy] (D-43)
+
+STRATEGY_TOML = """
+[strategy]
+name = "donchian"
+interval = "4h"
+
+[strategy.params]
+entry_period = 55
+exit_period = 20
+"""
+
+
+def test_no_strategy_table_means_no_strategy(tmp_path: Path) -> None:
+    assert load_trading_config(write_config(tmp_path, VALID_TOML)).strategy is None
+
+
+def test_strategy_table_builds_a_new_instance_each_time(tmp_path: Path) -> None:
+    config = load_trading_config(write_config(tmp_path, VALID_TOML + STRATEGY_TOML))
+    assert config.strategy is not None
+    first, second = config.strategy.build(), config.strategy.build()
+    assert first is not second
+    assert (first.interval, first.warmup) == ("4h", 56)
+
+
+def test_strategy_params_may_be_left_out(tmp_path: Path) -> None:
+    text = VALID_TOML + STRATEGY_TOML.split("[strategy.params]")[0]
+    config = load_trading_config(write_config(tmp_path, text))
+    assert config.strategy is not None
+    assert config.strategy.describe() == "donchian 4h"
+
+
+@pytest.mark.parametrize(
+    ("old", "new", "message"),
+    [
+        ('name = "donchian"', 'name = "ichimoku"', "unknown strategy"),
+        ('name = "donchian"', "name = 1", "name must be a string"),
+        ('interval = "4h"', 'interval = "4H"', "interval must be one of"),
+        ('interval = "4h"', 'interval = "1M"', "interval must be one of"),
+        ('interval = "4h"\n', "", "interval must be one of"),
+        ("entry_period = 55", "entry_periods = 55", "has no parameter"),
+        ("entry_period = 55", "entry_period = 55.0", "must be a whole number"),
+        ("entry_period = 55", "entry_period = 10", "exit_period <= entry_period"),
+        ("entry_period = 55", "entry_period = 1000", "needs 1001 warm-up candles"),
+        ('interval = "4h"', 'interval = "4h"\nperiod = 3', r"\[strategy\]: unknown key"),
+    ],
+)
+def test_invalid_strategy_is_rejected(tmp_path: Path, old: str, new: str, message: str) -> None:
+    text = VALID_TOML + STRATEGY_TOML.replace(old, new)
+    with pytest.raises(ConfigError, match=message):
+        load_trading_config(write_config(tmp_path, text))

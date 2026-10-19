@@ -1,11 +1,12 @@
 """`quantdeck-engine run`: the long-running engine (D-31).
 
 Startup brings every configured symbol to a known state (D-16, D-19, D-26), and the risk
-guard reads today's loss and any halt record (D-27). The engine then follows the user data
-stream (D-13) and runs the guard's check at the points D-30 lists. There is no strategy yet,
-so it places no entries; it protects what it finds and fires the kill switch when the daily
-loss limit is reached. Clients (the GUI) connect through the WebSocket server in `server.py`
-(D-32, D-33).
+guard reads today's loss and any halt record (D-27). With a `[strategy]` in `config.toml`,
+each symbol's strategy then loads its warm-up candles (D-43). The engine follows the user
+data stream (D-13), runs the guard's check at the points D-30 lists, and runs each symbol's
+strategy on its closed candles. Without a strategy it places no entries; either way it
+protects what it finds and fires the kill switch when the daily loss limit is reached.
+Clients (the GUI) connect through the WebSocket server in `server.py` (D-32, D-33).
 
 Only one engine process runs at a time (D-31). Stop it with Ctrl+C or a client's
 `stop_engine` command (D-34).
@@ -15,13 +16,16 @@ import asyncio
 import logging
 from contextlib import aclosing
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
+from quantdeck_engine.binance.candle_feed import ClosedCandleFeed
 from quantdeck_engine.binance.rest import REQUEST_ERRORS, BinanceRestClient
 from quantdeck_engine.binance.streams import mark_price_stream
 from quantdeck_engine.binance.user_stream import AccountUpdate, UserEvent, UserStreamConnected
-from quantdeck_engine.config import Settings, TradingConfig
+from quantdeck_engine.config import Settings, StrategyConfig, TradingConfig
 from quantdeck_engine.lock import InstanceLock
+from quantdeck_engine.paths import FORWARD_DIR
 from quantdeck_engine.server import ClientServer, LogBuffer
 from quantdeck_engine.snapshot import engine_snapshot
 from quantdeck_engine.startup import build_account
@@ -35,6 +39,7 @@ from quantdeck_engine.trading.state import (
     StateChange,
     follow_user_stream,
 )
+from quantdeck_engine.trading.strategy_runner import ForwardRecord, StrategyRunner
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +60,8 @@ class Engine:
         *,
         testnet: bool,
         asset: str,
+        strategy: StrategyConfig | None = None,
+        runners: list[StrategyRunner] | None = None,
         checker: RiskChecker | None = None,
         time_sync_interval: float = TIME_SYNC_INTERVAL,
     ) -> None:
@@ -65,13 +72,15 @@ class Engine:
         self.asset = asset  # the margin asset the daily loss limit covers (D-23)
         self.traders = {t.symbol: t for t in traders}
         self.guard = guard
+        self.strategy = strategy  # None: no entries (D-43)
+        self.runners = {r.symbol: r for r in runners or []}
         self.checker = checker or RiskChecker(guard)
         self.state = AccountState(list(self.traders))
         self.mark_prices: dict[str, Decimal] = {}  # for display only (D-33)
         self.stop_requested = asyncio.Event()
 
     async def run(self) -> None:
-        """Follow the account until cancelled."""
+        """Follow the account and run the strategies until cancelled."""
         async with asyncio.TaskGroup() as tasks:
             tasks.create_task(
                 follow_user_stream(
@@ -81,6 +90,9 @@ class Engine:
             tasks.create_task(self.checker.run())
             tasks.create_task(self._follow_mark_prices())
             tasks.create_task(self._sync_time())
+            for runner in self.runners.values():
+                # Never raises: a strategy's failure stops only that strategy (D-43).
+                tasks.create_task(runner.run())
 
     # Commands from clients (D-33)
 
@@ -136,13 +148,31 @@ class Engine:
 
 
 async def start_engine(
-    client: BinanceRestClient, settings: Settings, trading: TradingConfig, store: HaltStore
+    client: BinanceRestClient,
+    settings: Settings,
+    trading: TradingConfig,
+    store: HaltStore,
+    *,
+    forward_dir: Path = FORWARD_DIR,
 ) -> Engine:
-    """Startup checks (D-05, D-16, D-19, D-26, D-27); returns the engine ready to run."""
+    """Startup checks (D-05, D-16, D-19, D-26, D-27) and the strategies' warm-up (D-43);
+    returns the engine ready to run."""
     account = await build_account(client, trading, store)
     for trader in account.traders:
         await trader.prepare()
     await account.guard.start()
+    runners = []
+    if trading.strategy is not None:
+        interval = trading.strategy.interval
+        for trader in account.traders:
+            runner = StrategyRunner(
+                trading.strategy.build(),
+                trader,
+                ClosedCandleFeed(client, settings.endpoints.ws, trader.symbol, interval),
+                ForwardRecord(forward_dir / f"{trader.symbol}_{interval}.csv"),
+            )
+            await runner.warm_up()
+            runners.append(runner)
     return Engine(
         client,
         settings.endpoints.ws,
@@ -150,6 +180,8 @@ async def start_engine(
         account.guard,
         testnet=settings.testnet,
         asset=account.base.asset,
+        strategy=trading.strategy,
+        runners=runners,
     )
 
 
@@ -167,10 +199,16 @@ async def run_engine(settings: Settings, trading: TradingConfig) -> None:
             async with BinanceRestClient(settings) as client:
                 engine = await start_engine(client, settings, trading, HaltStore())
                 symbols = ", ".join(engine.traders)
-                if engine.guard.halted:
-                    logger.warning("Engine running for %s, halted: no new orders (D-27)", symbols)
+                if engine.strategy is None:
+                    strategy = "no [strategy] in config.toml, so no entries (D-43)"
                 else:
-                    logger.info("Engine running for %s; no strategy yet, so no entries", symbols)
+                    strategy = f"strategy {engine.strategy.describe()}"
+                if engine.guard.halted:
+                    logger.warning(
+                        "Engine running for %s, %s; halted: no new orders (D-27)", symbols, strategy
+                    )
+                else:
+                    logger.info("Engine running for %s, %s", symbols, strategy)
                 server = ClientServer(engine, logs)
                 async with asyncio.TaskGroup() as tasks:
                     running = [

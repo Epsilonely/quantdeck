@@ -7,6 +7,10 @@ The shape is recorded in docs/memory-bank/techContext.md.
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from quantdeck_engine.config import StrategyConfig
+from quantdeck_engine.times import iso_utc
+from quantdeck_engine.trading.strategy_runner import StrategyRunner
+
 if TYPE_CHECKING:
     from quantdeck_engine.run import Engine
 
@@ -20,6 +24,7 @@ def engine_snapshot(engine: "Engine") -> dict[str, Any]:
     daily = engine.checker.latest
     return {
         "network": "testnet" if engine.testnet else "mainnet",
+        "strategy": _strategy_config(engine.strategy),
         "halt": {
             "halted": engine.guard.halted,
             "reason": engine.guard.halt_reason,
@@ -57,6 +62,7 @@ def _symbol_snapshot(engine: "Engine", symbol: str) -> dict[str, Any]:
     return {
         "symbol": symbol,
         "halted": engine.traders[symbol].halt_reason,
+        "strategy": _strategy_state(engine.runners.get(symbol)),
         "mark_price": None if mark is None else fixed_point(mark),
         "position": position,
         "orders": [
@@ -79,4 +85,39 @@ def _symbol_snapshot(engine: "Engine", symbol: str) -> dict[str, Any]:
             }
             for a in sorted(state.algo_orders.values(), key=lambda a: a.client_algo_id)
         ],
+    }
+
+
+def _strategy_config(config: StrategyConfig | None) -> dict[str, Any] | None:
+    if config is None:
+        return None
+    return {
+        "name": config.name,
+        "interval": config.interval,
+        # Strings, like amounts, so a Decimal parameter never becomes a float.
+        "params": {
+            key: fixed_point(value) if isinstance(value, Decimal) else str(value)
+            for key, value in config.params.items()
+        },
+    }
+
+
+def _strategy_state(runner: StrategyRunner | None) -> dict[str, Any] | None:
+    if runner is None:
+        return None
+    candle = runner.last_candle
+    signal = runner.last_signal
+    return {
+        "last_candle": None
+        if candle is None
+        else {"open_time": iso_utc(candle.open_time / 1000), "close": fixed_point(candle.close)},
+        "last_signal": None
+        if signal is None
+        else {
+            "candle_open_time": iso_utc(signal.candle_open_time / 1000),
+            "action": signal.action,
+            "stop_price": None if signal.stop_price is None else fixed_point(signal.stop_price),
+            "outcome": signal.outcome,
+        },
+        "stopped": runner.stopped,
     }

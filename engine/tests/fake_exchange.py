@@ -15,6 +15,9 @@ import httpx
 
 from quantdeck_engine.binance.rest import BinanceRestClient
 from quantdeck_engine.config import SymbolConfig, TradingConfig, parse_settings
+from quantdeck_engine.trading.balance import BaseBalance
+from quantdeck_engine.trading.executor import EntryGate, SymbolTrader
+from quantdeck_engine.trading.order_ids import ClientIdFactory
 from quantdeck_engine.trading.rules import SymbolRules
 
 SETTINGS = parse_settings({"BINANCE_API_KEY": "test-key", "BINANCE_API_SECRET": "test-secret"})
@@ -88,6 +91,7 @@ class FakeExchange:
     hedge_mode: bool = False
     margin_asset: str = "USDT"
     incomes: list[dict[str, Any]] = field(default_factory=list)
+    klines: list[list[Any]] = field(default_factory=list)  # REST rows, oldest first
     open_orders: list[dict[str, Any]] = field(default_factory=list)
     algo_orders: list[dict[str, Any]] = field(default_factory=list)
     orders: dict[str, dict[str, Any]] = field(default_factory=dict)  # every order, by client ID
@@ -158,6 +162,9 @@ class FakeExchange:
             case ("GET", "/fapi/v1/income"):
                 page, limit = int(p["page"]), int(p["limit"])
                 return httpx.Response(200, json=self.incomes[(page - 1) * limit : page * limit])
+            case ("GET", "/fapi/v1/klines"):
+                # The most recent rows only, as without startTime (the warm-up).
+                return httpx.Response(200, json=self.klines[-int(p["limit"]) :])
             case ("GET", "/fapi/v1/openOrders"):
                 return httpx.Response(200, json=self.open_orders)
             case ("GET", "/fapi/v1/openAlgoOrders"):
@@ -278,3 +285,27 @@ def open_long(exchange: FakeExchange, amount: str = "0.083", entry: str = "60000
     exchange.position_amount = Decimal(amount)
     exchange.entry_price = Decimal(entry)
     exchange.liquidation_price = Decimal(48000)
+
+
+class FixedGate:
+    """An entry gate that caps every entry's risk at `cap` (no cap by default)."""
+
+    def __init__(self, cap: Decimal | None = None) -> None:
+        self.cap = cap
+
+    async def entry_risk(self, per_trade: Decimal) -> Decimal:
+        return per_trade if self.cap is None else min(per_trade, self.cap)
+
+
+def make_trader(exchange: FakeExchange, gate: EntryGate | None = None) -> SymbolTrader:
+    client = exchange.client()
+    return SymbolTrader(
+        client,
+        TRADING.symbols["BTCUSDT"],
+        TRADING,
+        RULES,
+        BaseBalance(client, "USDT"),
+        gate or FixedGate(),
+        ClientIdFactory(),
+        sleep=no_sleep,
+    )

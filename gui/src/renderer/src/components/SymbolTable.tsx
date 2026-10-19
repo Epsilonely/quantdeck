@@ -1,5 +1,55 @@
-import type { SymbolState } from '../../../shared/engine'
-import { isNegative, pnlClass } from '../format'
+import type { StrategyAction, SymbolState, SymbolStrategy } from '../../../shared/engine'
+import { isNegative, pnlClass, shortDateTime } from '../format'
+
+const ACTION_LABELS: Record<StrategyAction, string> = {
+  enter_long: '롱 진입',
+  enter_short: '숏 진입',
+  exit: '청산'
+}
+
+const ACTION_CLASSES: Record<StrategyAction, string> = {
+  enter_long: 'profit',
+  enter_short: 'loss',
+  exit: ''
+}
+
+function LastCandle({ strategy }: { strategy: SymbolStrategy | null }): React.JSX.Element {
+  const candle = strategy?.last_candle
+  if (!candle) return <span className="muted">{strategy ? '판단 전' : '—'}</span>
+  return (
+    <>
+      {shortDateTime(candle.open_time)} · {candle.close}
+    </>
+  )
+}
+
+// The last signal and its outcome, and whether this symbol's strategy stopped (D-43).
+function LastSignal({ strategy }: { strategy: SymbolStrategy | null }): React.JSX.Element {
+  if (!strategy) return <span className="muted">—</span>
+  const signal = strategy.last_signal
+  return (
+    <>
+      {strategy.stopped && (
+        <div>
+          <span className="tag danger" title={strategy.stopped}>
+            전략 중단: {strategy.stopped}
+          </span>
+        </div>
+      )}
+      {signal ? (
+        <div title={signal.outcome}>
+          <span className={ACTION_CLASSES[signal.action]}>{ACTION_LABELS[signal.action]}</span>
+          {signal.stop_price && <> · 스톱 {signal.stop_price}</>}
+          <div className="muted">
+            {shortDateTime(signal.candle_open_time)} 캔들 · {signal.outcome}
+          </div>
+        </div>
+      ) : (
+        !strategy.stopped && <span className="muted">아직 없음</span>
+      )}
+    </>
+  )
+}
 
 function SymbolTable({ symbols }: { symbols: SymbolState[] }): React.JSX.Element {
   if (symbols.length === 0) return <p className="muted">설정된 심볼이 없습니다.</p>
@@ -15,6 +65,8 @@ function SymbolTable({ symbols }: { symbols: SymbolState[] }): React.JSX.Element
           <th className="num">미실현 손익</th>
           <th>스톱</th>
           <th>주문</th>
+          <th>마지막 캔들</th>
+          <th>전략 신호</th>
         </tr>
       </thead>
       <tbody>
@@ -72,6 +124,12 @@ function SymbolTable({ symbols }: { symbols: SymbolState[] }): React.JSX.Element
                   </div>
                 ))
               )}
+            </td>
+            <td>
+              <LastCandle strategy={s.strategy ?? null} />
+            </td>
+            <td>
+              <LastSignal strategy={s.strategy ?? null} />
             </td>
           </tr>
         ))}

@@ -19,7 +19,10 @@ from typing import Any
 
 from dotenv import dotenv_values
 
+from quantdeck_engine.binance.streams import INTERVAL_MS
 from quantdeck_engine.paths import CONFIG_FILE, ENV_FILE
+from quantdeck_engine.strategy.base import Strategy
+from quantdeck_engine.strategy.registry import StrategyError, make_strategy
 
 logger = logging.getLogger(__name__)
 
@@ -28,6 +31,8 @@ MAX_RISK_PER_TRADE_PERCENT = Decimal(2)
 MAX_DAILY_LOSS_LIMIT_PERCENT = Decimal(10)
 MAX_NOTIONAL_MULTIPLE = Decimal(5)
 MAX_LEVERAGE = 10
+# Candles a strategy may need before it decides (D-43); the feed loads them in one request.
+MAX_STRATEGY_WARMUP = 1000
 
 
 class ConfigError(Exception):
@@ -148,8 +153,26 @@ class SymbolConfig:
 
 
 @dataclass(frozen=True)
+class StrategyConfig:
+    """The strategy `run` trades on every configured symbol (D-43)."""
+
+    name: str
+    interval: str
+    params: Mapping[str, object]  # as config.toml gives them; `make_strategy` checks them
+
+    def build(self) -> Strategy:
+        """A new instance: each symbol gets its own."""
+        return make_strategy(self.name, self.interval, self.params)
+
+    def describe(self) -> str:
+        """E.g. `donchian 4h (entry_period=55, exit_period=20)`."""
+        params = ", ".join(f"{key}={value}" for key, value in self.params.items())
+        return f"{self.name} {self.interval}" + (f" ({params})" if params else "")
+
+
+@dataclass(frozen=True)
 class TradingConfig:
-    """Risk and per-symbol settings from `engine/config.toml`.
+    """Risk, per-symbol, and strategy settings from `engine/config.toml`.
 
     Percentages are of the day's base balance: the wallet balance at 00:00 UTC (D-23).
     """
@@ -158,6 +181,7 @@ class TradingConfig:
     daily_loss_limit_percent: Decimal  # D-24
     max_notional_multiple: Decimal  # D-25: notional <= this x base balance
     symbols: Mapping[str, SymbolConfig]
+    strategy: StrategyConfig | None = None  # None: `run` places no entries (D-43)
 
 
 def load_trading_config(path: Path = CONFIG_FILE) -> TradingConfig:
@@ -173,7 +197,7 @@ def load_trading_config(path: Path = CONFIG_FILE) -> TradingConfig:
 
 
 def parse_trading_config(data: Mapping[str, Any]) -> TradingConfig:
-    _reject_unknown(data, {"risk", "symbols"}, "top level")
+    _reject_unknown(data, {"risk", "symbols", "strategy"}, "top level")
 
     risk = _table(data, "risk")
     _reject_unknown(
@@ -208,7 +232,39 @@ def parse_trading_config(data: Mapping[str, Any]) -> TradingConfig:
             risk, "max_notional_multiple", MAX_NOTIONAL_MULTIPLE, "[risk]"
         ),
         symbols=symbols,
+        strategy=_parse_strategy(data.get("strategy")),
     )
+
+
+def _parse_strategy(table: object) -> StrategyConfig | None:
+    if table is None:
+        return None
+    where = "[strategy]"
+    if not isinstance(table, Mapping):
+        raise ConfigError(f"{where} must be a table")
+    _reject_unknown(table, {"name", "interval", "params"}, where)
+    name = table.get("name")
+    if not isinstance(name, str):
+        raise ConfigError(f"{where} name must be a string, got {name!r}")
+    interval = table.get("interval")
+    if not isinstance(interval, str) or interval not in INTERVAL_MS:
+        raise ConfigError(
+            f"{where} interval must be one of {', '.join(INTERVAL_MS)}, got {interval!r}"
+        )
+    params = table.get("params", {})
+    if not isinstance(params, Mapping):
+        raise ConfigError("[strategy.params] must be a table")
+    config = StrategyConfig(name=name, interval=interval, params=dict(params))
+    try:
+        warmup = config.build().warmup
+    except StrategyError as e:
+        raise ConfigError(f"{where} {e}") from None
+    if warmup > MAX_STRATEGY_WARMUP:
+        raise ConfigError(
+            f"{where} {config.describe()} needs {warmup} warm-up candles; "
+            f"the most is {MAX_STRATEGY_WARMUP}"
+        )
+    return config
 
 
 def _table(data: Mapping[str, Any], key: str) -> Mapping[str, Any]:

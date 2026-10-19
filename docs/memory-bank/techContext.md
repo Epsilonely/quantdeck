@@ -8,7 +8,7 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 |---|---|---|
 | GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the commands; starts the engine when none is running (D-34); light/dark theme (D-35) |
 | Charts | lightweight-charts | Planned, not installed |
-| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch, `run` without a strategy (D-31) serving clients (D-32, D-33), backtests (D-37 to D-40) |
+| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch, `run` (D-31) with an optional strategy (D-43) serving clients (D-32, D-33), backtests (D-37 to D-40) |
 | Binance client | In-house, asyncio on httpx + websockets (D-10) | REST including orders and algo orders, kline stream, user data stream |
 | Discord bot | Undecided | Not started |
 | Storage | SQLite (trades, orders, logs); historical candles as Binance's downloaded zip files in `engine/data/`, Parquet deferred (D-38) | Planned; diagnostic logs go to files (D-12), and the kill-switch halt record is `engine/state/halt.json` (D-29) |
@@ -73,15 +73,21 @@ After `hello` the first three messages are `welcome`, `logs`, `state`, in that o
 
 ```
 network      "testnet" | "mainnet"
+strategy     null without a [strategy] in config.toml, else {name, interval, params: {name: str}}
 halt         {halted: bool, reason: str | null, since: str | null}
 daily_loss   null until the first check, then {asset, base, loss, limit}
 balances     {asset: wallet balance}, nonzero only
 symbols      [{symbol, halted: str | null (this symbol's own halt, D-19/D-20),
+               strategy: null | {last_candle: null | {open_time, close},
+                                 last_signal: null | {candle_open_time, action, stop_price: str | null, outcome},
+                                 stopped: str | null},
                mark_price: str | null,
                position: null | {amount (negative = short), entry_price, unrealized_pnl: str | null},
                orders: [{client_id, side, type, quantity, reduce_only}],
                stops:  [{client_algo_id, side, type, trigger_price, close_position}]}]
 ```
+
+Strategy fields (D-43): parameter values are strings, like amounts. `action` is `enter_long`, `enter_short`, or `exit`; `outcome` is text for the user, and `stopped` says why this symbol's strategy stopped. The fields were added without changing the protocol version, so a client must accept them missing from an older engine.
 
 **Commands.** `emergency_close` fires the kill switch (D-27); `ok` is false if a symbol couldn't be flattened. `lift_halt` answers `ok: true` with "halt lifted" or "not halted", and `ok: false` while today's loss is still at the limit. `stop_engine` (D-34) answers `ok: true` once any kill switch in progress has finished; the engine then closes every connection with code 1001 and deletes the connection file. The process itself exits a few seconds later, after its Binance streams close.
 

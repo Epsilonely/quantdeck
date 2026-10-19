@@ -64,6 +64,20 @@ function App(): React.JSX.Element {
             {state.network.toUpperCase()}
           </span>
         )}
+        {state &&
+          (state.strategy ? (
+            <span className="tag info" title="engine/config.toml의 [strategy] (D-43)">
+              {state.strategy.name} {state.strategy.interval}
+              {Object.keys(state.strategy.params).length > 0 &&
+                ` · ${Object.entries(state.strategy.params)
+                  .map(([key, value]) => `${key}=${value}`)
+                  .join(', ')}`}
+            </span>
+          ) : (
+            <span className="tag muted" title="engine/config.toml에 [strategy]가 없습니다 (D-43)">
+              전략 없음 · 진입 안 함
+            </span>
+          ))}
         <span className={`tag ${statusClass}`}>{statusText}</span>
         <span className="spacer" />
         <ThemeSwitch />

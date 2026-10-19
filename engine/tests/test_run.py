@@ -10,8 +10,9 @@ import pytest
 from fake_exchange import SETTINGS, TRADING, FakeExchange, open_long
 
 from quantdeck_engine.binance.rest import UnknownSymbol
+from quantdeck_engine.binance.streams import kline_from_row
 from quantdeck_engine.binance.user_stream import AccountUpdate, UserStreamConnected
-from quantdeck_engine.config import SymbolConfig, TradingConfig, parse_settings
+from quantdeck_engine.config import StrategyConfig, SymbolConfig, TradingConfig, parse_settings
 from quantdeck_engine.lock import EngineAlreadyRunning, InstanceLock
 from quantdeck_engine.run import Engine, RunFailed, run_engine, start_engine
 from quantdeck_engine.snapshot import fixed_point
@@ -20,6 +21,7 @@ from quantdeck_engine.trading.halt import HaltRecord, HaltStore
 from quantdeck_engine.trading.risk import RiskChecker
 from quantdeck_engine.trading.sizing import DailyLoss
 from quantdeck_engine.trading.state import PositionClosed, resync
+from quantdeck_engine.trading.strategy_runner import Signal
 
 D = Decimal
 
@@ -221,11 +223,13 @@ async def test_snapshot_of_a_protected_position(store: HaltStore) -> None:
     snapshot = engine.snapshot()
     json.dumps(snapshot)  # JSON-ready as it is
     assert snapshot["network"] == "testnet"
+    assert snapshot["strategy"] is None  # no [strategy] in the config
     assert snapshot["halt"] == {"halted": False, "reason": None, "since": None}
     assert snapshot["daily_loss"] is None  # until the first check
     assert snapshot["balances"] == {"USDT": "5000"}
     (symbol,) = snapshot["symbols"]
     assert symbol["symbol"] == "BTCUSDT" and symbol["halted"] is None
+    assert symbol["strategy"] is None
     assert symbol["mark_price"] == "60100.5"
     assert symbol["position"] == {
         "amount": "0.083",
@@ -243,6 +247,63 @@ async def test_snapshot_of_a_protected_position(store: HaltStore) -> None:
         "base": "5000",
         "loss": "0",
         "limit": "150",
+    }
+
+
+STEP = 4 * 60 * 60_000
+OPEN_NOW = 1_791_993_600_000  # the 4h candle still open at FakeExchange's server time
+
+
+async def test_strategy_warms_up_at_startup_and_shows_in_the_snapshot(
+    store: HaltStore, tmp_path: Path
+) -> None:
+    exchange = FakeExchange()
+    exchange.klines = [
+        [t, "60000", "60100", "59900", "60050", "1", t + STEP - 1]
+        for t in range(OPEN_NOW - 6 * STEP, OPEN_NOW + 1, STEP)
+    ]
+    strategy = StrategyConfig("donchian", "4h", {"entry_period": 3, "exit_period": 2})
+    trading = TradingConfig(
+        risk_per_trade_percent=D(1),
+        daily_loss_limit_percent=D(3),
+        max_notional_multiple=D(2),
+        symbols=TRADING.symbols,
+        strategy=strategy,
+    )
+
+    engine = await start_engine(exchange.client(), SETTINGS, trading, store, forward_dir=tmp_path)
+
+    (warm_up,) = exchange.calls("GET", "/fapi/v1/klines")
+    assert (warm_up["interval"], warm_up["limit"]) == ("4h", "6")  # 4 candles and 2 spare
+    runner = engine.runners["BTCUSDT"]
+    snapshot = engine.snapshot()
+    assert snapshot["strategy"] == {
+        "name": "donchian",
+        "interval": "4h",
+        "params": {"entry_period": "3", "exit_period": "2"},
+    }
+    # The latest warm-up candle is decided on once the engine runs.
+    assert snapshot["symbols"][0]["strategy"] == {
+        "last_candle": None,
+        "last_signal": None,
+        "stopped": None,
+    }
+
+    last = kline_from_row(exchange.klines[-2], "BTCUSDT", "4h")
+    runner.last_candle = last
+    runner.last_signal = Signal(last.open_time, "enter_long", D(59900), "entered 0.083 at ~60000")
+    runner.stopped = "RuntimeError: a bug"
+    shown = engine.snapshot()["symbols"][0]["strategy"]
+    json.dumps(shown)
+    assert shown == {
+        "last_candle": {"open_time": "2026-10-14T12:00:00+00:00", "close": "60050"},
+        "last_signal": {
+            "candle_open_time": "2026-10-14T12:00:00+00:00",
+            "action": "enter_long",
+            "stop_price": "59900",
+            "outcome": "entered 0.083 at ~60000",
+        },
+        "stopped": "RuntimeError: a bug",
     }
 
 

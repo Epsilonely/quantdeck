@@ -246,6 +246,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - The engine re-measures the clock offset hourly, since signed timestamps must stay within `recvWindow` for days.
   - Event-triggered risk checks (a position closed, `FUNDING_FEE`, a reconnect) run about 3 s after the event, because income records appeared 1.1 s after a fill (D-30). Requests close together share one check.
 - **Note (2026-10-16):** The GUI now starts `run` when none is running and stops it with a command (D-34). Running it without the GUI and restarting it after a crash are still open.
+- **Note (2026-10-19):** The strategy runs in `run` when `config.toml` names one (D-43).
 - **Date:** 2026-10-16
 
 ## D-32 Clients connect to `127.0.0.1` with a per-start token; the GUI connects from its main process
@@ -374,4 +375,23 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - A candle REST doesn't have either is treated as a real gap once a later closed candle exists: logged and passed over, as the backtest's data loader does (D-38).
 - **Why:** The strategy decides on closed candles only (D-36), so one lost candle makes it act differently from the backtest. The stream loses whatever is sent while it reconnects, and Binance drops every connection within 24 hours. On testnet REST still showed a smaller volume, once a different close, for 10 s or more after a close the stream had already sent in full (`binanceNotes.md`). A minute leaves room for that; the cost is a candle up to a minute late after a reconnect near a close, nothing for a 4h strategy. The user chose waiting over deciding with a gap.
 - **Alternatives:** Keep deciding through a gap with a warning; trust REST right after the close.
+- **Date:** 2026-10-19
+
+## D-43 `run` trades one strategy from `config.toml`, acts on the latest closed candle at startup, and records every decision
+
+- **Decision:**
+  - **Settings:** one top-level `[strategy]` table in `engine/config.toml` (`name`, `interval`, and `[strategy.params]`) applies to every configured symbol, each with its own instance. Without the table, `run` places no entries, as before. The name must be in the strategy registry, the interval a kline stream interval, and the parameters pass the same checks as in the backtest; the warm-up has a code bound. Anything else stops the engine at startup (D-28).
+  - **Warm-up:** at startup the engine loads the strategy's `warmup` closed candles from REST (D-42), feeds them to it, and carries out the signal of the most recent one. Later candles come from the closed-candle feed.
+  - **Each candle:** the engine reads the position from REST (D-06), retrying while REST fails as the feed does (D-42), passes the candle and the position to the strategy, and carries out an entry or exit through the live paths (D-17, D-18, D-22).
+  - **Record:** every candle the strategy decided on appends a row to `engine/data/forward/<SYMBOL>_<interval>.csv`: the candle, the position it saw, the action and stop price, and the outcome. A failed write logs a WARNING and changes nothing else.
+  - **Clients:** the state gains a top-level `strategy` (name, interval, parameters) and, per symbol, the last candle decided on, the last signal with its outcome, and why the strategy stopped, if it did. The protocol version stays 1. The GUI shows the strategy in the header and two columns in the symbol table.
+  - **Failures:** while the account or the symbol is halted (`TradingHalted`; D-16, D-19, D-20, D-27), an entry signal is logged and skipped; exits always run. A request error or an unclear order outcome (D-20) is logged as an ERROR, and the strategy goes on with the next candle. Any other error stops that symbol's strategy with a CRITICAL log; the engine keeps running, so the kill switch, monitoring, and exchange-side stops carry on.
+- **Why:**
+  - One table for every symbol: D-39 runs the chosen parameters unchanged on every coin, and per-symbol settings would invite tuning each one.
+  - Acting on the latest closed candle at startup: the GUI stops and starts the engine (D-34), and an exit signal on a candle that closed while it was down would otherwise be lost, leaving open a position the backtest would have closed. The strategy decides from candles and the exchange's position only (D-36), so the restart gives the same decision.
+  - Retrying the position read instead of skipping the candle: the strategy's indicators need every candle (D-42), and deciding without the position could miss an exit.
+  - The record is what a forward test is checked against: replaying its candles through the backtest must give the same signals (D-36, D-38). It sits with the downloaded data in `engine/data/` (gitignored). It is a record, not state: nothing reads it back (D-06).
+  - A request error is usually transient, and the next candle re-reads the position, so a failed order costs one candle. Any other error is a bug; stopping only the strategy keeps the protection running, whereas a stopped engine no longer watches the daily loss limit (D-34).
+- **Limitations:** A restart inside a candle repeats that candle's decision and records it twice; if a stop closed that candle's entry before the restart, the repeat enters again, which the backtest wouldn't. An entry carried out at startup fills at the current price, not at the candle's next open (D-40).
+- **Alternatives:** per-symbol strategy tables; ignoring the last warm-up candle's signal (loses exits across restarts); stopping the engine on a strategy error.
 - **Date:** 2026-10-19

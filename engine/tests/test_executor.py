@@ -4,12 +4,11 @@ from decimal import Decimal
 import httpx
 import pytest
 from fake_exchange import (
-    RULES,
-    TRADING,
     Failure,
     FakeExchange,
+    FixedGate,
     api_error,
-    no_sleep,
+    make_trader,
     open_long,
 )
 
@@ -19,40 +18,15 @@ from quantdeck_engine.trading.balance import BaseBalance, base_from_income
 from quantdeck_engine.trading.executor import (
     STOP_ATTEMPTS,
     OrderOutcomeUnclear,
-    SymbolTrader,
     TradingHalted,
 )
-from quantdeck_engine.trading.order_ids import ClientIdFactory, Role, parse_client_id
+from quantdeck_engine.trading.order_ids import Role, parse_client_id
 from quantdeck_engine.trading.rules import Side
 
 D = Decimal
 
 ORDER = ("POST", "/fapi/v1/order")
 ALGO = ("POST", "/fapi/v1/algoOrder")
-
-
-class FixedGate:
-    """An entry gate that caps every entry's risk at `cap` (no cap by default)."""
-
-    def __init__(self, cap: Decimal | None = None) -> None:
-        self.cap = cap
-
-    async def entry_risk(self, per_trade: Decimal) -> Decimal:
-        return per_trade if self.cap is None else min(per_trade, self.cap)
-
-
-def make_trader(exchange: FakeExchange, gate: FixedGate | None = None) -> SymbolTrader:
-    client = exchange.client()
-    return SymbolTrader(
-        client,
-        TRADING.symbols["BTCUSDT"],
-        TRADING,
-        RULES,
-        BaseBalance(client, "USDT"),
-        gate or FixedGate(),
-        ClientIdFactory(),
-        sleep=no_sleep,
-    )
 
 
 def roles(params: list[dict[str, str]], key: str) -> list[str]:

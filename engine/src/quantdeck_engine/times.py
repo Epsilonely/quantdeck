@@ -21,3 +21,8 @@ def day_ms(day: date) -> int:
 def utc_text(ms: int) -> str:
     """`YYYY-MM-DD HH:MM` in UTC, for logs and reports."""
     return datetime.fromtimestamp(ms / 1000, UTC).strftime("%Y-%m-%d %H:%M")
+
+
+def iso_utc(seconds: float) -> str:
+    """ISO 8601 UTC to the second, as the client protocol sends times (D-33)."""
+    return datetime.fromtimestamp(seconds, UTC).isoformat(timespec="seconds")
