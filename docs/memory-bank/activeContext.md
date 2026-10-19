@@ -6,9 +6,9 @@ _Last updated: 2026-10-19_
 
 The first strategy is the Donchian breakout 55/20 on BTCUSDT 4h at 2× testnet leverage, picked by backtest (D-41). The evidence is positive but weak, which is enough for a testnet forward test and not for mainnet (D-41).
 
-The strategy is now connected to `run` (GitHub issue #11, D-43, 2026-10-19): with a `[strategy]` table in `engine/config.toml`, each symbol's strategy warms up from REST, decides on the latest closed candle at startup and then on every closed candle from the feed (D-42), and every decision is appended to a CSV record in `engine/data/forward/`. The GUI shows the strategy and each symbol's last candle and signal. This was tested with fakes only; it hasn't run on testnet yet. The user's `engine/config.toml` already has the `[strategy]` table for D-41, so the next `run`, including one the GUI starts on its own (D-34), trades on testnet.
+The strategy is now connected to `run` (GitHub issue #11, D-43, 2026-10-19): with a `[strategy]` table in `engine/config.toml`, each symbol's strategy warms up from REST, decides on the latest closed candle at startup and then on every closed candle from the feed (D-42), and every decision is appended to a CSV record in `engine/data/forward/`. The GUI shows the strategy and each symbol's last candle and signal. The user's `engine/config.toml` has the `[strategy]` table for D-41, so every `run`, including one the GUI starts on its own (D-34), trades on testnet.
 
-Next is the testnet forward test itself. Work items are tracked as GitHub issues.
+The testnet forward test started 2026-10-19 at 11:23 KST. The engine died before the 13:00 KST close when the user closed the terminal running the GUI (GitHub issue #12); the GUI launcher now starts the engine outside its process tree, and the engine has run again since 13:40 KST, deciding the missed candle at startup. The user can't keep it running around the clock, so the forward test will have gaps; they don't invalidate the recorded decisions (D-43). Work items are tracked as GitHub issues.
 
 ## Open questions
 
@@ -25,7 +25,7 @@ Roughly in the order they're needed:
 
 ## Next steps
 
-1. Start the testnet forward test: the user starts `run` (it places orders now), then check the startup decision in the log, the GUI's strategy columns, and the CSV record, and later the first 4h closes. The roadmap item is checked off once `run` has traded the strategy on testnet (issue #11).
+1. Keep the forward test going: the next 4h closes, then the first entry and exit in the GUI and the CSV record. The roadmap item is checked off once `run` has traded the strategy on testnet (issue #11).
 2. The replay-and-compare tool for the forward test (Open questions).
 3. How a packaged GUI finds `engine/` (`techContext.md`, GUI notes).
 4. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.

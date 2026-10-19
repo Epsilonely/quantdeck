@@ -1,8 +1,14 @@
 // Starts the engine when none is running (D-34). The virtualenv's pythonw runs
 // `python -m quantdeck_engine run` hidden and detached: pythonw has no console, so Windows opens no
-// console window for it, and a detached process keeps running after the GUI closes (D-01). The
-// engine's instance lock (D-31) refuses a second engine, so starting one while another is still
-// coming up is harmless.
+// console window for it. The engine's instance lock (D-31) refuses a second engine, so starting one
+// while another is still coming up is harmless.
+//
+// The engine must outlive the GUI (D-01), even when the terminal that runs `npm run dev` is closed
+// while the GUI is open: that ends the terminal's whole process tree, and a detached child of
+// Electron is still in it (reproduced 2026-10-19). So a short-lived starter, Electron run as plain
+// Node, launches the engine, reports its pid, and exits; the engine never has a living parent in
+// the GUI's tree. Not being its parent, the GUI can't read its exit code, so it watches the pid and
+// reads the engine's log to tell a stop from a failure.
 
 import { spawn } from 'child_process'
 import { existsSync } from 'fs'
@@ -11,12 +17,26 @@ import { join } from 'path'
 import type { LaunchState } from '../shared/engine'
 
 const LOG_TAIL_BYTES = 64 * 1024
-// "2026-10-16T05:00:39.169Z ERROR   quantdeck_engine: Engine failed to start: ..."
+const WATCH_INTERVAL_MS = 1000
+// "2026-10-16T05:00:39.169+09:00 ERROR   quantdeck_engine.cli: Engine failed to start: ..."
 const ERROR_LINE = /^\S+\s+(?:ERROR|CRITICAL)\s+(.*)$/
+// Logged when `stop_engine` (D-34) or Ctrl+C stops the engine.
+const STOPPED_LINE = /^\S+\s+INFO\s+.*Engine stopped by /
+
+// Runs in the starter: argv is the engine's python and its directory. Prints the engine's pid.
+const STARTER = `
+const { spawn } = require('child_process')
+const [python, cwd] = process.argv.slice(1)
+const engine = spawn(python, ['-m', 'quantdeck_engine', 'run'], {
+  cwd, detached: true, windowsHide: true, stdio: 'ignore'
+})
+engine.on('error', (e) => { process.stderr.write(e.message); process.exit(1) })
+engine.on('spawn', () => { process.stdout.write(String(engine.pid)); process.exit(0) })
+`
 
 export class EngineLauncher {
   private launch: LaunchState = { phase: 'idle', message: null }
-  private running = false // a process this GUI started hasn't exited yet
+  private running = false // an engine this GUI started hasn't exited yet
 
   constructor(
     private readonly engineDir: string,
@@ -35,37 +55,50 @@ export class EngineLauncher {
       return
     }
     const startedAt = Date.now()
-    const child = spawn(python, ['-m', 'quantdeck_engine', 'run'], {
-      cwd: this.engineDir,
-      detached: true,
+    const starter = spawn(process.execPath, ['-e', STARTER, python, this.engineDir], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
       windowsHide: true,
-      stdio: 'ignore' // the engine logs to engine/logs (D-12)
+      stdio: ['ignore', 'pipe', 'pipe']
     })
     this.running = true
     this.set('starting', null)
-    console.log(`[launcher] started the engine (pid ${child.pid})`)
-    child.on('error', (e) => {
+    let out = ''
+    let err = ''
+    starter.stdout.on('data', (chunk) => (out += chunk))
+    starter.stderr.on('data', (chunk) => (err += chunk))
+    starter.on('error', (e) => {
       this.running = false
       this.set('failed', `엔진을 시작할 수 없습니다: ${e.message}`)
     })
-    child.on('exit', (code) => {
+    starter.on('close', (code) => {
       if (!this.running) return // 'error' already reported it
-      this.running = false
-      console.log(`[launcher] the engine exited (code ${code})`)
-      if (code === 0) {
-        this.set('idle', null) // stopped on request (D-34)
+      const pid = Number.parseInt(out, 10)
+      if (code !== 0 || !Number.isInteger(pid)) {
+        this.running = false
+        this.set('failed', `엔진을 시작할 수 없습니다: ${err.trim() || `종료 코드 ${code}`}`)
         return
       }
-      void describeExit(this.engineDir, code, startedAt).then((message) =>
-        this.set('failed', message)
-      )
+      console.log(`[launcher] started the engine (pid ${pid})`)
+      this.watch(pid, startedAt)
     })
-    child.unref()
   }
 
   /** The GUI reached an engine, whichever process it is. */
   connected(): void {
     this.set('idle', null)
+  }
+
+  private watch(pid: number, startedAt: number): void {
+    const timer = setInterval(() => {
+      if (isAlive(pid)) return
+      clearInterval(timer)
+      this.running = false
+      console.log(`[launcher] the engine (pid ${pid}) exited`)
+      void describeExit(this.engineDir, startedAt).then((message) =>
+        // No message: stopped on request (D-34).
+        message === null ? this.set('idle', null) : this.set('failed', message)
+      )
+    }, WATCH_INTERVAL_MS)
   }
 
   private set(phase: LaunchState['phase'], message: string | null): void {
@@ -81,13 +114,19 @@ function pythonPath(engineDir: string): string {
     : join(engineDir, '.venv', 'bin', 'python')
 }
 
-/** The exit code and the last error the engine logged, from a log file written since the start. */
-async function describeExit(
-  engineDir: string,
-  code: number | null,
-  startedAt: number
-): Promise<string> {
-  const head = code === null ? '엔진이 종료되었습니다' : `엔진이 종료되었습니다 (종료 코드 ${code})`
+function isAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0) // signal 0 only checks that the process exists
+    return true
+  } catch (e) {
+    return (e as NodeJS.ErrnoException).code === 'EPERM'
+  }
+}
+
+/** Null if the engine logged a stop on request; otherwise why it exited, from the latest error it
+ * logged in a log file written since the start. */
+async function describeExit(engineDir: string, startedAt: number): Promise<string | null> {
+  const head = '엔진이 종료되었습니다'
   try {
     const logDir = join(engineDir, 'logs')
     const names = (await readdir(logDir)).filter((n) => /^engine_.*\.log$/.test(n)).sort()
@@ -97,6 +136,7 @@ async function describeExit(
       const text = await readFile(join(logDir, newest), 'utf-8')
       const lines = text.slice(-LOG_TAIL_BYTES).split(/\r?\n/)
       for (let i = lines.length - 1; i >= 0; i--) {
+        if (STOPPED_LINE.test(lines[i])) return null
         const match = ERROR_LINE.exec(lines[i])
         if (match) return `${head}: ${match[1]}`
       }
