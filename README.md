@@ -160,7 +160,7 @@ uv run quantdeck-engine lift-halt
 uv run quantdeck-engine backtest --strategy donchian
 ```
 
-`backtest`는 전략 하나를 메인넷 과거 데이터로 돌려 보는 명령이며 주문은 내지 않습니다. 전략은 `donchian`(돈치안 채널 돌파)과 `bollinger`(볼린저 밴드 평균 회귀)가 있습니다. 과거 캔들은 바이낸스 공개 아카이브(data.binance.vision)에서 받아 `engine/data/`에 보관하고, 다음 실행부터는 받아 둔 파일을 씁니다. 수량 계산 규칙(틱, 최소 주문, 레버리지 구간)은 설정된 네트워크(기본 테스트넷)에서 읽으므로 `.env`가 필요하고, 리스크 설정은 `engine/config.toml`을 그대로 씁니다. 기본값은 BTCUSDT 1시간봉, 2020-01-01부터 어제까지, 시작 잔고 5000 USDT, 수수료 0.05%, 슬리피지 0.02%(손절 0.05%)이며 `--symbol`, `--interval`, `--start`, `--end`, `--balance`, `--fee`, `--slippage`, `--stop-slippage`, `--leverage`로 바꿀 수 있습니다. 전략 파라미터는 `--param entry_period=55`처럼 넘기고, `--trades-csv trades.csv`를 주면 거래 내역을 파일로 남깁니다.
+`backtest`는 전략 하나를 메인넷 과거 데이터로 돌려 보는 명령이며 주문은 내지 않습니다. 전략은 `donchian`(돈치안 채널 돌파), `bollinger`(볼린저 밴드 평균 회귀), `daily-breakout`(일봉 시가 변동성 돌파), `move-fade`(1시간·2시간 급등락 역추세)가 있습니다. 과거 캔들은 바이낸스 공개 아카이브(data.binance.vision)에서 받아 `engine/data/`에 보관하고, 다음 실행부터는 받아 둔 파일을 씁니다. 수량 계산 규칙(틱, 최소 주문, 레버리지 구간)은 설정된 네트워크(기본 테스트넷)에서 읽으므로 `.env`가 필요하고, 리스크 설정은 `engine/config.toml`을 그대로 씁니다. 기본값은 BTCUSDT 1시간봉, 2020-01-01부터 어제까지, 시작 잔고 5000 USDT, 수수료 0.05%, 슬리피지 0.02%(손절 0.05%)이며 `--symbol`, `--interval`, `--start`, `--end`, `--balance`, `--fee`, `--slippage`, `--stop-slippage`, `--leverage`로 바꿀 수 있습니다. 전략 파라미터는 `--param entry_period=55`처럼 넘기고(참·거짓 값은 `--param long_only=true`), `--trades-csv trades.csv`를 주면 거래 내역을 파일로 남깁니다.
 
 실행 로그는 콘솔과 `engine/logs/`에 함께 남습니다. 로그 시각은 이 PC의 시간대(한국 시간)에 UTC 오프셋을 붙여 기록합니다(`2026-10-16T16:41:50.908+09:00`). 파일 이름은 시작 시각과 번호로 정해지고(`engine_2026-10-03_14-30-05_000.log`), 10MB를 넘거나 날짜가 바뀌면 새 파일로 넘어갑니다. 일일 손실 한도의 하루는 로그 시간대와 상관없이 매일 09:00(00:00 UTC)에 바뀝니다. 30일 지난 로그는 엔진을 시작할 때 지웁니다. 요청 단위 로그를 보려면 `.env`에 `ENGINE_LOG_LEVEL=DEBUG`를 넣으세요.
 

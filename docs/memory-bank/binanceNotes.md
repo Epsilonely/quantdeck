@@ -185,6 +185,9 @@ Source: [binance-public-data](https://github.com/binance/binance-public-data) RE
 - Publishing: daily BTCUSDT 1h files appeared the next day between 07:51 and 14:17 UTC (2026-10-02 to 2026-10-17), monthly ones on the 2nd of the next month around 09:00–12:00 UTC, not on "the first Monday" the README gives. Times are from LastModified, which a re-upload can change.
 - Files are sometimes replaced later (the README lists fixes), and the repo's issues report missing rows that were backfilled afterwards. Build URLs from the pattern rather than crawling listings, which hold stray objects, and check the candles for gaps after loading.
 - BTCUSDT 1h, 2020-01-01 to 2026-10-18 (downloaded 2026-10-19): `klines` had no gaps. `markPriceKlines` lacked six whole UTC days inside otherwise complete monthly files: 2021-07-01, 2021-07-24 to 2021-07-27, 2022-07-31, 2022-10-02, 2023-02-24, and 2026-06-29. REST `GET /fapi/v1/markPriceKlines` returned all of them, so the archive files are incomplete rather than the exchange having been down. Funding settled every 8 hours throughout.
+- 15m, BTCUSDT, ETHUSDT, SOLUSDT, and XRPUSDT, 2020-01-01 to 2026-10-18 (downloaded 2026-10-19):
+  - `markPriceKlines` has no candles from 2020-01-19 13:00 to 13:30 UTC (BTC, ETH, and XRP; SOL wasn't listed yet) or from 2023-11-10 03:30 to 04:00 UTC (all four). REST has none for those times either, so these are real gaps.
+  - The SOLUSDT archive starts with a partial month, 2020-09; 2020-08 is a 404.
 
 ### Klines and funding rate history over REST (2026-10-18)
 

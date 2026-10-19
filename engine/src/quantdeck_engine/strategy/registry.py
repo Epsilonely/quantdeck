@@ -11,11 +11,15 @@ from decimal import Decimal, InvalidOperation
 
 from quantdeck_engine.strategy.base import Strategy
 from quantdeck_engine.strategy.bollinger import BollingerReversion
+from quantdeck_engine.strategy.daily_breakout import DailyOpenBreakout
 from quantdeck_engine.strategy.donchian import DonchianBreakout
+from quantdeck_engine.strategy.move_fade import MoveFade
 
 STRATEGIES: dict[str, type[Strategy]] = {
     "donchian": DonchianBreakout,
     "bollinger": BollingerReversion,
+    "daily-breakout": DailyOpenBreakout,
+    "move-fade": MoveFade,
 }
 
 
@@ -31,7 +35,7 @@ def parameter_types(name: str) -> dict[str, type]:
 
 def make_strategy(name: str, interval: str, params: Mapping[str, object]) -> Strategy:
     """Build strategy `name` on `interval` with `params`, as `config.toml` would give them:
-    ints and Decimals (an int is accepted for a Decimal parameter, never a bool)."""
+    ints, Decimals, and bools (an int is accepted for a Decimal parameter, never a bool)."""
     cls = _class(name)
     types = parameter_types(name)
     unknown = sorted(set(params) - set(types))
@@ -47,17 +51,21 @@ def make_strategy(name: str, interval: str, params: Mapping[str, object]) -> Str
         raise StrategyError(f"{name}: {e}") from None
 
 
-def parse_parameters(name: str, items: Iterable[str]) -> dict[str, int | Decimal]:
-    """`KEY=VALUE` strings from the command line, typed by the strategy's fields."""
+def parse_parameters(name: str, items: Iterable[str]) -> dict[str, int | Decimal | bool]:
+    """`KEY=VALUE` strings from the command line, typed by the strategy's fields. A bool is
+    `true` or `false`, as in TOML."""
     types = parameter_types(name)
-    params: dict[str, int | Decimal] = {}
+    params: dict[str, int | Decimal | bool] = {}
     for item in items:
         key, sep, text = item.partition("=")
         if not sep or key not in types:
             raise StrategyError(_no_parameter(name, key, types))
         try:
-            params[key] = int(text) if types[key] is int else Decimal(text)
-        except (ValueError, InvalidOperation):
+            if types[key] is bool:
+                params[key] = {"true": True, "false": False}[text]
+            else:
+                params[key] = int(text) if types[key] is int else Decimal(text)
+        except (ValueError, InvalidOperation, KeyError):
             raise StrategyError(
                 f"{name}: {key}={text!r} is not a valid {types[key].__name__}"
             ) from None

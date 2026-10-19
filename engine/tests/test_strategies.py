@@ -5,7 +5,9 @@ import pytest
 from quantdeck_engine.binance.streams import Kline
 from quantdeck_engine.strategy.base import Enter, Exit, Position
 from quantdeck_engine.strategy.bollinger import BollingerReversion
+from quantdeck_engine.strategy.daily_breakout import DailyOpenBreakout
 from quantdeck_engine.strategy.donchian import DonchianBreakout
+from quantdeck_engine.strategy.move_fade import MoveFade
 from quantdeck_engine.strategy.registry import StrategyError, make_strategy, parse_parameters
 from quantdeck_engine.trading.rules import Side
 
@@ -168,3 +170,167 @@ def test_command_line_parameters_are_typed_by_field() -> None:
         parse_parameters("donchian", ["entry_period=x"])
     with pytest.raises(StrategyError, match="no parameter 'entry_period'"):
         parse_parameters("donchian", ["entry_period"])
+
+
+def test_command_line_bools_are_true_or_false() -> None:
+    params = parse_parameters("daily-breakout", ["long_only=true", "k=0.8"])
+    assert params == {"long_only": True, "k": Decimal("0.8")}
+    strategy = make_strategy("daily-breakout", "15m", params)
+    assert isinstance(strategy, DailyOpenBreakout) and strategy.long_only is True
+    with pytest.raises(StrategyError, match="not a valid bool"):
+        parse_parameters("daily-breakout", ["long_only=yes"])
+
+
+# Daily-open breakout (#15)
+
+QUARTER_MS = 15 * 60 * 1000
+DAY_MS = 24 * HOUR_MS
+
+
+def bar(start_ms: int, open_: str, high: str, low: str, close: str) -> Kline:
+    return Kline(
+        symbol="BTCUSDT",
+        interval="15m",
+        open_time=start_ms,
+        close_time=start_ms + QUARTER_MS - 1,
+        open=Decimal(open_),
+        high=Decimal(high),
+        low=Decimal(low),
+        close=Decimal(close),
+        volume=Decimal(1),
+        closed=True,
+    )
+
+
+def yesterday_range(strategy: DailyOpenBreakout, low: str = "90", high: str = "110") -> None:
+    """Day 0: 96 candles at 100, one reaching `high` and one `low`."""
+    for i in range(96):
+        h = high if i == 10 else "100"
+        lo = low if i == 20 else "100"
+        strategy.on_candle(bar(i * QUARTER_MS, "100", h, lo, "100"), None)
+
+
+def today(i: int, close: str, open_: str = "100") -> Kline:
+    """Day 1's candle `i`."""
+    return bar(DAY_MS + i * QUARTER_MS, open_, close, close, close)
+
+
+def test_daily_breakout_warms_up_on_two_days() -> None:
+    assert DailyOpenBreakout().warmup == 192
+    assert DailyOpenBreakout(interval="1h").warmup == 48
+
+
+def test_daily_breakout_enters_on_the_first_close_beyond_the_range_with_the_open_as_stop() -> None:
+    strategy = DailyOpenBreakout(k=Decimal("0.5"))  # range 20: levels 110 and 90
+    yesterday_range(strategy)
+    assert strategy.on_candle(today(0, "105"), None) is None
+    assert strategy.on_candle(today(1, "111"), None) == Enter(Side.LONG, Decimal(100))
+
+
+def test_daily_breakout_takes_one_entry_a_day() -> None:
+    strategy = DailyOpenBreakout(k=Decimal("0.5"))
+    yesterday_range(strategy)
+    strategy.on_candle(today(0, "100"), None)
+    assert strategy.on_candle(today(1, "89"), None) == Enter(Side.SHORT, Decimal(100))
+    # Stopped out: flat again, but the day's entry has come.
+    assert strategy.on_candle(today(2, "112"), None) is None
+
+
+def test_daily_breakout_long_only_ignores_the_lower_level() -> None:
+    strategy = DailyOpenBreakout(k=Decimal("0.5"), long_only=True)
+    yesterday_range(strategy)
+    strategy.on_candle(today(0, "100"), None)
+    assert strategy.on_candle(today(1, "89"), None) is None
+    assert strategy.on_candle(today(2, "110"), None) == Enter(Side.LONG, Decimal(100))
+
+
+def test_daily_breakout_exits_on_the_last_candle_of_the_day() -> None:
+    strategy = DailyOpenBreakout()
+    yesterday_range(strategy)
+    for i in range(95):
+        assert strategy.on_candle(today(i, "100"), LONG) is None
+    assert strategy.on_candle(today(95, "100"), LONG) == Exit()
+
+
+def test_daily_breakout_never_enters_on_the_last_candle_of_the_day() -> None:
+    strategy = DailyOpenBreakout(k=Decimal("0.5"))
+    yesterday_range(strategy)
+    for i in range(95):
+        strategy.on_candle(today(i, "100"), None)
+    assert strategy.on_candle(today(95, "120"), None) is None
+
+
+def test_daily_breakout_needs_all_of_yesterday() -> None:
+    strategy = DailyOpenBreakout(k=Decimal("0.5"))
+    for i in range(1, 96):  # the first candle of day 0 is missing
+        strategy.on_candle(bar(i * QUARTER_MS, "100", "110", "90", "100"), None)
+    strategy.on_candle(today(0, "100"), None)
+    assert strategy.on_candle(today(1, "120"), None) is None
+
+
+def test_daily_breakout_rejects_bad_settings() -> None:
+    with pytest.raises(ValueError, match="divides a day"):
+        DailyOpenBreakout(interval="1d")
+    with pytest.raises(ValueError, match="k > 0"):
+        DailyOpenBreakout(k=Decimal(0))
+
+
+# Move fade (#15)
+
+
+def fade_bars(strategy: MoveFade, returns: list[str], position: Position | None = None) -> list:
+    """30-minute bars of two 15m candles each, from 100 with the given returns; the actions
+    of each bar's closing candle."""
+    actions = []
+    for n, r in enumerate(returns):
+        start = n * 2 * QUARTER_MS
+        close = str(Decimal(100) * (1 + Decimal(r)))
+        strategy.on_candle(bar(start, "100", "100", "100", "100"), position)
+        actions.append(
+            strategy.on_candle(bar(start + QUARTER_MS, "100", close, close, close), position)
+        )
+    return actions
+
+
+def test_move_fade_warms_up_on_the_lookback_and_the_current_bar() -> None:
+    assert MoveFade().warmup == 968
+    assert MoveFade(bar_minutes=60).warmup == 484
+
+
+def test_move_fade_buys_a_drop_of_k_sigma_with_the_same_move_as_stop() -> None:
+    strategy = MoveFade(bar_minutes=30, k=Decimal(2), lookback=4)
+    # σ of ±1% is 1%: a 3% drop is beyond 2σ.
+    actions = fade_bars(strategy, ["0.01", "-0.01", "0.01", "-0.01", "-0.03"])
+    assert actions[:4] == [None] * 4
+    assert actions[4] == Enter(Side.LONG, Decimal(97) * Decimal("0.97"))
+
+
+def test_move_fade_sells_a_rise_and_ignores_a_small_move() -> None:
+    strategy = MoveFade(bar_minutes=30, k=Decimal(2), lookback=4)
+    actions = fade_bars(strategy, ["0.01", "-0.01", "0.01", "-0.01", "0.015", "0.03"])
+    assert actions[4] is None  # 1.5% < 2σ
+    assert actions[5] == Enter(Side.SHORT, Decimal(103) * Decimal("1.03"))
+
+
+def test_move_fade_exits_when_the_next_bar_closes() -> None:
+    strategy = MoveFade(bar_minutes=30, k=Decimal(2), lookback=4)
+    fade_bars(strategy, ["0.01", "-0.01", "0.01", "-0.01", "-0.03"])
+    assert strategy.on_candle(bar(10 * QUARTER_MS, "100", "100", "100", "100"), LONG) is None
+    assert strategy.on_candle(bar(11 * QUARTER_MS, "100", "100", "100", "100"), LONG) == Exit()
+
+
+def test_move_fade_skips_a_bar_with_a_missing_candle() -> None:
+    strategy = MoveFade(bar_minutes=30, k=Decimal(2), lookback=4)
+    fade_bars(strategy, ["0.01", "-0.01", "0.01", "-0.01"])
+    # Bar 4 has only its closing candle: it neither signals nor counts toward σ.
+    assert strategy.on_candle(bar(9 * QUARTER_MS, "100", "90", "90", "90"), None) is None
+    assert len(strategy._returns) == 4
+
+
+def test_move_fade_rejects_bad_settings() -> None:
+    with pytest.raises(ValueError, match="whole number of candles"):
+        MoveFade(bar_minutes=20)
+    with pytest.raises(ValueError, match="whole number of candles"):
+        MoveFade(bar_minutes=7 * 60)  # doesn't divide a day
+    with pytest.raises(ValueError, match="lookback >= 2"):
+        MoveFade(lookback=1)

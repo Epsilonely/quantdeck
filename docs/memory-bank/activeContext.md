@@ -24,13 +24,11 @@ Roughly in the order they're needed:
 
 - **Forward test:** what counts as passing (how many trades or weeks, how close to the backtest's signals), and the tool that replays the recorded candles through the backtest and compares the signals (D-36, D-38). Pausing and resuming entries from the GUI (D-33) is still open. An engine started with a BTCUSDT position opened under 5× refuses to trade the symbol until it is closed (D-16).
 - **Strategy:** adding to an open position is out of scope for now (D-22). Take profit and trailing stops are deferred: the chosen strategy exits on its channel (D-36), and `TRAILING_STOP_MARKET` can't use `closePosition` (D-18).
-- **15m strategies:** the user wants one, Donchian or not.
-  - Baselines on BTCUSDT 15m, 2020–2023, with D-40 costs (2026-10-19): Donchian 20/10 lost −0.153 R per trade, Donchian 55/20 −0.081 R, and the Bollinger reversion −1.008 R. Before costs they made only +0.007, +0.014, and +0.023 R, so costs of roughly 0.1–0.16 R per trade swamp the edge.
-  - Proposed next, not yet implemented or approved, with the grid fixed before any run:
-    - a daily-open volatility breakout that is flat at 00:00 UTC, k ∈ {0.5, 0.8} × {both sides, long only};
-    - a fade of large 1h/2h moves, (2h, 2σ), (2h, 3σ), (1h, 3σ), exiting at the next bar boundary.
-  - Both would run on BTC, ETH, SOL, and XRP, be chosen on 2020–2023, and be checked on 2024 onward. A clock-time exit fits D-36, since it depends only on the candle's time.
-  - The 2024+ holdout is still unused for 15m.
+- **15m strategies:** the user wanted one, Donchian or not. The search (GitHub issue #15, D-44) found none worth forward-testing:
+  - the move fade lost everywhere;
+  - the daily-open breakout passed its holdout only nominally, with an edge that can't be told from zero.
+
+  The 15m holdout (2024 onward) has now been used. A new 15m idea needs its own fixed grid, and its result counts as one more test on the same history. Maker entries are the cost lever left (D-44 Revisit).
 - **Engine operation:** the GUI starts `run` when none is running and stops it on request (D-34). Still open: running it without the GUI (a Windows service or scheduled task) and what restarts it after a crash.
 - **Storage:** what SQLite records, and whether logs go there (D-12; D-33 keeps recent logs in memory for now). Historical candles (D-38), the halt record (D-29), and the forward test record (D-43) are settled.
 - **GUI confirmation dialogs (#7):** the user wants the native confirmation boxes for the three commands replaced by an in-app looking modal, and is still weighing the approach (2026-10-16):
@@ -43,8 +41,7 @@ Roughly in the order they're needed:
 1. Keep the forward test going: the next 4h closes, then the first entry and exit in the GUI and the CSV record. The roadmap item is checked off once `run` has traded the strategy on testnet (issue #11).
 2. Per-coin settings in the engine: the engine-owned settings file, commands to set and remove a coin, and applying a change to one coin while the others keep running (Current focus). Record it as a new decision; it revises D-43's single `[strategy]` table.
 3. The GUI settings screen on top of step 2.
-4. The 15m candidate search, once the user approves the candidates (Open questions).
-5. The replay-and-compare tool for the forward test (Open questions).
-6. How a packaged GUI finds `engine/` (`techContext.md`, GUI notes).
-7. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
-8. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet, and the kill switch's bulk cancels have only run on an empty book.
+4. The replay-and-compare tool for the forward test (Open questions).
+5. How a packaged GUI finds `engine/` (`techContext.md`, GUI notes).
+6. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
+7. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet, and the kill switch's bulk cancels have only run on an empty book.

@@ -396,3 +396,29 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Limitations:** A restart inside a candle repeats that candle's decision and records it twice; if a stop closed that candle's entry before the restart, the repeat enters again, which the backtest wouldn't. An entry carried out at startup fills at the current price, not at the candle's next open (D-40).
 - **Alternatives:** per-symbol strategy tables; ignoring the last warm-up candle's signal (loses exits across restarts); stopping the engine on a strategy error.
 - **Date:** 2026-10-19
+
+## D-44 15m candidates: the move fade is dropped; the daily-open breakout passed its holdout only nominally and stays backtest-only
+
+- **Decision:** Of the two 15m candidates (GitHub issue #15), the fade of large 1h/2h moves is dropped. The daily-open breakout, long only with k = 0.8, passed the checks fixed before the runs, but it isn't forward-tested: its holdout edge can't be told from zero. The 4h Donchian (D-41) stays the forward test's strategy. Both new strategies stay in the registry for backtests, as the Bollinger reversion does.
+- **The strategies (D-36 interface):**
+  - Daily-open breakout: O is the 00:00 UTC open and R the previous UTC day's high minus low. The day's first candle to close at or beyond O ± k·R enters that way, with the stop at O, and the position closes on the day's last candle. A day takes at most one entry.
+  - Move fade: 1h or 2h bars built from the 15m candles on UTC boundaries. A bar return of at least k·σ against the previous 120 bars' returns enters the other way, with a stop that allows the same move again, and the position closes when the next bar closes.
+  - Both exit on clock time read from the candle, never on time since entry, so they fit D-36.
+- **How they were tested** (D-40 costs, with SOLUSDT and XRPUSDT at 0.04% slippage and 0.10% on stops; 2× leverage; testnet risk values; the grid and pass rules were fixed in the issue before any run):
+  - **Baselines,** BTCUSDT 15m, 2020–2023, after costs (before costs in brackets):
+    - Donchian 20/10: −0.153 R per trade (+0.007 R)
+    - Donchian 55/20: −0.081 R (+0.014 R)
+    - Bollinger: −1.008 R (+0.023 R)
+
+    A 15m decision with a tight stop can't carry about 0.1–0.16 R of costs per trade.
+  - **Selection,** 2020–2023 (SOLUSDT from 2020-10) on BTC, ETH, SOL, and XRP, with 7 settings. A setting passed with positive expectancy on BTC and on two of the other three coins, and at least 30 trades on each.
+    - The move fade lost on every coin in all three settings, −0.03 to −0.11 R.
+    - The daily breakout passed in three of its four settings. Long only with k = 0.8 had the best mean, +0.103 R: BTC +0.143, ETH +0.175, SOL +0.068, XRP +0.025, with 239–300 trades each.
+    - Much of that came from 2020. On BTC it made +34% that year and +2–6% in each later year.
+  - **Holdout,** 2024-01-01 to 2026-10-18, long only with k = 0.8:
+    - BTC +0.011 R (228 trades, t ≈ 0.2), ETH +0.050 R (t ≈ 0.7), SOL +0.023 R (t ≈ 0.4), XRP −0.007 R.
+    - That is positive on three of four coins, the rule for passing, but every t is under 0.7, and 2025 lost on BTC, ETH, and SOL.
+    - Stops were a median 2–3% from entry, so fees took about 0.04–0.06 R per trade. Max drawdowns were 11–17%, and the daily limit never fired.
+- **Why:** The holdout expectancy fell to about a tenth of the selection period's, and the selection result leaned on one bull year in a long-only setting. Passing a rule set before the run is reason to keep the strategy, not to put it on the account in place of the 4h strategy, whose holdout was clearer (+0.141 R over 68 trades, D-41). One strategy trades per account (D-43), so forward-testing it would mean pausing the 4h test.
+- **Revisit:** Once per-coin strategies exist, or after more out-of-sample data. Maker (limit) entries would cut its costs, but they need a fill model first (D-17, D-40).
+- **Date:** 2026-10-19
