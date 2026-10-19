@@ -27,6 +27,17 @@ export function shortDateTime(iso: string): string {
   return `${pad(time.getMonth() + 1)}-${pad(time.getDate())} ${pad(time.getHours())}:${pad(time.getMinutes())}`
 }
 
+/** Time from `iso` to `now` (ms): `12m`, `2h 5m`, or `1d 4h` */
+export function elapsed(iso: string, now: number): string {
+  const start = new Date(iso).getTime()
+  if (Number.isNaN(start)) return iso
+  const minutes = Math.max(0, Math.floor((now - start) / 60_000))
+  if (minutes < 60) return `${minutes}m`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ${minutes % 60}m`
+  return `${Math.floor(hours / 24)}d ${hours % 24}h`
+}
+
 /** When the risk day starts in local time: 00:00 UTC (D-23), `09:00` in Korea. */
 export function riskDayStart(): string {
   const start = new Date(Date.UTC(2026, 0, 1))

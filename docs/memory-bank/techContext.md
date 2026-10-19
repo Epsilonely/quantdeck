@@ -73,6 +73,7 @@ After `hello` the first three messages are `welcome`, `logs`, `state`, in that o
 
 ```
 network      "testnet" | "mainnet"
+started_at   when this engine started; the GUI shows the engine's uptime from it
 strategy     null without a [strategy] in config.toml, else {name, interval, params: {name: str}}
 halt         {halted: bool, reason: str | null, since: str | null}
 daily_loss   null until the first check, then {asset, base, loss, limit}
@@ -87,7 +88,7 @@ symbols      [{symbol, halted: str | null (this symbol's own halt, D-19/D-20),
                stops:  [{client_algo_id, side, type, trigger_price, close_position}]}]
 ```
 
-Strategy fields (D-43): parameter values are strings, like amounts. `action` is `enter_long`, `enter_short`, or `exit`; `outcome` is text for the user, and `stopped` says why this symbol's strategy stopped. The fields were added without changing the protocol version, so a client must accept them missing from an older engine.
+Strategy fields (D-43): parameter values are strings, like amounts. `action` is `enter_long`, `enter_short`, or `exit`; `outcome` is text for the user, and `stopped` says why this symbol's strategy stopped. These fields and `started_at` were added without changing the protocol version, so a client must accept them missing from an older engine.
 
 **Commands.** `emergency_close` fires the kill switch (D-27); `ok` is false if a symbol couldn't be flattened. `lift_halt` answers `ok: true` with "halt lifted" or "not halted", and `ok: false` while today's loss is still at the limit. `stop_engine` (D-34) answers `ok: true` once any kill switch in progress has finished; the engine then closes every connection with code 1001 and deletes the connection file. The process itself exits a few seconds later, after its Binance streams close.
 

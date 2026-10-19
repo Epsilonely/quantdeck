@@ -1,10 +1,12 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import type { CommandName, CommandResult } from '../../shared/engine'
 import LogView from './components/LogView'
 import SymbolTable from './components/SymbolTable'
 import ThemeSwitch from './components/ThemeSwitch'
-import { clock, dateTime, isNegative, isZero, riskDayStart } from './format'
+import { clock, dateTime, elapsed, isNegative, isZero, riskDayStart } from './format'
 import { useEngine } from './useEngine'
+
+const UPTIME_REFRESH_MS = 30_000
 
 const COMMAND_LABELS: Record<CommandName, string> = {
   emergency_close: '긴급 청산',
@@ -20,6 +22,12 @@ function App(): React.JSX.Element {
   const { status, launch, state, logs } = useEngine()
   const [busy, setBusy] = useState<CommandName | null>(null)
   const [result, setResult] = useState<ShownResult | null>(null)
+  const [now, setNow] = useState(() => Date.now())
+
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), UPTIME_REFRESH_MS)
+    return () => clearInterval(timer)
+  }, [])
 
   const connected = status?.phase === 'connected'
 
@@ -37,12 +45,22 @@ function App(): React.JSX.Element {
 
   let statusText: string
   let statusClass: string
+  let statusTitle: string | undefined
   if (!status || status.phase === 'connecting') {
     statusText = '연결 중'
     statusClass = 'info'
   } else if (connected) {
-    statusText = `연결됨 · ${clock(status.since)}부터`
+    // The tag's color says it is connected; the dot takes that color.
     statusClass = 'ok'
+    const startedAt = state?.started_at
+    if (startedAt) {
+      statusText = `● 엔진 가동 ${elapsed(startedAt, now)}`
+      statusTitle = `연결됨 · 엔진 시작 ${dateTime(startedAt)} · GUI 연결 ${dateTime(status.since)}`
+    } else {
+      // An engine that doesn't send started_at
+      statusText = `● ${clock(status.since)}부터`
+      statusTitle = '연결됨'
+    }
   } else if (launch.phase === 'starting') {
     statusText = '엔진 시작 중'
     statusClass = 'info'
@@ -78,7 +96,9 @@ function App(): React.JSX.Element {
               전략 없음 · 진입 안 함
             </span>
           ))}
-        <span className={`tag ${statusClass}`}>{statusText}</span>
+        <span className={`tag ${statusClass}`} title={statusTitle}>
+          {statusText}
+        </span>
         <span className="spacer" />
         <ThemeSwitch />
         {connected ? (

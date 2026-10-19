@@ -14,6 +14,7 @@ Only one engine process runs at a time (D-31). Stop it with Ctrl+C or a client's
 
 import asyncio
 import logging
+import time
 from contextlib import aclosing
 from decimal import Decimal
 from pathlib import Path
@@ -77,6 +78,7 @@ class Engine:
         self.checker = checker or RiskChecker(guard)
         self.state = AccountState(list(self.traders))
         self.mark_prices: dict[str, Decimal] = {}  # for display only (D-33)
+        self.started_at = time.time()  # clients show the engine's uptime from it
         self.stop_requested = asyncio.Event()
 
     async def run(self) -> None:

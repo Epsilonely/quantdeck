@@ -24,6 +24,7 @@ def engine_snapshot(engine: "Engine") -> dict[str, Any]:
     daily = engine.checker.latest
     return {
         "network": "testnet" if engine.testnet else "mainnet",
+        "started_at": iso_utc(engine.started_at),
         "strategy": _strategy_config(engine.strategy),
         "halt": {
             "halted": engine.guard.halted,

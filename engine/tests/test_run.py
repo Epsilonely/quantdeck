@@ -17,6 +17,7 @@ from quantdeck_engine.lock import EngineAlreadyRunning, InstanceLock
 from quantdeck_engine.run import Engine, RunFailed, run_engine, start_engine
 from quantdeck_engine.snapshot import fixed_point
 from quantdeck_engine.startup import StartupFailed
+from quantdeck_engine.times import iso_utc
 from quantdeck_engine.trading.halt import HaltRecord, HaltStore
 from quantdeck_engine.trading.risk import RiskChecker
 from quantdeck_engine.trading.sizing import DailyLoss
@@ -223,6 +224,7 @@ async def test_snapshot_of_a_protected_position(store: HaltStore) -> None:
     snapshot = engine.snapshot()
     json.dumps(snapshot)  # JSON-ready as it is
     assert snapshot["network"] == "testnet"
+    assert snapshot["started_at"] == iso_utc(engine.started_at)
     assert snapshot["strategy"] is None  # no [strategy] in the config
     assert snapshot["halt"] == {"halted": False, "reason": None, "since": None}
     assert snapshot["daily_loss"] is None  # until the first check

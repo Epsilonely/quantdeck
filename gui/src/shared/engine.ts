@@ -74,6 +74,7 @@ export interface SymbolState {
 
 export interface EngineState {
   network: 'testnet' | 'mainnet'
+  started_at?: string // when this engine started; engines before 2026-10-19 don't send it
   strategy: StrategyInfo | null // null: no entries
   halt: HaltState
   daily_loss: DailyLoss | null
