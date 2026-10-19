@@ -54,6 +54,10 @@ class MoveFade:
         """The current bar and the `lookback` before it."""
         return (self.lookback + 1) * self.bar_minutes * 60_000 // INTERVAL_MS[self.interval]
 
+    @property
+    def limit_entries(self) -> bool:
+        return False
+
     def on_candle(self, candle: Kline, position: Position | None) -> Action | None:
         bar_start = candle.open_time - candle.open_time % self._bar_ms
         if bar_start != self._bar_start:

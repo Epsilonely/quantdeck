@@ -30,6 +30,10 @@ class DonchianBreakout:
     def warmup(self) -> int:
         return self.entry_period + 1
 
+    @property
+    def limit_entries(self) -> bool:
+        return False
+
     def on_candle(self, candle: Kline, position: Position | None) -> Action | None:
         try:
             return self._decide(candle, position)

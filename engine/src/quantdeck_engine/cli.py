@@ -76,6 +76,9 @@ def main() -> None:
     )
     backtest.add_argument("--balance", type=Decimal, default=Decimal(5000), help="USDT")
     backtest.add_argument("--fee", type=Decimal, default=Decimal("0.0005"), help="taker fee")
+    backtest.add_argument(
+        "--maker-fee", type=Decimal, default=Decimal("0.0002"), help="fee on limit entries"
+    )
     backtest.add_argument("--slippage", type=Decimal, default=Decimal("0.0002"))
     backtest.add_argument("--stop-slippage", type=Decimal, default=Decimal("0.0005"))
     backtest.add_argument("--leverage", type=int, help="default: the symbol's in config.toml")
@@ -134,7 +137,7 @@ def main() -> None:
             strategy = make_strategy(args.strategy, args.interval, params)
             leverage = leverage_for(trading, symbol, args.leverage)
             market = asyncio.run(fetch_market(settings, symbol, leverage))
-            costs = Costs(args.fee, args.slippage, args.stop_slippage)
+            costs = Costs(args.fee, args.slippage, args.stop_slippage, args.maker_fee)
             report = run_backtest(
                 strategy,
                 symbol,

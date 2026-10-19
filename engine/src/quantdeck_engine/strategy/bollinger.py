@@ -32,6 +32,10 @@ class BollingerReversion:
     def warmup(self) -> int:
         return self.period
 
+    @property
+    def limit_entries(self) -> bool:
+        return False
+
     def on_candle(self, candle: Kline, position: Position | None) -> Action | None:
         self._closes.append(candle.close)
         if len(self._closes) < self.period:

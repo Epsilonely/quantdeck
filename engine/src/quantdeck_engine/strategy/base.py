@@ -23,12 +23,19 @@ from quantdeck_engine.trading.rules import Side
 class Enter:
     """Enter at market, protected by an exchange-side stop at `stop_price` (D-18, D-22).
 
+    With a `limit_price`, enter with a post-only limit order at that price instead (D-45),
+    rounded to the tick away from the market: down for a long, up for a short. It is valid
+    for the next candle only and cancelled if not filled by that candle's close, when the
+    strategy decides again; a strategy never keeps track of a pending order (D-36). Only
+    the backtest fills limit entries for now: `run` refuses a strategy that uses them.
+
     The stop is fixed for the life of the position. Ignored while a position is open: one
     entry per position (D-22).
     """
 
     side: Side
     stop_price: Decimal
+    limit_price: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -48,6 +55,12 @@ class Strategy(Protocol):
     @property
     def warmup(self) -> int:
         """How many closed candles it needs, the current one included, to decide."""
+        ...
+
+    @property
+    def limit_entries(self) -> bool:
+        """Whether its entries can carry a limit price. `run` refuses such a strategy until
+        the engine can place limit entries (D-45)."""
         ...
 
     def on_candle(self, candle: Kline, position: Position | None) -> Action | None:

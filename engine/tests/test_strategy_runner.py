@@ -236,6 +236,19 @@ async def test_an_unexpected_error_stops_only_this_strategy(
     assert "the strategy stopped on an unexpected error" in caplog.text
 
 
+async def test_a_limit_entry_stops_the_strategy_without_an_order() -> None:
+    # The config check refuses such a strategy first (D-45); this is the backstop.
+    exchange = FakeExchange()
+    strategy = Scripted({3: Enter(Side.LONG, D(59400), D(59900))})
+
+    runner = await run(exchange, strategy, [3, 4])
+
+    assert exchange.calls(*ORDER) == []
+    assert runner.stopped is not None
+    assert runner.stopped.startswith("UnsupportedAction: limit entry at 59900")
+    assert strategy.indexes == [0, 1, 2, 3]
+
+
 # The forward test record (D-43)
 
 

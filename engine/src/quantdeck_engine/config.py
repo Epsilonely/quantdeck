@@ -256,13 +256,19 @@ def _parse_strategy(table: object) -> StrategyConfig | None:
         raise ConfigError("[strategy.params] must be a table")
     config = StrategyConfig(name=name, interval=interval, params=dict(params))
     try:
-        warmup = config.build().warmup
+        strategy = config.build()
     except StrategyError as e:
         raise ConfigError(f"{where} {e}") from None
-    if warmup > MAX_STRATEGY_WARMUP:
+    if strategy.warmup > MAX_STRATEGY_WARMUP:
         raise ConfigError(
-            f"{where} {config.describe()} needs {warmup} warm-up candles; "
+            f"{where} {config.describe()} needs {strategy.warmup} warm-up candles; "
             f"the most is {MAX_STRATEGY_WARMUP}"
+        )
+    if strategy.limit_entries:
+        raise ConfigError(
+            f"{where} {config.describe()} enters with limit orders, which the engine can't "
+            "place yet; leave it out of config.toml and run it with `quantdeck-engine "
+            "backtest` only (D-45)"
         )
     return config
 

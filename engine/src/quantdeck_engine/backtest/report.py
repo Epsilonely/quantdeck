@@ -112,6 +112,12 @@ def format_report(title: str, result: Result) -> str:
     if result.skipped:
         skipped = ", ".join(f"{reason} {n}" for reason, n in result.skipped.most_common())
         lines.append(f"  Entries skipped   {skipped}")
+    limits = result.limit_entries
+    if limits.placed:
+        lines.append(
+            f"  Limit entries     {limits.placed} placed: {limits.filled} filled, "
+            f"{limits.rejected} rejected as crossing, {limits.unfilled} unfilled"
+        )
     lines.append("  By year           trades       net USDT    return")
     for year, (count, net, percent) in by_year(result).items():
         lines.append(f"    {year}            {count:6d}  {net:13.2f}  {percent:+7.1f}%")

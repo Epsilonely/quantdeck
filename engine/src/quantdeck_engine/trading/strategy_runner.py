@@ -9,7 +9,8 @@ carries out its entry or exit through the trader (D-17, D-18, D-22).
 - A halted account or symbol refuses entries, never exits.
 - A failed request or an unclear order outcome (D-20) costs the candle it happened on.
 - Any other error stops this symbol's strategy, never the engine, so the kill switch,
-  monitoring, and exchange-side stops carry on.
+  monitoring, and exchange-side stops carry on. So does a limit entry, which only the
+  backtest can fill so far (D-45).
 
 Every decision is appended to a CSV record, which a backtest replay of the same candles is
 checked against (D-36, D-38). A restart inside a candle decides on that candle again, so it
@@ -37,6 +38,10 @@ from quantdeck_engine.trading.position import Position
 logger = logging.getLogger(__name__)
 
 RETRY_DELAY = 5.0  # seconds between position reads while REST fails, as the feed waits (D-42)
+
+
+class UnsupportedAction(Exception):
+    """The strategy asked for something only the backtest can carry out."""
 
 
 class CandleSource(Protocol):
@@ -190,6 +195,13 @@ class StrategyRunner:
     async def _decide(self, candle: Kline) -> None:
         position = await self._read_position()
         action = self.strategy.on_candle(candle, position)
+        if isinstance(action, Enter) and action.limit_price is not None:
+            # The config check refuses such a strategy at startup; this is the backstop. It
+            # stops this symbol's strategy, never the engine (D-43).
+            raise UnsupportedAction(
+                f"limit entry at {_text(action.limit_price)}: the engine places market "
+                "entries only (D-45)"
+            )
         self.last_candle = candle
         logger.info(
             "%s %s candle %s UTC closed at %s: %s",

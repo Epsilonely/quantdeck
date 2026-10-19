@@ -28,7 +28,7 @@ Roughly in the order they're needed:
   - the move fade lost everywhere;
   - the daily-open breakout passed its holdout only nominally, with an edge that can't be told from zero.
 
-  The 15m holdout (2024 onward) has now been used. A new 15m idea needs its own fixed grid, and its result counts as one more test on the same history. Maker entries are the cost lever left (D-44 Revisit).
+  The 15m holdout (2024 onward) has now been used. A new 15m idea needs its own fixed grid, and its result counts as one more test on the same history. Maker entries are the cost lever left (D-44 Revisit): the backtest now fills limit entries conservatively (GitHub issue #16, D-45), but no strategy uses them yet. Limit entries suit mean reversion; breakouts get adversely selected. The engine gets limit orders only if a limit-entry strategy survives the backtest.
 - **Engine operation:** the GUI starts `run` when none is running and stops it on request (D-34). Still open: running it without the GUI (a Windows service or scheduled task) and what restarts it after a crash.
 - **Storage:** what SQLite records, and whether logs go there (D-12; D-33 keeps recent logs in memory for now). Historical candles (D-38), the halt record (D-29), and the forward test record (D-43) are settled.
 - **GUI confirmation dialogs (#7):** the user wants the native confirmation boxes for the three commands replaced by an in-app looking modal, and is still weighing the approach (2026-10-16):
@@ -41,7 +41,8 @@ Roughly in the order they're needed:
 1. Keep the forward test going: the next 4h closes, then the first entry and exit in the GUI and the CSV record. The roadmap item is checked off once `run` has traded the strategy on testnet (issue #11).
 2. Per-coin settings in the engine: the engine-owned settings file, commands to set and remove a coin, and applying a change to one coin while the others keep running (Current focus). Record it as a new decision; it revises D-43's single `[strategy]` table.
 3. The GUI settings screen on top of step 2.
-4. The replay-and-compare tool for the forward test (Open questions).
-5. How a packaged GUI finds `engine/` (`techContext.md`, GUI notes).
-6. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
-7. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet, and the kill switch's bulk cancels have only run on an empty book.
+4. Limit-entry candidates on the D-45 fill model, with the grid and pass rules fixed before any run (Open questions, 15m strategies).
+5. The replay-and-compare tool for the forward test (Open questions).
+6. How a packaged GUI finds `engine/` (`techContext.md`, GUI notes).
+7. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
+8. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet, and the kill switch's bulk cancels have only run on an empty book.

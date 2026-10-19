@@ -44,6 +44,10 @@ class DailyOpenBreakout:
         """Two days: all of yesterday, and today up to the current candle."""
         return 2 * DAY_MS // INTERVAL_MS[self.interval]
 
+    @property
+    def limit_entries(self) -> bool:
+        return False
+
     def on_candle(self, candle: Kline, position: Position | None) -> Action | None:
         try:
             return self._decide(candle, position)

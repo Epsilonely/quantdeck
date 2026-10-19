@@ -116,6 +116,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 
 - **Decision:** Entries and strategy-signal exits use market orders (exits with `reduceOnly`). Limit orders are added when costs or a strategy call for them, so the order code keeps the order type open for extension. Stop-loss orders are decided separately.
 - **Why:** A market order fills at once, which keeps the entry → exchange-side stop → exit flow simple while it is being proven. The cost is taker fees and unbounded slippage in fast markets.
+- **Note (2026-10-19):** The backtest can fill limit entries (D-45). The engine still places market entries only and refuses a strategy that uses limit entries.
 - **Date:** 2026-10-03
 
 ## D-18 Exchange-side stops: `STOP_MARKET` with `closePosition`, triggered by mark price
@@ -312,6 +313,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Why:** The backtest must run the same code (D-07). With closed candles as the only input, live and backtest runs see identical inputs, so a forward test can be checked by replaying its candles through the backtest and comparing the signals. Deciding from candles and the exchange's position means a restart (the GUI stops and starts the engine, D-34) doesn't change a decision, in line with D-06, and settles D-19's open question without a local record of which positions are the strategy's. Order handling, sizing, and risk stay outside the strategy, so the safety code lives in one place.
 - **Consequences:** Strategies that act inside a forming candle (an intrabar breakout such as a volatility breakout) or need to remember when they entered (exit after N candles) don't fit; revisit when one is wanted. A missed closed candle changes the signals, so the live kline feed must backfill the gap after every reconnect before a strategy trades.
 - **Settled (2026-10-19):** The closed-candle feed backfills gaps after every reconnect and holds candles back while it can't (D-42).
+- **Note (2026-10-19):** An entry may carry a limit price, valid for the next candle only, so the strategy still never tracks a pending order (D-45).
 - **Alternatives:** Strategies driven by ticks or forming candles; strategies that keep their own record of their positions.
 - **Date:** 2026-10-18
 
@@ -353,6 +355,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - All costs are command-line options.
 - **Why:** The live engine sends its market order right after a candle closes (D-17, D-36), so the next open is where it fills, and funding at that instant settles first. Triggering on the mark price matches the live stop; mark price candles are in the archive (D-38). Slippage and fees are set on the pessimistic side of a small BTCUSDT order, since an edge that only survives optimistic costs isn't one. The testnet rules and brackets match the forward test's conditions.
 - **Limitations:** With hourly candles, where the last price traded when a mark price stop fired is unknown, so the stop price stands in for it. Candles longer than the funding interval settle a funding inside a candle at its open. Current rules and brackets are applied to all of history.
+- **Note (2026-10-19):** Limit entries have their own fill model, with the maker fee (D-45). Everything above still applies to market entries, exits, and stops.
 - **Date:** 2026-10-19
 
 ## D-41 First strategy: Donchian breakout 55/20 on BTCUSDT 4h, at 2× leverage on testnet
@@ -421,4 +424,29 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
     - Stops were a median 2–3% from entry, so fees took about 0.04–0.06 R per trade. Max drawdowns were 11–17%, and the daily limit never fired.
 - **Why:** The holdout expectancy fell to about a tenth of the selection period's, and the selection result leaned on one bull year in a long-only setting. Passing a rule set before the run is reason to keep the strategy, not to put it on the account in place of the 4h strategy, whose holdout was clearer (+0.141 R over 68 trades, D-41). One strategy trades per account (D-43), so forward-testing it would mean pausing the 4h test.
 - **Revisit:** Once per-coin strategies exist, or after more out-of-sample data. Maker (limit) entries would cut its costs, but they need a fill model first (D-17, D-40).
+- **Note (2026-10-19):** The fill model exists now (D-45); no strategy has been tested with limit entries yet.
+- **Date:** 2026-10-19
+
+## D-45 Limit entries in the backtest: post-only for one candle, filled only when traded through
+
+- **Decision:**
+  - **Interface (extends D-36):** an entry may carry a limit price. The order is placed at the next candle's open, as live would send it right after the close, and cancelled at that candle's close if it hasn't filled; the strategy then decides again. An entry without a limit price stays a market order. Exits stay market orders and stops stay `STOP_MARKET` `closePosition` orders (safety principles 5 and 6). Each strategy declares whether it uses limit entries.
+  - **Fill model (extends D-40):**
+    - The limit is rounded to the tick away from the market (down for a long, up for a short), and the entry is sized at it with the live sizing, gate, and caps (D-22, D-24, D-25, D-37).
+    - A buy limit at or above the next open, or a sell limit at or below it, is rejected, as Binance rejects a post-only (`GTX`) order that would trade at once (`binanceNotes.md`).
+    - Otherwise it fills only if the last price trades through it by at least one tick within that candle: a buy when the low reaches the limit minus a tick, a sell when the high reaches the limit plus a tick. A touch doesn't fill.
+    - A fill is at the limit, with the maker fee (default 0.02%, the regular tier, `--maker-fee`) and no slippage.
+    - If the fill candle's mark price range also reaches the stop, the stop fires in that candle after the fill: at the stop price with the stop slippage, even if the mark price opened past it.
+    - The report counts limit entries placed, filled, rejected as crossing, and left unfilled.
+  - **Live:** the engine can't place limit entries yet. Loading `config.toml` (D-28) refuses a `[strategy]` that uses them, so `run` doesn't start. If a strategy returns one anyway, the strategy runner stops that symbol's strategy without placing an order (D-43).
+- **Why:** The 15m search (D-44) changed only the fee and kept the market entry's time and price. That misses what a limit entry really does: a better price, but also adverse selection (it fills when the price runs through it, against the trade at first) and missed fills (no fill when the price moves away, often the best trades). An edge must survive those before any engine work. Each choice sits on the pessimistic side:
+  - One candle only: an order that lived across candles would make the strategy remember it, and a restart could then decide differently (D-36).
+  - A trade-through: a touch says nothing about the order's place in the queue, but once the price trades past the limit, every order resting there has filled.
+  - The same-candle stop takes the worst order within the candle, since candles can't tell it (D-40 Limitations).
+  - Sizing at the limit matches the fill price, so a stop-out still loses about one risk amount (D-22).
+  - Refusing live: otherwise a strategy chosen on maker fills would trade at market with taker costs and different fills, which isn't the strategy that was backtested (D-07).
+- **Unchanged:** market-entry results are identical. BTCUSDT 4h Donchian 55/20 and 15m Bollinger, 2020–2023, gave the same report and trade list before and after (2026-10-19).
+- **Limitations:** No partial fills, queue position, or spread. The fill uses only the last price candle; the mark price only triggers the stop.
+- **Later, if a limit-entry strategy survives (out of scope here):** the engine's limit orders (`GTX`, expired by `GTD` or cancelled by the engine at the next close), partial fills, and counting a pending entry's risk at the entry gate (D-24).
+- **Alternatives:** Changing only the fee (what D-44 measured); an order that rests until filled or replaced; filling on a touch; 1m candles to order events within a candle.
 - **Date:** 2026-10-19

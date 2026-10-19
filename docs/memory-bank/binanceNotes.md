@@ -220,6 +220,16 @@ Source: [USDⓈ-M fee rates](https://www.binance.com/en/fee/futureFee), [Account
 - Regular tier, USDT-margined: maker 0.0200%, taker 0.0500%; 0.0180% and 0.0450% with the BNB discount. Testnet charged 0.04% (Income history above).
 - `GET /fapi/v1/commissionRate` (USER_DATA, weight 20, `symbol` required) returns the account's `makerCommissionRate`, `takerCommissionRate`, and `rpiCommissionRate`. The docs' example values are illustrative, not current rates.
 
+### Limit order options (2026-10-19)
+
+Source: [Common Definition](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/common-definition), [Error Codes](https://developers.binance.com/en/docs/products/derivatives-trading-usds-futures/error-code). Docs only; nothing placed yet.
+
+- `timeInForce`: `GTC` (valid for one year), `IOC`, `FOK`, `GTX` (Good Till Crossing, post only), `GTD` (Good Till Date), `RPI` (post only, matched only against orders from the app or web).
+- A post-only order that can't rest as a maker is rejected: `-5022` "Due to the order could not be executed as maker, the Post Only order will be rejected." The backtest's limit entries follow this (D-45).
+- `GTD`: `goodTillDate` must be more than 600 s after the current time (`-5040`). An order meant to expire at the next close of a candle shorter than about 10 minutes would need the engine to cancel it itself.
+- `priceMatch`: `NONE`, `OPPONENT` (the other side's best price), `OPPONENT_5`/`_10`/`_20`, `QUEUE` (the best price on the order's own side), `QUEUE_5`/`_10`/`_20`. Only for `LIMIT`, `STOP`, and `TAKE_PROFIT` orders (`-5038`); `-5037` is an invalid price match.
+- The New Order page itself wasn't read: the docs site served only its app shell to a plain fetch, so how `priceMatch` combines with `price` is unchecked.
+
 ## To verify
 
 Check each item while implementing the related feature:
@@ -235,3 +245,4 @@ Check each item while implementing the related feature:
 - [ ] Bulk cancels with orders actually open: on 2026-10-16 the stop had already expired with its position, so both calls ran on an empty book.
 - [ ] Liquidation price before entry (D-25): compare the engine's estimate with `liquidationPrice` from `positionRisk` while a position is open. The estimate uses notional ÷ leverage as WB, which runs one opening commission higher than the real `iw`.
 - [ ] `GET /fapi/v1/commissionRate` with testnet keys, if the backtest reads the fee rate from it.
+- [ ] Limit entries, before the engine places any (D-45): how a crossing `GTX` order is refused on testnet (an HTTP error with `-5022`, or an accepted order that expires), `GTD` expiry and its user data events, `priceMatch` with and without `price`, and whether `MIN_NOTIONAL` is checked at the limit price.

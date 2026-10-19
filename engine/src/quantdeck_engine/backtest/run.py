@@ -79,10 +79,11 @@ def run_backtest(
     )
     if trades_csv is not None:
         write_trades_csv(trades_csv, result.trades)
+    maker = f" (maker {costs.maker_fee * 100}%)" if result.limit_entries.placed else ""
     title = (
         f"{strategy!r} on {symbol}, {start} to {end}, leverage {market.leverage}x, "
         f"risk {trading.risk_per_trade_percent}%/trade, daily limit "
-        f"{trading.daily_loss_limit_percent}%, fee {costs.taker_fee * 100}%, slippage "
+        f"{trading.daily_loss_limit_percent}%, fee {costs.taker_fee * 100}%{maker}, slippage "
         f"{costs.market_slippage * 100}% (stops {costs.stop_slippage * 100}%)"
     )
     return format_report(title, result)

@@ -1,9 +1,11 @@
 import logging
+from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
+from quantdeck_engine.binance.streams import Kline
 from quantdeck_engine.config import (
     MAINNET,
     TESTNET,
@@ -13,6 +15,8 @@ from quantdeck_engine.config import (
     parse_settings,
 )
 from quantdeck_engine.paths import CONFIG_FILE, ENV_FILE
+from quantdeck_engine.strategy.base import Action, Position
+from quantdeck_engine.strategy.registry import STRATEGIES
 
 KEYS = {"BINANCE_API_KEY": "test-key-123", "BINANCE_API_SECRET": "test-secret-456"}
 
@@ -288,3 +292,35 @@ def test_invalid_strategy_is_rejected(tmp_path: Path, old: str, new: str, messag
     text = VALID_TOML + STRATEGY_TOML.replace(old, new)
     with pytest.raises(ConfigError, match=message):
         load_trading_config(write_config(tmp_path, text))
+
+
+@dataclass
+class LimitProbe:
+    """A strategy that enters with limit orders, which only the backtest fills (D-45)."""
+
+    interval: str = "4h"
+
+    @property
+    def warmup(self) -> int:
+        return 2
+
+    @property
+    def limit_entries(self) -> bool:
+        return True
+
+    def on_candle(self, candle: Kline, position: Position | None) -> Action | None:
+        return None
+
+
+def test_a_strategy_with_limit_entries_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setitem(STRATEGIES, "limit-probe", LimitProbe)
+    text = VALID_TOML + '[strategy]\nname = "limit-probe"\ninterval = "4h"\n'
+    with pytest.raises(ConfigError, match="enters with limit orders, which the engine can't"):
+        load_trading_config(write_config(tmp_path, text))
+
+
+def test_no_registered_strategy_uses_limit_entries_yet() -> None:
+    # The forward test's strategy, and every other, still loads in `run` (D-43, D-45).
+    assert not any(cls().limit_entries for cls in STRATEGIES.values())
