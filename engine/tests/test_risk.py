@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from decimal import Decimal
 from pathlib import Path
@@ -20,6 +21,7 @@ from quantdeck_engine.trading.halt import HaltRecord, HaltStore
 from quantdeck_engine.trading.order_ids import ClientIdFactory, Role, parse_client_id
 from quantdeck_engine.trading.risk import KILL_ATTEMPTS, LiftRefused, RiskGuard, loss_from_income
 from quantdeck_engine.trading.rules import Side
+from quantdeck_engine.trading.sizing import EntryRejected
 
 D = Decimal
 
@@ -147,6 +149,83 @@ async def test_entries_are_refused_while_halted(store: HaltStore) -> None:
     with pytest.raises(TradingHalted, match="by hand"):
         await trader.open_position(Side.LONG, D(59400))
     assert exchange.calls(*ORDER) == []
+
+
+# Open positions at the entry gate (D-24)
+
+
+async def test_room_counts_open_positions_on_other_symbols(store: HaltStore) -> None:
+    exchange = FakeExchange()
+    lose(exchange, "100")  # room 50
+    exchange.add_position("ETHUSDT", "1", "3000")
+    exchange.add_stop("SELL", "2980", "qd_s_ETHUSDT_1_00", symbol="ETHUSDT")
+    guard = make(exchange, store)[0]
+    # 20 to the stop, plus 1.49 to close at 2980
+    assert await guard.open_risk() == D("21.49")
+    assert await guard.entry_risk(D(50)) == D("28.51")
+
+
+async def test_open_risk_takes_the_stop_that_fires_first(store: HaltStore) -> None:
+    exchange = FakeExchange()
+    exchange.add_position("ETHUSDT", "-2", "3000")  # short
+    exchange.add_stop("BUY", "3060", "qd_s_ETHUSDT_1_00", symbol="ETHUSDT")
+    exchange.add_stop("BUY", "3030", "qd_s_ETHUSDT_2_00", symbol="ETHUSDT")
+    exchange.add_position("SOLUSDT", "10", "100")
+    exchange.add_stop("SELL", "105", "qd_s_SOLUSDT_1_00", symbol="SOLUSDT")  # above entry
+    guard = make(exchange, store)[0]
+    # ETH: 60 to the 3030 stop plus 3.03 to close; SOL: no loss, 0.525 to close
+    assert await guard.open_risk() == D("63.555")
+
+
+async def test_entry_is_skipped_when_open_positions_leave_no_room(
+    store: HaltStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    exchange = FakeExchange()
+    lose(exchange, "100")  # room 50
+    exchange.add_position("ETHUSDT", "1", "3000")
+    exchange.add_stop("SELL", "2950", "qd_s_ETHUSDT_1_00", symbol="ETHUSDT")  # 51.475 at risk
+    guard, trader = make(exchange, store)
+    with caplog.at_level(logging.WARNING):
+        assert await trader.open_position(Side.LONG, D(59400)) is None
+    assert exchange.calls(*ORDER) == []
+    assert "no room left" in caplog.text
+    assert not guard.halted  # below the limit: only this entry is skipped
+
+
+async def test_a_position_without_a_stop_blocks_entries(
+    store: HaltStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    exchange = FakeExchange()
+    exchange.add_position("ETHUSDT", "1", "3000")
+    trader = make(exchange, store)[1]
+    with caplog.at_level(logging.WARNING):
+        assert await trader.open_position(Side.LONG, D(59400)) is None
+    assert exchange.calls(*ORDER) == []
+    assert "ETHUSDT LONG position has no exchange-side stop" in caplog.text
+
+
+async def test_the_next_gate_counts_the_entry_just_made(store: HaltStore) -> None:
+    exchange = FakeExchange()
+    lose(exchange, "100")  # room 50
+    guard, trader = make(exchange, store)
+    assert await trader.open_position(Side.LONG, D(59400)) is not None
+    # Its 0.083 at a 600 stop distance, plus the fee to close, now fills the room.
+    with pytest.raises(EntryRejected, match="no room left"):
+        await guard.entry_risk(D(50))
+
+
+async def test_entries_take_turns_through_the_slot(store: HaltStore) -> None:
+    guard = make(FakeExchange(), store)[0]
+    steps: list[str] = []
+
+    async def enter(name: str) -> None:
+        async with guard.entry_slot():
+            steps.append(f"{name} gate")
+            await asyncio.sleep(0)  # an order request
+            steps.append(f"{name} stop")
+
+    await asyncio.gather(enter("BTCUSDT"), enter("ETHUSDT"))
+    assert steps == ["BTCUSDT gate", "BTCUSDT stop", "ETHUSDT gate", "ETHUSDT stop"]
 
 
 # Kill switch (D-27, D-29)

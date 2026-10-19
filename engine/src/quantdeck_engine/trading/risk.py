@@ -10,7 +10,8 @@ stream reconnect) and periodically, since income records may appear a little aft
 import asyncio
 import logging
 import time
-from collections.abc import Awaitable, Callable, Iterable, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
@@ -19,9 +20,16 @@ from quantdeck_engine.binance.rest import REQUEST_ERRORS, BinanceRestClient
 from quantdeck_engine.config import TradingConfig
 from quantdeck_engine.times import day_start_ms
 from quantdeck_engine.trading.balance import BaseBalance, fetch_income
-from quantdeck_engine.trading.executor import OrderOutcomeUnclear, SymbolTrader, TradingHalted
+from quantdeck_engine.trading.executor import (
+    OrderOutcomeUnclear,
+    SymbolTrader,
+    TradingHalted,
+    is_closing_stop,
+)
 from quantdeck_engine.trading.halt import HaltRecord, HaltStore
-from quantdeck_engine.trading.sizing import DailyLoss, daily_limit
+from quantdeck_engine.trading.position import ExchangePosition
+from quantdeck_engine.trading.rules import Side
+from quantdeck_engine.trading.sizing import DailyLoss, EntryRejected, daily_limit
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +74,9 @@ CHECK_INTERVAL = 60.0  # seconds; D-30: "about once a minute"
 # Income records appeared 1.1 s after a fill on testnet (D-30), so a check run the moment a
 # position closes would usually miss its loss.
 CHECK_DELAY = 3.0  # seconds
+# The fee for closing a position its stop closes, counted in its risk at the entry gate
+# (D-24): the regular-tier taker fee (binanceNotes.md, Fees). Testnet charged 0.04%.
+CLOSE_FEE_RATE = Decimal("0.0005")
 
 
 class LiftRefused(Exception):
@@ -105,6 +116,7 @@ class RiskGuard:
         self._clock = clock
         self._sleep = sleep
         self._traders: list[SymbolTrader] = []
+        self._entry_lock = asyncio.Lock()
         self._kill_lock = asyncio.Lock()
         self._pending_kill: asyncio.Task[bool] | None = None
         self._recorded = False
@@ -165,11 +177,22 @@ class RiskGuard:
             await self.trip(self._limit_reason(daily))
         return daily
 
-    async def entry_risk(self, per_trade: Decimal) -> Decimal:
-        """The entry gate (D-24): the per-trade risk, capped by the room left under the limit.
+    @asynccontextmanager
+    async def entry_slot(self) -> AsyncIterator[None]:
+        """One entry at a time across all symbols, from the gate until its stop is placed
+        (D-24). Two entries at the same candle close would otherwise both count on the same
+        room. Taken inside a trader's lock and never the other way round; the kill switch
+        doesn't take it."""
+        async with self._entry_lock:
+            yield
 
-        Runs inside a trader's lock, so at the limit it only schedules the kill switch, which
-        then waits for that lock, and refuses the entry.
+    async def entry_risk(self, per_trade: Decimal) -> Decimal:
+        """The entry gate (D-24): the per-trade risk, capped by the room left under the limit
+        once every open position's stop is assumed to fire.
+
+        Runs inside a trader's lock and the entry slot, so at the limit it only schedules the
+        kill switch, which then waits for that lock, and refuses the entry. Raises
+        `EntryRejected` when open positions leave no room, or one has no stop.
         """
         if self.halted:
             raise TradingHalted(f"kill switch: {self.halt_reason}")
@@ -180,7 +203,53 @@ class RiskGuard:
                 self._pending_kill = asyncio.create_task(self.trip(reason))
                 self._pending_kill.add_done_callback(_log_kill_failure)
             raise TradingHalted(f"kill switch: {reason}")
-        return min(per_trade, daily.room)
+        at_risk = await self.open_risk()
+        room = daily.room - at_risk
+        if at_risk > 0:
+            logger.info(
+                "Open positions would lose %.2f %s if every stop fired; %.2f %s left under "
+                "the daily loss limit (D-24)",
+                at_risk,
+                self._base.asset,
+                max(room, Decimal(0)),
+                self._base.asset,
+            )
+        if room <= 0:
+            raise EntryRejected(
+                f"{daily.describe(self._base.asset)}, and open positions would lose "
+                f"{at_risk:.2f} {self._base.asset} at their stops: no room left (D-24)"
+            )
+        return min(per_trade, room)
+
+    async def open_risk(self) -> Decimal:
+        """What every open position on the account loses if its stop fires (D-24): the loss
+        to the stop that fires first, plus the fee to close. Read from the exchange (D-06),
+        so it covers every symbol, whichever trader opened it (D-14).
+
+        Raises `EntryRejected` for a position without a stop: its loss has no bound until
+        its emergency stop is placed (D-19).
+        """
+        total = Decimal(0)
+        for p in await self._client.positions():
+            position = ExchangePosition.from_position_risk(p)
+            if position is None:
+                continue
+            symbol, side = p["symbol"], position.side
+            triggers = [
+                Decimal(a["triggerPrice"])
+                for a in await self._client.open_algo_orders(symbol)
+                if is_closing_stop(a, side)
+            ]
+            if not triggers:
+                raise EntryRejected(
+                    f"the {symbol} {side} position has no exchange-side stop, so its risk is "
+                    "unknown (D-19)"
+                )
+            # A long's highest stop fires first as the price falls; a short's lowest.
+            first = max(triggers) if side is Side.LONG else min(triggers)
+            loss = (position.entry_price - first) * position.quantity * side.sign
+            total += max(loss, Decimal(0)) + first * position.quantity * CLOSE_FEE_RATE
+        return total
 
     async def trip(self, reason: str) -> bool:
         """Fire the kill switch (D-27): halt, record the halt, then flatten every symbol.

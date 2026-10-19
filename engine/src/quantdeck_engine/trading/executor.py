@@ -7,7 +7,9 @@
 - An order whose outcome is unknown is looked up by its client ID, never blindly resent
   (D-20). Client IDs encode the order's role (D-21).
 - Each entry's risk is capped by an account-wide gate: the room left under the daily loss
-  limit (D-24). The kill switch flattens each symbol through `flatten` (D-27).
+  limit once every open position's stop is counted (D-24). Entries on all symbols take
+  turns through the gate's entry slot. The kill switch flattens each symbol through
+  `flatten` (D-27).
 
 Every decision that protects a position re-reads the exchange first (D-06). A symbol whose
 trading is halted still closes and protects positions; it only refuses new entries.
@@ -16,6 +18,7 @@ trading is halted still closes and protects positions; it only refuses new entri
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from contextlib import AbstractAsyncContextManager
 from decimal import Decimal
 from typing import Any, Protocol
 
@@ -65,13 +68,28 @@ class StopNotPlaced(Exception):
 
 
 class EntryGate(Protocol):
+    def entry_slot(self) -> AbstractAsyncContextManager[None]:
+        """Held by one entry at a time across all symbols, from the gate until the entry's
+        stop is placed, so the next entry's gate sees it as an open position (D-24)."""
+        ...
+
     async def entry_risk(self, per_trade: Decimal) -> Decimal:
         """The risk amount an entry may take, at most `per_trade` (D-24).
 
-        Called while the trader holds its lock, so it must not close or cancel anything.
-        Raises `TradingHalted` when no entry may be made.
+        Called while the trader holds its lock and the entry slot, so it must not close or
+        cancel anything. Raises `TradingHalted` when no entry may be made, and
+        `EntryRejected` when this one must be skipped.
         """
         ...
+
+
+def is_closing_stop(order: dict[str, Any], side: Side) -> bool:
+    """An open algo order that is a closePosition stop for a position on `side` (D-18)."""
+    return (
+        order["orderType"] == "STOP_MARKET"
+        and order["closePosition"]
+        and order["side"] == side.close_order_side
+    )
 
 
 class SymbolTrader:
@@ -147,90 +165,94 @@ class SymbolTrader:
                 # One entry per position; adding to a position is out of scope.
                 logger.warning("%s: entry skipped: a position is already open", self.symbol)
                 return None
+            async with self._gate.entry_slot():
+                return await self._enter(side, stop_price)
 
-            base = await self._base.get()
-            per_trade = risk_amount(base, self._trading.risk_per_trade_percent)
+    async def _enter(self, side: Side, stop_price: Decimal) -> EntryPlan | None:
+        base = await self._base.get()
+        per_trade = risk_amount(base, self._trading.risk_per_trade_percent)
+        try:
             risk = await self._gate.entry_risk(per_trade)
             if risk < per_trade:
                 logger.info(
-                    "%s: entry risk capped at %s %s by the daily loss limit (D-24)",
+                    "%s: entry risk capped at %s %s by the room left under the daily loss "
+                    "limit (D-24)",
                     self.symbol,
                     risk.quantize(Decimal("0.01")),
                     self._base.asset,
                 )
-            try:
-                plan = size_entry(
-                    side=side,
-                    reference_price=await self._client.mark_price(self.symbol),
-                    stop_price=stop_price,
-                    risk_amount=risk,
-                    base_balance=base,
-                    max_notional_multiple=self._trading.max_notional_multiple,
-                    available_balance=await self._available_balance(),
-                    leverage=self._config.leverage,
-                    rules=self._rules,
-                    brackets=self._brackets,
-                )
-            except EntryRejected as e:
-                logger.warning("%s: entry skipped: %s", self.symbol, e)
-                return None
-
-            logger.info(
-                "%s: entering %s %s at ~%s, stop %s, risk %s %s, est. liquidation %.2f%s",
-                self.symbol,
-                side,
-                plan.quantity,
-                plan.reference_price,
-                plan.stop_price,
-                plan.risk.quantize(Decimal("0.01")),
-                self._base.asset,
-                plan.liquidation_price,
-                f" (trimmed by {plan.trimmed_by})" if plan.trimmed_by else "",
+            plan = size_entry(
+                side=side,
+                reference_price=await self._client.mark_price(self.symbol),
+                stop_price=stop_price,
+                risk_amount=risk,
+                base_balance=base,
+                max_notional_multiple=self._trading.max_notional_multiple,
+                available_balance=await self._available_balance(),
+                leverage=self._config.leverage,
+                rules=self._rules,
+                brackets=self._brackets,
             )
-            client_id = self._ids.new(Role.ENTRY, self.symbol)
-            try:
-                result = await self._submit(
-                    lambda: self._client.market_order(
-                        self.symbol,
-                        side.entry_order_side,
-                        plan.quantity,
-                        client_id,
-                        reduce_only=False,
-                    ),
-                    client_id,
-                    "entry",
-                )
-            except BinanceAPIError as e:
-                # A definite rejection (4xx): nothing was placed.
-                logger.warning("%s: entry %s rejected: %s", self.symbol, client_id, e)
-                return None
-            filled = Decimal(result["executedQty"])
-            if filled == 0:
-                if result["status"] not in FINAL_ORDER_STATUSES:
-                    # Found by lookup while still working: it may fill after we look away.
-                    self.halt(f"entry {client_id} still {result['status']} after lookup")
-                    await self._protect_any_position()
-                    return None
-                logger.warning(
-                    "%s: entry %s did not fill (status %s)",
+        except EntryRejected as e:
+            logger.warning("%s: entry skipped: %s", self.symbol, e)
+            return None
+
+        logger.info(
+            "%s: entering %s %s at ~%s, stop %s, risk %s %s, est. liquidation %.2f%s",
+            self.symbol,
+            side,
+            plan.quantity,
+            plan.reference_price,
+            plan.stop_price,
+            plan.risk.quantize(Decimal("0.01")),
+            self._base.asset,
+            plan.liquidation_price,
+            f" (trimmed by {plan.trimmed_by})" if plan.trimmed_by else "",
+        )
+        client_id = self._ids.new(Role.ENTRY, self.symbol)
+        try:
+            result = await self._submit(
+                lambda: self._client.market_order(
                     self.symbol,
-                    client_id,
-                    result["status"],
-                )
-                return None
-            if result["status"] != "FILLED":
-                logger.warning(
-                    "%s: entry %s %s, filled %s of %s",
-                    self.symbol,
-                    client_id,
-                    result["status"],
-                    filled,
+                    side.entry_order_side,
                     plan.quantity,
-                )
-            # closePosition covers whatever filled, partial or not.
-            if not await self._protect(side, plan.stop_price, liquidation=None):
+                    client_id,
+                    reduce_only=False,
+                ),
+                client_id,
+                "entry",
+            )
+        except BinanceAPIError as e:
+            # A definite rejection (4xx): nothing was placed.
+            logger.warning("%s: entry %s rejected: %s", self.symbol, client_id, e)
+            return None
+        filled = Decimal(result["executedQty"])
+        if filled == 0:
+            if result["status"] not in FINAL_ORDER_STATUSES:
+                # Found by lookup while still working: it may fill after we look away.
+                self.halt(f"entry {client_id} still {result['status']} after lookup")
+                await self._protect_any_position()
                 return None
-            return plan
+            logger.warning(
+                "%s: entry %s did not fill (status %s)",
+                self.symbol,
+                client_id,
+                result["status"],
+            )
+            return None
+        if result["status"] != "FILLED":
+            logger.warning(
+                "%s: entry %s %s, filled %s of %s",
+                self.symbol,
+                client_id,
+                result["status"],
+                filled,
+                plan.quantity,
+            )
+        # closePosition covers whatever filled, partial or not.
+        if not await self._protect(side, plan.stop_price, liquidation=None):
+            return None
+        return plan
 
     async def close_position(self, role: Role = Role.EXIT) -> None:
         """Close the whole position with reduceOnly market orders, then cancel its stop."""
@@ -271,11 +293,7 @@ class SymbolTrader:
     async def open_stops(self, side: Side) -> list[dict[str, Any]]:
         """Open closePosition stops that would close a position on `side`."""
         return [
-            a
-            for a in await self._client.open_algo_orders(self.symbol)
-            if a["orderType"] == "STOP_MARKET"
-            and a["closePosition"]
-            and a["side"] == side.close_order_side
+            a for a in await self._client.open_algo_orders(self.symbol) if is_closing_stop(a, side)
         ]
 
     async def _available_balance(self) -> Decimal:

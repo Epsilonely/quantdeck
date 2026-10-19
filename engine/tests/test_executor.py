@@ -1,4 +1,6 @@
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from decimal import Decimal
 
 import httpx
@@ -230,6 +232,46 @@ async def test_entry_rejected_by_sizing_places_nothing() -> None:
     plan = await make_trader(exchange).open_position(Side.LONG, D(60100))  # wrong side
     assert plan is None
     assert exchange.calls(*ORDER) == []
+
+
+class SlotGate(FixedGate):
+    """Records whether the entry slot was held whenever something is noted."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.held = False
+        self.seen: list[tuple[str, bool]] = []
+
+    @asynccontextmanager
+    async def entry_slot(self) -> AsyncIterator[None]:
+        self.held = True
+        try:
+            yield
+        finally:
+            self.held = False
+
+    async def entry_risk(self, per_trade: Decimal) -> Decimal:
+        self.seen.append(("gate", self.held))
+        return await super().entry_risk(per_trade)
+
+
+async def test_entry_holds_the_slot_from_the_gate_through_the_stop() -> None:
+    # The next entry's gate must see this one's position with its stop (D-24).
+    exchange = FakeExchange()
+    gate = SlotGate()
+
+    def noted(what: str) -> httpx.Response:
+        gate.seen.append((what, gate.held))
+        if what == "entry":  # the fill the fake has just made
+            client_id = exchange.calls(*ORDER)[-1]["newClientOrderId"]
+            return httpx.Response(200, json=exchange.orders[client_id])
+        return httpx.Response(200, json={})
+
+    exchange.fail(*ORDER, Failure(lambda: noted("entry"), after=True))
+    exchange.fail(*ALGO, Failure(lambda: noted("stop"), after=True))
+    assert await make_trader(exchange, gate).open_position(Side.LONG, D(59400)) is not None
+    assert gate.seen == [("gate", True), ("entry", True), ("stop", True)]
+    assert not gate.held
 
 
 async def test_entry_is_skipped_while_a_position_is_open() -> None:

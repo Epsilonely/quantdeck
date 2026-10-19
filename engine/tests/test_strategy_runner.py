@@ -7,7 +7,7 @@ from pathlib import Path
 
 import httpx
 import pytest
-from fake_exchange import Failure, FakeExchange, make_trader, no_sleep, open_long
+from fake_exchange import Failure, FakeExchange, FixedGate, make_trader, no_sleep, open_long
 
 from quantdeck_engine.binance.streams import Kline
 from quantdeck_engine.strategy.base import Action, Enter, Exit
@@ -68,7 +68,7 @@ class FakeFeed:
             yield k
 
 
-class HaltedGate:
+class HaltedGate(FixedGate):
     """The entry gate while the kill switch has halted the account (D-27)."""
 
     async def entry_risk(self, per_trade: Decimal) -> Decimal:

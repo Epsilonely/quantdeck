@@ -6,6 +6,7 @@ handled first and its response then lost (an executed order with an unknown outc
 """
 
 from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager, nullcontext
 from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any
@@ -93,7 +94,9 @@ class FakeExchange:
     incomes: list[dict[str, Any]] = field(default_factory=list)
     klines: list[list[Any]] = field(default_factory=list)  # REST rows, oldest first
     open_orders: list[dict[str, Any]] = field(default_factory=list)
-    algo_orders: list[dict[str, Any]] = field(default_factory=list)
+    algo_orders: list[dict[str, Any]] = field(default_factory=list)  # every symbol's
+    # `positionRisk` rows for symbols other than `symbol`, which no order here changes.
+    other_positions: list[dict[str, Any]] = field(default_factory=list)
     orders: dict[str, dict[str, Any]] = field(default_factory=dict)  # every order, by client ID
     failures: dict[tuple[str, str], list[Failure]] = field(default_factory=dict)
     requests: list[tuple[str, str, dict[str, str]]] = field(default_factory=list)
@@ -107,8 +110,27 @@ class FakeExchange:
     def calls(self, method: str, path: str) -> list[dict[str, str]]:
         return [p for m, pa, p in self.requests if (m, pa) == (method, path)]
 
-    def add_stop(self, side: str, trigger: str, client_algo_id: str = "qd_s_BTCUSDT_1_00") -> None:
-        self.algo_orders.append(self._algo(side, trigger, client_algo_id))
+    def add_stop(
+        self,
+        side: str,
+        trigger: str,
+        client_algo_id: str = "qd_s_BTCUSDT_1_00",
+        symbol: str | None = None,
+    ) -> None:
+        self.algo_orders.append(self._algo(side, trigger, client_algo_id, symbol))
+
+    def add_position(self, symbol: str, amount: str, entry: str) -> None:
+        """An open position on another symbol (negative amount = short)."""
+        self.other_positions.append(
+            {
+                "symbol": symbol,
+                "positionSide": "BOTH",
+                "positionAmt": amount,
+                "entryPrice": entry,
+                "markPrice": entry,
+                "liquidationPrice": "0",
+            }
+        )
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         params = dict(parse_qsl(request.url.query.decode()))
@@ -135,9 +157,11 @@ class FakeExchange:
             case ("GET", "/fapi/v1/exchangeInfo"):
                 return httpx.Response(200, json={"symbols": [self._symbol_info()]})
             case ("GET", "/fapi/v3/positionRisk"):
-                if self.position_amount == 0:
-                    return httpx.Response(200, json=[])
-                return httpx.Response(200, json=[self._position()])
+                rows = [self._position()] if self.position_amount != 0 else []
+                rows += self.other_positions
+                if "symbol" in p:
+                    rows = [r for r in rows if r["symbol"] == p["symbol"]]
+                return httpx.Response(200, json=rows)
             case ("GET", "/fapi/v1/premiumIndex"):
                 price = {"symbol": self.symbol, "markPrice": str(self.mark)}
                 return httpx.Response(200, json=price)
@@ -168,7 +192,8 @@ class FakeExchange:
             case ("GET", "/fapi/v1/openOrders"):
                 return httpx.Response(200, json=self.open_orders)
             case ("GET", "/fapi/v1/openAlgoOrders"):
-                return httpx.Response(200, json=self.algo_orders)
+                orders = [a for a in self.algo_orders if a["symbol"] == p["symbol"]]
+                return httpx.Response(200, json=orders)
             case ("GET", "/fapi/v1/order"):
                 order = self.orders.get(p["origClientOrderId"])
                 if order is None:
@@ -259,13 +284,15 @@ class FakeExchange:
             "liquidationPrice": str(self.liquidation_price),
         }
 
-    def _algo(self, side: str, trigger: str, client_algo_id: str) -> dict[str, Any]:
+    def _algo(
+        self, side: str, trigger: str, client_algo_id: str, symbol: str | None = None
+    ) -> dict[str, Any]:
         return {
             "algoId": len(self.algo_orders) + 100,
             "clientAlgoId": client_algo_id,
             "algoType": "CONDITIONAL",
             "orderType": "STOP_MARKET",
-            "symbol": self.symbol,
+            "symbol": symbol or self.symbol,
             "side": side,
             "positionSide": "BOTH",
             "algoStatus": "NEW",
@@ -292,6 +319,9 @@ class FixedGate:
 
     def __init__(self, cap: Decimal | None = None) -> None:
         self.cap = cap
+
+    def entry_slot(self) -> AbstractAsyncContextManager[None]:
+        return nullcontext()
 
     async def entry_risk(self, per_trade: Decimal) -> Decimal:
         return per_trade if self.cap is None else min(per_trade, self.cap)
