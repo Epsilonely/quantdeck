@@ -1,11 +1,9 @@
 import logging
-from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
 import pytest
 
-from quantdeck_engine.binance.streams import Kline
 from quantdeck_engine.config import (
     MAINNET,
     TESTNET,
@@ -15,7 +13,6 @@ from quantdeck_engine.config import (
     parse_settings,
 )
 from quantdeck_engine.paths import CONFIG_FILE, ENV_FILE
-from quantdeck_engine.strategy.base import Action, Position
 from quantdeck_engine.strategy.registry import STRATEGIES
 
 KEYS = {"BINANCE_API_KEY": "test-key-123", "BINANCE_API_SECRET": "test-secret-456"}
@@ -294,33 +291,30 @@ def test_invalid_strategy_is_rejected(tmp_path: Path, old: str, new: str, messag
         load_trading_config(write_config(tmp_path, text))
 
 
-@dataclass
-class LimitProbe:
-    """A strategy that enters with limit orders, which only the backtest fills (D-45)."""
-
-    interval: str = "4h"
-
-    @property
-    def warmup(self) -> int:
-        return 2
-
-    @property
-    def limit_entries(self) -> bool:
-        return True
-
-    def on_candle(self, candle: Kline, position: Position | None) -> Action | None:
-        return None
-
-
-def test_a_strategy_with_limit_entries_is_refused(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setitem(STRATEGIES, "limit-probe", LimitProbe)
-    text = VALID_TOML + '[strategy]\nname = "limit-probe"\ninterval = "4h"\n'
+@pytest.mark.parametrize(
+    ("name", "params"),
+    [("trend-pullback", ""), ("bollinger", "limit_offset = 0.5\n")],
+)
+def test_a_strategy_with_limit_entries_is_refused(tmp_path: Path, name: str, params: str) -> None:
+    text = VALID_TOML + f'[strategy]\nname = "{name}"\ninterval = "1h"\n[strategy.params]\n'
     with pytest.raises(ConfigError, match="enters with limit orders, which the engine can't"):
-        load_trading_config(write_config(tmp_path, text))
+        load_trading_config(write_config(tmp_path, text + params))
 
 
-def test_no_registered_strategy_uses_limit_entries_yet() -> None:
-    # The forward test's strategy, and every other, still loads in `run` (D-43, D-45).
-    assert not any(cls().limit_entries for cls in STRATEGIES.values())
+def test_the_market_entry_settings_of_limit_strategies_load(tmp_path: Path) -> None:
+    text = VALID_TOML + '[strategy]\nname = "trend-pullback"\ninterval = "1h"\n'
+    text += "[strategy.params]\nlimit_atr = 0\n"
+    assert load_trading_config(write_config(tmp_path, text)).strategy is not None
+
+
+def test_only_limit_settings_use_limit_entries() -> None:
+    # The forward test's strategy, and every market-entry default, still loads in `run`
+    # (D-43, D-45).
+    uses = {name: cls().limit_entries for name, cls in STRATEGIES.items()}
+    assert uses == {
+        "donchian": False,
+        "bollinger": False,
+        "daily-breakout": False,
+        "move-fade": False,
+        "trend-pullback": True,
+    }

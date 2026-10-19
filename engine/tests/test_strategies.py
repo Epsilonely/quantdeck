@@ -9,6 +9,7 @@ from quantdeck_engine.strategy.daily_breakout import DailyOpenBreakout
 from quantdeck_engine.strategy.donchian import DonchianBreakout
 from quantdeck_engine.strategy.move_fade import MoveFade
 from quantdeck_engine.strategy.registry import StrategyError, make_strategy, parse_parameters
+from quantdeck_engine.strategy.trend_pullback import TrendPullback
 from quantdeck_engine.trading.rules import Side
 
 HOUR_MS = 60 * 60 * 1000
@@ -128,6 +129,38 @@ def test_bollinger_does_nothing_on_a_flat_window() -> None:
     strategy = BollingerReversion(period=3)
     actions = [strategy.on_candle(k, None) for k in closes(["100", "100", "100"])]
     assert actions == [None, None, None]
+
+
+def test_bollinger_limit_offset_puts_the_limit_beyond_the_close_and_the_stop_beyond_it() -> None:
+    strategy = BollingerReversion(
+        period=4, width=Decimal(1), stop_width=Decimal(1), limit_offset=Decimal("0.5")
+    )
+    assert strategy.limit_entries
+    for k in closes(["100", "102", "100"]):
+        strategy.on_candle(k, None)
+
+    action = strategy.on_candle(candle(3, "96", "96", "96"), None)
+
+    deviation = Decimal("4.75").sqrt()
+    limit = Decimal(96) - Decimal("0.5") * deviation
+    assert action == Enter(Side.LONG, limit - deviation, limit)
+
+
+def test_bollinger_limit_offset_short_sells_above_the_close() -> None:
+    strategy = BollingerReversion(
+        period=4, width=Decimal(1), stop_width=Decimal(1), limit_offset=Decimal(1)
+    )
+    for k in closes(["100", "98", "100"]):
+        strategy.on_candle(k, None)
+    action = strategy.on_candle(candle(3, "104", "104", "104"), None)
+    assert isinstance(action, Enter) and action.limit_price is not None
+    assert Decimal(104) < action.limit_price < action.stop_price
+
+
+def test_bollinger_without_an_offset_enters_at_market() -> None:
+    assert not BollingerReversion().limit_entries
+    with pytest.raises(ValueError, match="limit_offset >= 0"):
+        BollingerReversion(limit_offset=Decimal("-0.5"))
 
 
 # Registry (D-28, D-39)
@@ -334,3 +367,94 @@ def test_move_fade_rejects_bad_settings() -> None:
         MoveFade(bar_minutes=7 * 60)  # doesn't divide a day
     with pytest.raises(ValueError, match="lookback >= 2"):
         MoveFade(lookback=1)
+
+
+# Trend pullback (#17)
+
+
+def small_pullback(**kwargs: Decimal) -> TrendPullback:
+    """2h bars of two 1h candles, the trend over 3 bars, ATR over 2."""
+    return TrendPullback(bar_minutes=120, trend_period=3, atr_period=2, **kwargs)
+
+
+def feed_bars(
+    strategy: TrendPullback,
+    bars: list[tuple[str, str, str]],
+    position: Position | None = None,
+    first: int = 0,
+) -> list:
+    """Each bar (high, low, close) as two equal 1h candles; the actions of every candle."""
+    actions = []
+    for n, (high, low, close) in enumerate(bars, start=first):
+        for i in (2 * n, 2 * n + 1):
+            actions.append(strategy.on_candle(candle(i, high, low, close), position))
+    return actions
+
+
+RISING = [("101", "99", "100"), ("103", "101", "102"), ("105", "103", "104")]
+FALLING = [("105", "103", "104"), ("103", "101", "102"), ("101", "99", "100")]
+
+
+def test_trend_pullback_warms_up_on_its_bars() -> None:
+    assert TrendPullback().warmup == 224  # (55 + 1) 4h bars of 1h candles
+    assert small_pullback().warmup == 8
+
+
+def test_trend_pullback_buys_below_the_close_in_an_uptrend() -> None:
+    strategy = small_pullback(limit_atr=Decimal("0.5"), stop_atr=Decimal(2))
+    assert strategy.limit_entries
+    actions = feed_bars(strategy, RISING)
+
+    # Closes 100, 102, 104: the last is above the mean (102). True ranges 3 and 3: ATR 3.
+    assert actions[:5] == [None] * 5
+    assert actions[5] == Enter(Side.LONG, Decimal("96.5"), Decimal("102.5"))
+    # Inside the next bar it quotes again from the latest close.
+    assert strategy.on_candle(candle(6, "106", "104", "105"), None) == Enter(
+        Side.LONG, Decimal("97.5"), Decimal("103.5")
+    )
+
+
+def test_trend_pullback_sells_above_the_close_in_a_downtrend() -> None:
+    strategy = small_pullback(limit_atr=Decimal(1), stop_atr=Decimal(3))
+    actions = feed_bars(strategy, FALLING)
+    assert actions[5] == Enter(Side.SHORT, Decimal(112), Decimal(103))
+
+
+def test_trend_pullback_without_a_limit_enters_at_market() -> None:
+    strategy = small_pullback(limit_atr=Decimal(0), stop_atr=Decimal(2))
+    assert not strategy.limit_entries
+    assert feed_bars(strategy, RISING)[5] == Enter(Side.LONG, Decimal(98))
+
+
+def test_trend_pullback_exits_when_a_bar_closes_across_the_mean() -> None:
+    strategy = small_pullback()
+    feed_bars(strategy, RISING, LONG)
+    # Closes 102, 104, 98: the mean is about 101.3, so the trend turns down at the bar's close.
+    actions = feed_bars(strategy, [("104", "97", "98")], LONG, first=3)
+    assert actions == [None, Exit()]
+
+
+def test_trend_pullback_closes_a_position_against_the_trend() -> None:
+    strategy = small_pullback()
+    actions = feed_bars(strategy, RISING, SHORT)
+    assert actions[5] == Exit()
+
+
+def test_trend_pullback_skips_a_bar_with_a_missing_candle() -> None:
+    strategy = small_pullback()
+    feed_bars(strategy, RISING[:1])
+    strategy.on_candle(candle(3, "103", "101", "102"), None)  # bar 1 lacks its first candle
+    actions = feed_bars(strategy, RISING[2:], first=2)
+    assert actions == [None, None]
+    assert len(strategy._bars) == 2
+
+
+def test_trend_pullback_rejects_bad_settings() -> None:
+    with pytest.raises(ValueError, match="whole number of candles"):
+        TrendPullback(bar_minutes=90)
+    with pytest.raises(ValueError, match="trend_period >= 2"):
+        TrendPullback(trend_period=1)
+    with pytest.raises(ValueError, match="limit_atr >= 0"):
+        TrendPullback(limit_atr=Decimal(-1))
+    with pytest.raises(ValueError, match="stop_atr > 0"):
+        TrendPullback(stop_atr=Decimal(0))

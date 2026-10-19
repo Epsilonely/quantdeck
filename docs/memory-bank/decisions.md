@@ -424,7 +424,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
     - Stops were a median 2–3% from entry, so fees took about 0.04–0.06 R per trade. Max drawdowns were 11–17%, and the daily limit never fired.
 - **Why:** The holdout expectancy fell to about a tenth of the selection period's, and the selection result leaned on one bull year in a long-only setting. Passing a rule set before the run is reason to keep the strategy, not to put it on the account in place of the 4h strategy, whose holdout was clearer (+0.141 R over 68 trades, D-41). One strategy trades per account (D-43), so forward-testing it would mean pausing the 4h test.
 - **Revisit:** Once per-coin strategies exist, or after more out-of-sample data. Maker (limit) entries would cut its costs, but they need a fill model first (D-17, D-40).
-- **Note (2026-10-19):** The fill model exists now (D-45); no strategy has been tested with limit entries yet.
+- **Note (2026-10-19):** The fill model exists now (D-45). The two limit-entry families tested on it failed (D-46); this strategy wasn't among them.
 - **Date:** 2026-10-19
 
 ## D-45 Limit entries in the backtest: post-only for one candle, filled only when traded through
@@ -449,4 +449,22 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Limitations:** No partial fills, queue position, or spread. The fill uses only the last price candle; the mark price only triggers the stop.
 - **Later, if a limit-entry strategy survives (out of scope here):** the engine's limit orders (`GTX`, expired by `GTD` or cancelled by the engine at the next close), partial fills, and counting a pending entry's risk at the entry gate (D-24).
 - **Alternatives:** Changing only the fee (what D-44 measured); an order that rests until filled or replaced; filling on a touch; 1m candles to order events within a candle.
+- **Note (2026-10-19):** No limit-entry strategy survived the first test of this model (D-46), so the engine work above waits.
+- **Date:** 2026-10-19
+
+## D-46 Limit-entry candidates: neither family passed, so no limit-entry strategy goes forward
+
+- **Decision:** Two limit-entry families were tested on the D-45 fill model (GitHub issue #17). The Bollinger reversion with a deeper limit is dropped, and the trend pullback's chosen setting failed its holdout. No limit-entry strategy goes to a forward test, the engine gets no limit orders for now, and the grid isn't widened. Both stay in the registry for backtests.
+- **The strategies (D-36 interface, 1h candles, each limit valid for one candle):**
+  - Bollinger with a limit offset: the existing signal (a close outside the 20-candle mean ± 2σ), entered with a limit a·σ beyond the close and the stop s·σ beyond the limit. a = 0 is the existing market entry.
+  - Trend pullback: 4h bars built from the 1h candles. The trend is the last bar's close against the mean of the last 55 bar closes, and ATR is the mean true range of the last 14 bars. While flat, every candle enters with the trend, with a limit k·ATR beyond its close and the stop m·ATR beyond the limit. The position closes when a bar closes across the mean. k = 0 enters at market.
+- **How they were tested** (rules fixed in the issue before any run; D-40 costs with the 0.02% maker fee, SOLUSDT and XRPUSDT at 0.04% slippage and 0.10% on stops; 2× leverage; testnet risk values):
+  - **Selection,** 2020–2023 (SOLUSDT from 2020-10) on BTC, ETH, SOL, and XRP: 8 limit settings, a or k ∈ {0.5, 1} × s or m ∈ {2, 3}, each against the market control with the same stop. A setting passed with positive expectancy on BTC and two of the other three coins (at least 30 trades each) and with a higher expectancy than its control on BTC and two of the other three.
+  - **Bollinger:** the limit cut its control's loss by a fifth to a third (means −0.077 to −0.103 R against −0.114 and −0.157 R), but every setting lost on every coin (t −1.4 to −4.1). Before costs, BTC was about zero across all six settings (−0.020 to +0.029 R): a limit saves costs, but there was no edge to save them for.
+  - **Trend pullback:** all four limit settings passed both rules (means +0.129 to +0.236 R; controls +0.105 and +0.156 R). k = 1, m = 2 had the highest mean, +0.236 R: BTC +0.156, ETH +0.013, SOL +0.517, XRP +0.260 (180–303 trades, t 0.1–1.5). SOL carried the mean, and ETH was flat.
+  - **Fills:** with k = 1, 1–2% of the limit orders filled (about 8% at k = 0.5), since a new order went out every hour while flat. None was rejected as crossing: a 1h candle opens next to the previous close.
+  - **Holdout,** 2024-01-01 to 2026-10-18, k = 1, m = 2: positive on ETH only (+0.058 R); BTC −0.076, SOL −0.029, XRP −0.022 (176–228 trades, every |t| under 1). The rule needed three of four. Its market control was positive on all four but weak (mean +0.077 R, t 0.1–0.8), so the limit's lead from the selection period reversed.
+- **Why:** The rules set before the runs decide it: the Bollinger family failed the selection, and the trend pullback failed its holdout. Deep limit fills in a trend look adversely selected: they catch the dips that keep going and miss the trends that never pull back. A limit changes which trades are taken more than what they cost, so it can't create an edge the signal lacks.
+- **By-product, not a candidate:** the trend pullback's market controls were positive on every coin in both periods, weakly in the holdout. They are a 4h trend follower, like the strategy already in the forward test (D-41). They weren't candidates here, and the holdout has now been seen, so a test of them would count as one more on the same history.
+- **Revisit:** Limit entries only with a signal that has an edge before costs, or if slippage on a larger account makes market entries costly.
 - **Date:** 2026-10-19
