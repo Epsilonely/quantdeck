@@ -21,6 +21,7 @@ STATE_DIR = ENGINE_DIR / "state"
 HALT_FILE = STATE_DIR / "halt.json"  # the kill switch's halt record (D-29)
 LOCK_FILE = STATE_DIR / "engine.lock"  # one engine process at a time (D-31)
 CONNECTION_FILE = STATE_DIR / "connection.json"  # port and token for clients (D-32)
+SYMBOLS_FILE = STATE_DIR / "symbols.json"  # the symbols, their leverage and strategy (D-47)
 
 
 def write_atomic(path: Path, content: str | bytes) -> None:

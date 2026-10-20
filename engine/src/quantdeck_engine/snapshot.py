@@ -25,7 +25,6 @@ def engine_snapshot(engine: "Engine") -> dict[str, Any]:
     return {
         "network": "testnet" if engine.testnet else "mainnet",
         "started_at": iso_utc(engine.started_at),
-        "strategy": _strategy_config(engine.strategy),
         "halt": {
             "halted": engine.guard.halted,
             "reason": engine.guard.halt_reason,
@@ -60,10 +59,12 @@ def _symbol_snapshot(engine: "Engine", symbol: str) -> dict[str, Any]:
             if mark is None
             else fixed_point(state.position_amount * (mark - state.entry_price)),
         }
+    config = engine.symbols[symbol]
     return {
         "symbol": symbol,
         "halted": engine.traders[symbol].halt_reason,
-        "strategy": _strategy_state(engine.runners.get(symbol)),
+        "leverage": config.leverage,
+        "strategy": _strategy(config.strategy, engine.runners.get(symbol)),
         "mark_price": None if mark is None else fixed_point(mark),
         "position": position,
         "orders": [
@@ -89,26 +90,19 @@ def _symbol_snapshot(engine: "Engine", symbol: str) -> dict[str, Any]:
     }
 
 
-def _strategy_config(config: StrategyConfig | None) -> dict[str, Any] | None:
+def _strategy(
+    config: StrategyConfig | None, runner: StrategyRunner | None
+) -> dict[str, Any] | None:
+    """The symbol's strategy setting (D-47) and what it last did (D-43)."""
     if config is None:
         return None
+    candle = None if runner is None else runner.last_candle
+    signal = None if runner is None else runner.last_signal
     return {
         "name": config.name,
         "interval": config.interval,
         # Strings, like amounts, so a Decimal parameter never becomes a float.
-        "params": {
-            key: fixed_point(value) if isinstance(value, Decimal) else str(value)
-            for key, value in config.params.items()
-        },
-    }
-
-
-def _strategy_state(runner: StrategyRunner | None) -> dict[str, Any] | None:
-    if runner is None:
-        return None
-    candle = runner.last_candle
-    signal = runner.last_signal
-    return {
+        "params": config.params_text(),
         "last_candle": None
         if candle is None
         else {"open_time": iso_utc(candle.open_time / 1000), "close": fixed_point(candle.close)},
@@ -120,5 +114,5 @@ def _strategy_state(runner: StrategyRunner | None) -> dict[str, Any] | None:
             "stop_price": None if signal.stop_price is None else fixed_point(signal.stop_price),
             "outcome": signal.outcome,
         },
-        "stopped": runner.stopped,
+        "stopped": None if runner is None else runner.stopped,
     }

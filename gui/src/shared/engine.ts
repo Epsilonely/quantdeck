@@ -40,13 +40,6 @@ export interface Stop {
   close_position: boolean
 }
 
-// The strategy the engine trades on every symbol (D-43), from engine/config.toml.
-export interface StrategyInfo {
-  name: string
-  interval: string
-  params: Record<string, string>
-}
-
 export type StrategyAction = 'enter_long' | 'enter_short' | 'exit'
 
 export interface StrategySignal {
@@ -56,7 +49,12 @@ export interface StrategySignal {
   outcome: string
 }
 
+// A symbol's strategy (D-47) and what it last did (D-43). Engines before 2026-10-20 had one
+// strategy for every symbol and don't send name, interval, or params here.
 export interface SymbolStrategy {
+  name?: string
+  interval?: string
+  params?: Record<string, string> // every parameter, as text
   last_candle: { open_time: string; close: string } | null // the last candle decided on
   last_signal: StrategySignal | null
   stopped: string | null // why this symbol's strategy stopped
@@ -65,7 +63,8 @@ export interface SymbolStrategy {
 export interface SymbolState {
   symbol: string
   halted: string | null // this symbol's own halt (D-19, D-20)
-  strategy: SymbolStrategy | null // null without a strategy
+  leverage?: number // engines before 2026-10-20 don't send it
+  strategy: SymbolStrategy | null // null without a strategy: no entries
   mark_price: string | null
   position: Position | null
   orders: OpenOrder[]
@@ -75,7 +74,6 @@ export interface SymbolState {
 export interface EngineState {
   network: 'testnet' | 'mainnet'
   started_at?: string // when this engine started; engines before 2026-10-19 don't send it
-  strategy: StrategyInfo | null // null: no entries
   halt: HaltState
   daily_loss: DailyLoss | null
   balances: Record<string, string>

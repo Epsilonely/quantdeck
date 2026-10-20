@@ -6,9 +6,10 @@
   the connection. Connections with an `Origin` header (browsers) are refused at the handshake.
 - After the hello the client gets `welcome`, the recent log records, and the whole state.
   The state is sent again whenever it changes, and log records as they happen.
-- Commands are `{"type": "command", "id": ..., "name": ...}`; the reply is a `result` with
-  the same `id`. Names: `emergency_close` (the kill switch, D-27), `lift_halt`, and
-  `stop_engine` (D-34).
+- Commands are `{"type": "command", "id": ..., "name": ..., "args": {...}}`; the reply is a
+  `result` with the same `id`. Names: `emergency_close` (the kill switch, D-27),
+  `lift_halt`, `stop_engine` (D-34), and `set_symbol` and `remove_symbol` (D-47), the
+  only ones that take `args`.
 
 Message shapes are recorded in `docs/memory-bank/techContext.md`.
 """
@@ -19,7 +20,7 @@ import json
 import logging
 import secrets
 from collections import deque
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -30,8 +31,9 @@ from websockets.asyncio.server import ServerConnection, serve
 from websockets.exceptions import ConnectionClosed
 
 from quantdeck_engine.binance.rest import REQUEST_ERRORS
-from quantdeck_engine.config import Secret
+from quantdeck_engine.config import ConfigError, Secret
 from quantdeck_engine.paths import CONNECTION_FILE, write_atomic
+from quantdeck_engine.symbols import SymbolChangeRefused
 from quantdeck_engine.trading.executor import OrderOutcomeUnclear
 from quantdeck_engine.trading.risk import LiftRefused
 
@@ -61,6 +63,14 @@ class EngineControl(Protocol):
 
     async def stop(self) -> None:
         """Ask the engine to stop once any kill switch in progress is done (D-34)."""
+        ...
+
+    async def set_symbol(self, args: Mapping[str, Any]) -> str:
+        """Add a symbol or change its settings (D-47); returns what was done."""
+        ...
+
+    async def remove_symbol(self, args: Mapping[str, Any]) -> str:
+        """Remove a flat symbol (D-47); returns what was done."""
         ...
 
 
@@ -217,24 +227,31 @@ class ClientServer:
             if not isinstance(data, dict) or data.get("type") != "command":
                 raise ValueError("expected a command")
             command_id = data.get("id")
-            ok, text = await self._run_command(data.get("name"))
+            args = data.get("args", {})
+            if not isinstance(args, dict):
+                raise ValueError("args must be an object")
+            ok, text = await self._run_command(data.get("name"), args)
         except ValueError as e:
             ok, text = False, f"bad message: {e}"
         result = {"type": "result", "id": command_id, "ok": ok, "message": text}
         _offer(client, _dumps(result))
 
-    async def _run_command(self, name: object) -> tuple[bool, str]:
-        commands: dict[object, Callable[[], Awaitable[tuple[bool, str]]]] = {
-            "emergency_close": self._emergency_close,
-            "lift_halt": self._lift_halt,
-            "stop_engine": self._stop_engine,
+    async def _run_command(self, name: object, args: dict[str, Any]) -> tuple[bool, str]:
+        commands: dict[object, Callable[[dict[str, Any]], Awaitable[tuple[bool, str]]]] = {
+            "emergency_close": lambda _: self._emergency_close(),
+            "lift_halt": lambda _: self._lift_halt(),
+            "stop_engine": lambda _: self._stop_engine(),
+            "set_symbol": self._set_symbol,
+            "remove_symbol": self._remove_symbol,
         }
         command = commands.get(name)
         if command is None:
             return False, f"unknown command {name!r}"
         try:
-            return await command()
-        except LiftRefused as e:
+            return await command(args)
+        except (LiftRefused, SymbolChangeRefused, ConfigError) as e:
+            if name in ("set_symbol", "remove_symbol"):
+                logger.warning("%s refused: %s", name, e)
             return False, str(e)
         except (*REQUEST_ERRORS, OrderOutcomeUnclear, OSError) as e:
             logger.error("Command %s failed: %s", name, e)
@@ -255,6 +272,14 @@ class ClientServer:
         logger.warning("Engine stop requested by a client (D-34)")
         await self._engine.stop()
         return True, "engine stopping; exchange-side stops keep protecting open positions"
+
+    async def _set_symbol(self, args: dict[str, Any]) -> tuple[bool, str]:
+        logger.info("Symbol change requested by a client: %s", json.dumps(args))
+        return True, await self._engine.set_symbol(args)
+
+    async def _remove_symbol(self, args: dict[str, Any]) -> tuple[bool, str]:
+        logger.info("Symbol removal requested by a client: %s", json.dumps(args))
+        return True, await self._engine.remove_symbol(args)
 
     # Broadcasting
 

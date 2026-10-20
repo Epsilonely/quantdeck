@@ -37,8 +37,9 @@ TRADING = TradingConfig(
     risk_per_trade_percent=Decimal(1),
     daily_loss_limit_percent=Decimal(3),
     max_notional_multiple=Decimal(2),
-    symbols={"BTCUSDT": SymbolConfig("BTCUSDT", 5)},
 )
+BTC = SymbolConfig("BTCUSDT", 5)
+SYMBOLS = {"BTCUSDT": BTC}
 
 BRACKETS = [
     {
@@ -91,6 +92,11 @@ class FakeExchange:
     available: Decimal = Decimal(5000)
     hedge_mode: bool = False
     margin_asset: str = "USDT"
+    contract_type: str = "PERPETUAL"
+    status: str = "TRADING"
+    # More listed symbols, by name, with their leverage. Flat unless `add_position` opens one;
+    # `exchangeInfo` gives them the same rules as `symbol`.
+    other_symbols: dict[str, int] = field(default_factory=dict)
     incomes: list[dict[str, Any]] = field(default_factory=list)
     klines: list[list[Any]] = field(default_factory=list)  # REST rows, oldest first
     open_orders: list[dict[str, Any]] = field(default_factory=list)
@@ -155,7 +161,9 @@ class FakeExchange:
             case ("GET", "/fapi/v1/accountConfig"):
                 return httpx.Response(200, json={"dualSidePosition": self.hedge_mode})
             case ("GET", "/fapi/v1/exchangeInfo"):
-                return httpx.Response(200, json={"symbols": [self._symbol_info()]})
+                infos = [self._symbol_info(self.symbol)]
+                infos += [self._symbol_info(s) for s in self.other_symbols]
+                return httpx.Response(200, json={"symbols": infos})
             case ("GET", "/fapi/v3/positionRisk"):
                 rows = [self._position()] if self.position_amount != 0 else []
                 rows += self.other_positions
@@ -163,19 +171,20 @@ class FakeExchange:
                     rows = [r for r in rows if r["symbol"] == p["symbol"]]
                 return httpx.Response(200, json=rows)
             case ("GET", "/fapi/v1/premiumIndex"):
-                price = {"symbol": self.symbol, "markPrice": str(self.mark)}
+                price = {"symbol": p["symbol"], "markPrice": str(self.mark)}
                 return httpx.Response(200, json=price)
             case ("GET", "/fapi/v1/symbolConfig"):
+                other = p["symbol"] != self.symbol
                 config = {
-                    "symbol": self.symbol,
-                    "marginType": self.margin_type,
+                    "symbol": p["symbol"],
+                    "marginType": "ISOLATED" if other else self.margin_type,
                     "isAutoAddMargin": False,
-                    "leverage": self.leverage,
+                    "leverage": self.other_symbols[p["symbol"]] if other else self.leverage,
                     "maxNotionalValue": "1000000",
                 }
                 return httpx.Response(200, json=[config])
             case ("GET", "/fapi/v1/leverageBracket"):
-                return httpx.Response(200, json={"symbol": self.symbol, "brackets": BRACKETS})
+                return httpx.Response(200, json={"symbol": p["symbol"], "brackets": BRACKETS})
             case ("GET", "/fapi/v3/balance"):
                 balance = {
                     "asset": "USDT",
@@ -229,8 +238,11 @@ class FakeExchange:
                 self.margin_type = p["marginType"]
                 return httpx.Response(200, json={"code": 200, "msg": "success"})
             case ("POST", "/fapi/v1/leverage"):
-                self.leverage = int(p["leverage"])
-                return httpx.Response(200, json={"leverage": self.leverage})
+                if p["symbol"] == self.symbol:
+                    self.leverage = int(p["leverage"])
+                else:
+                    self.other_symbols[p["symbol"]] = int(p["leverage"])
+                return httpx.Response(200, json={"leverage": int(p["leverage"])})
         raise AssertionError(f"unexpected request {key}")
 
     def _market_order(self, p: dict[str, str]) -> httpx.Response:
@@ -260,12 +272,15 @@ class FakeExchange:
         self.orders[p["newClientOrderId"]] = order
         return httpx.Response(200, json=order)
 
-    def _symbol_info(self) -> dict[str, Any]:
+    def _symbol_info(self, symbol: str) -> dict[str, Any]:
         """The same rules as `RULES`."""
         lot = {"stepSize": "0.001", "minQty": "0.001", "maxQty": "120"}
+        own = symbol == self.symbol
         return {
-            "symbol": self.symbol,
-            "marginAsset": self.margin_asset,
+            "symbol": symbol,
+            "status": self.status if own else "TRADING",
+            "contractType": self.contract_type if own else "PERPETUAL",
+            "marginAsset": self.margin_asset if own else "USDT",
             "filters": [
                 {"filterType": "PRICE_FILTER", "tickSize": "0.1"},
                 {"filterType": "LOT_SIZE", **lot},
@@ -331,7 +346,7 @@ def make_trader(exchange: FakeExchange, gate: EntryGate | None = None) -> Symbol
     client = exchange.client()
     return SymbolTrader(
         client,
-        TRADING.symbols["BTCUSDT"],
+        BTC,
         TRADING,
         RULES,
         BaseBalance(client, "USDT"),

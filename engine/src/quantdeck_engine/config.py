@@ -4,12 +4,17 @@ Two sources, both read only here:
 
 - `Settings`: secrets and environment from the repo-root `.env`, overridden by real
   environment variables. The rest of the engine never reads `os.environ` itself.
-- `TradingConfig`: strategy and risk settings from `engine/config.toml` (D-28). Each risk
-  value has a hard bound in code, so a typo stops the engine instead of trading on it.
+- `TradingConfig`: risk settings from `engine/config.toml` (D-28). Each risk value has a
+  hard bound in code, so a typo stops the engine instead of trading on it.
+
+The symbols and their strategies live in `engine/state/symbols.json`, which only the engine
+writes (`symbols.py`, D-47). The checks here are shared with it, so a client's change meets
+the same bounds as a hand-edited file.
 """
 
 import logging
 import os
+import re
 import tomllib
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -22,7 +27,12 @@ from dotenv import dotenv_values
 from quantdeck_engine.binance.streams import INTERVAL_MS
 from quantdeck_engine.paths import CONFIG_FILE, ENV_FILE
 from quantdeck_engine.strategy.base import Strategy
-from quantdeck_engine.strategy.registry import StrategyError, make_strategy
+from quantdeck_engine.strategy.registry import (
+    StrategyError,
+    make_strategy,
+    parameter_text,
+    parameters_of,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +43,10 @@ MAX_NOTIONAL_MULTIPLE = Decimal(5)
 MAX_LEVERAGE = 10
 # Candles a strategy may need before it decides (D-43); the feed loads them in one request.
 MAX_STRATEGY_WARMUP = 1000
+# Symbols the engine trades at once (D-47). Each adds streams and REST reads.
+MAX_SYMBOLS = 10
+# Binance USDⓈ-M perpetual symbols, e.g. BTCUSDT or 1000PEPEUSDT. Also a file name part.
+SYMBOL_PATTERN = re.compile(r"[A-Z0-9]{2,30}")
 
 
 class ConfigError(Exception):
@@ -147,32 +161,45 @@ def _non_blank(raw: str | None) -> str | None:
 
 
 @dataclass(frozen=True)
-class SymbolConfig:
-    symbol: str
-    leverage: int  # margin type is always isolated (D-16)
-
-
-@dataclass(frozen=True)
 class StrategyConfig:
-    """The strategy `run` trades on every configured symbol (D-43)."""
+    """A symbol's strategy (D-43, D-47). Build it with `strategy_config`, which checks it."""
 
     name: str
     interval: str
-    params: Mapping[str, object]  # as config.toml gives them; `make_strategy` checks them
+    # Every parameter, defaults included, typed as the strategy takes them.
+    params: Mapping[str, object]
 
     def build(self) -> Strategy:
         """A new instance: each symbol gets its own."""
         return make_strategy(self.name, self.interval, self.params)
 
+    def params_text(self) -> dict[str, str]:
+        """The parameters as text, as `symbols.json` and clients carry them (D-33)."""
+        return {key: parameter_text(value) for key, value in self.params.items()}
+
     def describe(self) -> str:
         """E.g. `donchian 4h (entry_period=55, exit_period=20)`."""
-        params = ", ".join(f"{key}={value}" for key, value in self.params.items())
+        params = ", ".join(f"{key}={value}" for key, value in self.params_text().items())
         return f"{self.name} {self.interval}" + (f" ({params})" if params else "")
 
 
 @dataclass(frozen=True)
+class SymbolConfig:
+    """A symbol the engine trades: its leverage and strategy (D-47)."""
+
+    symbol: str
+    leverage: int  # margin type is always isolated (D-16)
+    strategy: StrategyConfig | None = None  # None: no entries on this symbol
+
+    def describe(self) -> str:
+        """E.g. `2x, donchian 4h (entry_period=55, exit_period=20)`."""
+        strategy = "no strategy" if self.strategy is None else self.strategy.describe()
+        return f"{self.leverage}x, {strategy}"
+
+
+@dataclass(frozen=True)
 class TradingConfig:
-    """Risk, per-symbol, and strategy settings from `engine/config.toml`.
+    """Risk settings from `engine/config.toml`.
 
     Percentages are of the day's base balance: the wallet balance at 00:00 UTC (D-23).
     """
@@ -180,8 +207,9 @@ class TradingConfig:
     risk_per_trade_percent: Decimal  # D-22, D-23
     daily_loss_limit_percent: Decimal  # D-24
     max_notional_multiple: Decimal  # D-25: notional <= this x base balance
-    symbols: Mapping[str, SymbolConfig]
-    strategy: StrategyConfig | None = None  # None: `run` places no entries (D-43)
+    # `[symbols]` with `[strategy]` on each: what `symbols.json` starts from when it doesn't
+    # exist yet (D-47). None when config.toml has neither table.
+    initial_symbols: Mapping[str, SymbolConfig] | None = None
 
 
 def load_trading_config(path: Path = CONFIG_FILE) -> TradingConfig:
@@ -197,29 +225,14 @@ def load_trading_config(path: Path = CONFIG_FILE) -> TradingConfig:
 
 
 def parse_trading_config(data: Mapping[str, Any]) -> TradingConfig:
-    _reject_unknown(data, {"risk", "symbols", "strategy"}, "top level")
+    reject_unknown(data, {"risk", "symbols", "strategy"}, "top level")
 
     risk = _table(data, "risk")
-    _reject_unknown(
+    reject_unknown(
         risk,
         {"risk_per_trade_percent", "daily_loss_limit_percent", "max_notional_multiple"},
         "[risk]",
     )
-
-    symbols_table = _table(data, "symbols")
-    if not symbols_table:
-        raise ConfigError("[symbols] must list at least one symbol, e.g. [symbols.BTCUSDT]")
-    symbols: dict[str, SymbolConfig] = {}
-    for name, table in symbols_table.items():
-        where = f"[symbols.{name}]"
-        if not isinstance(table, Mapping):
-            raise ConfigError(f"{where} must be a table")
-        if name != name.upper():
-            raise ConfigError(f"{where}: symbol names are upper case, e.g. BTCUSDT")
-        _reject_unknown(table, {"leverage"}, where)
-        symbols[name] = SymbolConfig(
-            symbol=name, leverage=_bounded_int(table, "leverage", 1, MAX_LEVERAGE, where)
-        )
 
     return TradingConfig(
         risk_per_trade_percent=_bounded_decimal(
@@ -231,9 +244,36 @@ def parse_trading_config(data: Mapping[str, Any]) -> TradingConfig:
         max_notional_multiple=_bounded_decimal(
             risk, "max_notional_multiple", MAX_NOTIONAL_MULTIPLE, "[risk]"
         ),
-        symbols=symbols,
-        strategy=_parse_strategy(data.get("strategy")),
+        initial_symbols=_parse_initial_symbols(data),
     )
+
+
+def _parse_initial_symbols(data: Mapping[str, Any]) -> dict[str, SymbolConfig] | None:
+    """`[symbols]` with the one `[strategy]` on each (D-43), the starting point of
+    `symbols.json` (D-47)."""
+    if "symbols" not in data and "strategy" not in data:
+        return None
+    strategy = _parse_strategy(data.get("strategy"))
+    symbols_table = data.get("symbols", {})
+    if not isinstance(symbols_table, Mapping):
+        raise ConfigError("[symbols] must be a table")
+    if len(symbols_table) > MAX_SYMBOLS:
+        raise ConfigError(
+            f"[symbols] lists {len(symbols_table)} symbols; the most is {MAX_SYMBOLS}"
+        )
+    symbols: dict[str, SymbolConfig] = {}
+    for name, table in symbols_table.items():
+        where = f"[symbols.{name}]"
+        check_symbol_name(name, where)
+        if not isinstance(table, Mapping):
+            raise ConfigError(f"{where} must be a table")
+        reject_unknown(table, {"leverage"}, where)
+        symbols[name] = SymbolConfig(
+            symbol=name,
+            leverage=_bounded_int(table, "leverage", 1, MAX_LEVERAGE, where),
+            strategy=strategy,
+        )
+    return symbols
 
 
 def _parse_strategy(table: object) -> StrategyConfig | None:
@@ -242,23 +282,34 @@ def _parse_strategy(table: object) -> StrategyConfig | None:
     where = "[strategy]"
     if not isinstance(table, Mapping):
         raise ConfigError(f"{where} must be a table")
-    _reject_unknown(table, {"name", "interval", "params"}, where)
-    name = table.get("name")
+    reject_unknown(table, {"name", "interval", "params"}, where)
+    params = table.get("params", {})
+    if not isinstance(params, Mapping):
+        raise ConfigError("[strategy.params] must be a table")
+    return strategy_config(table.get("name"), table.get("interval"), params, where)
+
+
+def strategy_config(
+    name: object, interval: object, params: Mapping[str, object], where: str
+) -> StrategyConfig:
+    """A strategy setting the engine can trade, with every parameter filled in.
+
+    `params` are typed values (ints, Decimals, bools), as `config.toml` gives them or
+    `parse_parameter_texts` returns them. Raises `ConfigError` for an unknown strategy or
+    interval, a bad parameter, a warm-up beyond the bound, or limit entries (D-45).
+    """
     if not isinstance(name, str):
         raise ConfigError(f"{where} name must be a string, got {name!r}")
-    interval = table.get("interval")
     if not isinstance(interval, str) or interval not in INTERVAL_MS:
         raise ConfigError(
             f"{where} interval must be one of {', '.join(INTERVAL_MS)}, got {interval!r}"
         )
-    params = table.get("params", {})
-    if not isinstance(params, Mapping):
-        raise ConfigError("[strategy.params] must be a table")
-    config = StrategyConfig(name=name, interval=interval, params=dict(params))
     try:
-        strategy = config.build()
+        strategy = make_strategy(name, interval, params)
     except StrategyError as e:
         raise ConfigError(f"{where} {e}") from None
+    # Filled in, so the setting doesn't change if a default changes in code.
+    config = StrategyConfig(name=name, interval=interval, params=parameters_of(strategy))
     if strategy.warmup > MAX_STRATEGY_WARMUP:
         raise ConfigError(
             f"{where} {config.describe()} needs {strategy.warmup} warm-up candles; "
@@ -267,10 +318,21 @@ def _parse_strategy(table: object) -> StrategyConfig | None:
     if strategy.limit_entries:
         raise ConfigError(
             f"{where} {config.describe()} enters with limit orders, which the engine can't "
-            "place yet; leave it out of config.toml and run it with `quantdeck-engine "
-            "backtest` only (D-45)"
+            "place yet; run it with `quantdeck-engine backtest` only (D-45)"
         )
     return config
+
+
+def check_symbol_name(name: object, where: str) -> str:
+    if not isinstance(name, str) or not SYMBOL_PATTERN.fullmatch(name):
+        raise ConfigError(
+            f"{where}: symbol names are upper case letters and digits, e.g. BTCUSDT; got {name!r}"
+        )
+    return name
+
+
+def check_leverage(value: object, where: str) -> int:
+    return _bounded_int({"leverage": value}, "leverage", 1, MAX_LEVERAGE, where)
 
 
 def _table(data: Mapping[str, Any], key: str) -> Mapping[str, Any]:
@@ -280,7 +342,7 @@ def _table(data: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     return value
 
 
-def _reject_unknown(table: Mapping[str, Any], known: set[str], where: str) -> None:
+def reject_unknown(table: Mapping[str, Any], known: set[str], where: str) -> None:
     # A misspelled key would otherwise be ignored silently.
     unknown = sorted(set(table) - known)
     if unknown:

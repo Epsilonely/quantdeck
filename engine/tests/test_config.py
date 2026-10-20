@@ -8,6 +8,7 @@ from quantdeck_engine.config import (
     MAINNET,
     TESTNET,
     ConfigError,
+    StrategyConfig,
     load_settings,
     load_trading_config,
     parse_settings,
@@ -151,9 +152,9 @@ def test_example_config_is_valid() -> None:
     assert config.risk_per_trade_percent == Decimal("1")
     assert config.daily_loss_limit_percent == Decimal("3")
     assert config.max_notional_multiple == Decimal("2")
-    assert config.symbols["BTCUSDT"].leverage == 2
-    assert config.strategy is not None
-    assert config.strategy.describe() == "donchian 4h (entry_period=55, exit_period=20)"
+    assert config.initial_symbols is not None
+    (btc,) = config.initial_symbols.values()
+    assert btc.describe() == "2x, donchian 4h (entry_period=55, exit_period=20)"
 
 
 def test_decimals_stay_exact(tmp_path: Path) -> None:
@@ -222,9 +223,17 @@ def test_unknown_keys_are_rejected(tmp_path: Path, old: str, new: str, where: st
         load_trading_config(write_config(tmp_path, VALID_TOML.replace(old, new)))
 
 
-def test_at_least_one_symbol_is_required(tmp_path: Path) -> None:
+def test_symbols_are_optional(tmp_path: Path) -> None:
+    # They only start symbols.json (D-47).
+    text = VALID_TOML.replace("[symbols.BTCUSDT]\nleverage = 5\n", "")
+    assert load_trading_config(write_config(tmp_path, text)).initial_symbols is None
     text = VALID_TOML.replace("[symbols.BTCUSDT]\nleverage = 5\n", "[symbols]\n")
-    with pytest.raises(ConfigError, match="at least one symbol"):
+    assert load_trading_config(write_config(tmp_path, text)).initial_symbols == {}
+
+
+def test_too_many_symbols_are_rejected(tmp_path: Path) -> None:
+    text = VALID_TOML + "".join(f"[symbols.COIN{i}USDT]\nleverage = 2\n" for i in range(10))
+    with pytest.raises(ConfigError, match="the most is 10"):
         load_trading_config(write_config(tmp_path, text))
 
 
@@ -251,23 +260,31 @@ exit_period = 20
 """
 
 
+def strategy_of(path: Path) -> StrategyConfig | None:
+    initial = load_trading_config(path).initial_symbols
+    assert initial is not None
+    return initial["BTCUSDT"].strategy
+
+
 def test_no_strategy_table_means_no_strategy(tmp_path: Path) -> None:
-    assert load_trading_config(write_config(tmp_path, VALID_TOML)).strategy is None
+    assert strategy_of(write_config(tmp_path, VALID_TOML)) is None
 
 
 def test_strategy_table_builds_a_new_instance_each_time(tmp_path: Path) -> None:
-    config = load_trading_config(write_config(tmp_path, VALID_TOML + STRATEGY_TOML))
-    assert config.strategy is not None
-    first, second = config.strategy.build(), config.strategy.build()
+    strategy = strategy_of(write_config(tmp_path, VALID_TOML + STRATEGY_TOML))
+    assert strategy is not None
+    first, second = strategy.build(), strategy.build()
     assert first is not second
     assert (first.interval, first.warmup) == ("4h", 56)
 
 
-def test_strategy_params_may_be_left_out(tmp_path: Path) -> None:
+def test_left_out_params_are_filled_with_defaults(tmp_path: Path) -> None:
+    # So a default changed in code later never changes a saved setting (D-47).
     text = VALID_TOML + STRATEGY_TOML.split("[strategy.params]")[0]
-    config = load_trading_config(write_config(tmp_path, text))
-    assert config.strategy is not None
-    assert config.strategy.describe() == "donchian 4h"
+    strategy = strategy_of(write_config(tmp_path, text))
+    assert strategy is not None
+    assert strategy.params == {"entry_period": 20, "exit_period": 10}
+    assert strategy.describe() == "donchian 4h (entry_period=20, exit_period=10)"
 
 
 @pytest.mark.parametrize(
@@ -304,7 +321,7 @@ def test_a_strategy_with_limit_entries_is_refused(tmp_path: Path, name: str, par
 def test_the_market_entry_settings_of_limit_strategies_load(tmp_path: Path) -> None:
     text = VALID_TOML + '[strategy]\nname = "trend-pullback"\ninterval = "1h"\n'
     text += "[strategy.params]\nlimit_atr = 0\n"
-    assert load_trading_config(write_config(tmp_path, text)).strategy is not None
+    assert strategy_of(write_config(tmp_path, text)) is not None
 
 
 def test_only_limit_settings_use_limit_entries() -> None:

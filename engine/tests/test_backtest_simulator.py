@@ -39,7 +39,6 @@ TRADING = TradingConfig(
     risk_per_trade_percent=Decimal(1),
     daily_loss_limit_percent=Decimal(3),
     max_notional_multiple=Decimal(2),
-    symbols={},
 )
 FREE = Costs(Decimal(0), Decimal(0), Decimal(0), Decimal(0))
 BALANCE = Decimal(10000)

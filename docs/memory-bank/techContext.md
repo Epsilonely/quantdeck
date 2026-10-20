@@ -8,10 +8,10 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 |---|---|---|
 | GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the commands; starts the engine when none is running (D-34); light/dark theme (D-35) |
 | Charts | lightweight-charts | Planned, not installed |
-| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch, `run` (D-31) with an optional strategy (D-43) serving clients (D-32, D-33), backtests (D-37 to D-40, D-45) |
+| Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch, `run` (D-31) with a strategy per symbol (D-43, D-47) serving clients (D-32, D-33), backtests (D-37 to D-40, D-45) |
 | Binance client | In-house, asyncio on httpx + websockets (D-10) | REST including orders and algo orders, kline stream, user data stream |
 | Discord bot | Undecided | Not started |
-| Storage | SQLite (trades, orders, logs); historical candles as Binance's downloaded zip files in `engine/data/`, Parquet deferred (D-38) | Planned; diagnostic logs go to files (D-12), and the kill-switch halt record is `engine/state/halt.json` (D-29) |
+| Storage | SQLite (trades, orders, logs); historical candles as Binance's downloaded zip files in `engine/data/`, Parquet deferred (D-38) | Planned; diagnostic logs go to files (D-12), the kill-switch halt record is `engine/state/halt.json` (D-29), and the symbols with their settings are `engine/state/symbols.json` (D-47) |
 | Engine ↔ clients | WebSocket on `127.0.0.1`, token from a connection file (D-32) | Engine server and GUI client done |
 | Exchange | Binance USDⓈ-M Futures, HMAC keys (D-11) | Testnet; orders placed only by `trial` so far |
 
@@ -34,7 +34,7 @@ quantdeck/
 
 ## Environment variables
 
-Defined in the root `.env` (gitignored); names are listed in `.env.example`. Never record values here. Real environment variables override `.env`. The engine reads them only through `quantdeck_engine.config`. Strategy and risk settings live in `engine/config.toml` instead (D-28): gitignored, created by copying `engine/config.example.toml`. `check` doesn't need it; `trial` does.
+Defined in the root `.env` (gitignored); names are listed in `.env.example`. Never record values here. Real environment variables override `.env`. The engine reads them only through `quantdeck_engine.config`. Risk settings live in `engine/config.toml` instead (D-28): gitignored, created by copying `engine/config.example.toml`. `check` doesn't need it; `trial` does. The symbols, their leverage, and their strategies live in `engine/state/symbols.json`, written only by the engine; the first `run` or `trial` creates it from `config.toml`'s `[symbols]` and `[strategy]` (D-47).
 
 | Variable | Used by | Notes |
 |---|---|---|
@@ -64,7 +64,7 @@ Every message is a JSON object with a `type`. Amounts are strings in fixed-point
 | engine → client | `welcome` | `protocol` |
 | engine → client | `logs` | `records`: list of `{time, level, logger, message}`. First the backlog (up to 200, INFO and above), then each new record as it is logged |
 | engine → client | `state` | `state`: the whole state (below). Sent after `welcome`, then whenever it changes (checked every 0.25 s) |
-| client → engine | `command` | `id` (any JSON value, echoed back), `name`: `emergency_close`, `lift_halt`, or `stop_engine` |
+| client → engine | `command` | `id` (any JSON value, echoed back), `name`: `emergency_close`, `lift_halt`, `stop_engine`, `set_symbol`, or `remove_symbol`; `args` (an object, optional, used by the last two) |
 | engine → client | `result` | `id`, `ok` (bool), `message` (text for the user) |
 
 After `hello` the first three messages are `welcome`, `logs`, `state`, in that order.
@@ -74,12 +74,13 @@ After `hello` the first three messages are `welcome`, `logs`, `state`, in that o
 ```
 network      "testnet" | "mainnet"
 started_at   when this engine started; the GUI shows the engine's uptime from it
-strategy     null without a [strategy] in config.toml, else {name, interval, params: {name: str}}
 halt         {halted: bool, reason: str | null, since: str | null}
 daily_loss   null until the first check, then {asset, base, loss, limit}
 balances     {asset: wallet balance}, nonzero only
 symbols      [{symbol, halted: str | null (this symbol's own halt, D-19/D-20),
-               strategy: null | {last_candle: null | {open_time, close},
+               leverage: int,
+               strategy: null | {name, interval, params: {name: str},
+                                 last_candle: null | {open_time, close},
                                  last_signal: null | {candle_open_time, action, stop_price: str | null, outcome},
                                  stopped: str | null},
                mark_price: str | null,
@@ -88,9 +89,11 @@ symbols      [{symbol, halted: str | null (this symbol's own halt, D-19/D-20),
                stops:  [{client_algo_id, side, type, trigger_price, close_position}]}]
 ```
 
-Strategy fields (D-43): parameter values are strings, like amounts. `action` is `enter_long`, `enter_short`, or `exit`; `outcome` is text for the user, and `stopped` says why this symbol's strategy stopped. These fields and `started_at` were added without changing the protocol version, so a client must accept them missing from an older engine.
+Strategy fields (D-43, D-47): `params` holds every parameter, as strings like amounts. `action` is `enter_long`, `enter_short`, or `exit`; `outcome` is text for the user, and `stopped` says why this symbol's strategy stopped. These fields, `leverage`, and `started_at` were added without changing the protocol version, so a client must accept them missing from an older engine. Engines before 2026-10-20 sent one top-level `strategy` instead of the per-symbol `name`, `interval`, and `params`.
 
 **Commands.** `emergency_close` fires the kill switch (D-27); `ok` is false if a symbol couldn't be flattened. `lift_halt` answers `ok: true` with "halt lifted" or "not halted", and `ok: false` while today's loss is still at the limit. `stop_engine` (D-34) answers `ok: true` once any kill switch in progress has finished; the engine then closes every connection with code 1001 and deletes the connection file. The process itself exits a few seconds later, after its Binance streams close.
+
+`set_symbol` (D-47) takes `args` `{symbol, leverage: int, strategy: null | {name, interval, params: {name: str}}}`: a new symbol is added, a known one changed; left-out parameters take their defaults. It answers `ok: true` with what it did (`ETHUSDT added: 2x, no strategy`, `... changed: ...`, or `... unchanged`), and `ok: false` with the reason when a value is out of bounds, the symbol can't be traded, or it has an open position. `remove_symbol` takes `{symbol}` and is refused the same way while the symbol has a position. A refused or failed change has changed nothing.
 
 A client whose unsent messages pile up past 1000 is disconnected.
 

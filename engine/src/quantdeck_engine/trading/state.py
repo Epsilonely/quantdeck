@@ -80,6 +80,14 @@ class AccountState:
         self.symbols = {s: SymbolState(s) for s in symbols}
         self.wallet_balances: dict[str, Decimal] = {}
 
+    def add_symbol(self, symbol: str) -> None:
+        """Track a symbol added while running (D-47). It starts flat with no orders, as the
+        engine adds only a flat symbol and cancels its leftovers; events fill in the rest."""
+        self.symbols.setdefault(symbol, SymbolState(symbol))
+
+    def remove_symbol(self, symbol: str) -> None:
+        self.symbols.pop(symbol, None)
+
     def apply(self, event: object) -> list[StateChange]:
         """Apply one user data event; return the position changes it caused."""
         if isinstance(event, OrderUpdate):
@@ -202,7 +210,8 @@ async def resync(client: BinanceRestClient, state: AccountState) -> list[StateCh
     positions = await client.positions()
     open_orders: list[dict[str, Any]] = []
     open_algo_orders: list[dict[str, Any]] = []
-    for symbol in state.symbols:
+    # A copy: a client can add or remove a symbol during the reads (D-47).
+    for symbol in list(state.symbols):
         # Per symbol: weight 1 each, against 40 for all symbols at once.
         open_orders.extend(await client.open_orders(symbol))
         open_algo_orders.extend(await client.open_algo_orders(symbol))

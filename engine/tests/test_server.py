@@ -1,7 +1,7 @@
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,7 +11,9 @@ import pytest
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed, InvalidStatus
 
+from quantdeck_engine.config import ConfigError
 from quantdeck_engine.server import PROTOCOL_VERSION, ClientServer, ConnectionFile, LogBuffer
+from quantdeck_engine.symbols import SymbolChangeRefused
 from quantdeck_engine.trading.risk import LiftRefused
 
 
@@ -21,6 +23,7 @@ class FakeEngine:
         self.closes = 0
         self.lift_error: Exception | None = None
         self.stopped = asyncio.Event()
+        self.symbol_args: list[dict[str, Any]] = []
 
     def snapshot(self) -> dict[str, Any]:
         return dict(self.state)
@@ -39,6 +42,16 @@ class FakeEngine:
 
     async def stop(self) -> None:
         self.stopped.set()
+
+    async def set_symbol(self, args: Mapping[str, Any]) -> str:
+        self.symbol_args.append(dict(args))
+        if args.get("leverage") == 11:
+            raise ConfigError("set_symbol: leverage must be between 1 and 10, got 11")
+        return f"{args['symbol']} added"
+
+    async def remove_symbol(self, args: Mapping[str, Any]) -> str:
+        self.symbol_args.append(dict(args))
+        raise SymbolChangeRefused(f"{args['symbol']} has an open LONG position")
 
 
 @dataclass
@@ -94,8 +107,13 @@ async def receive(ws: ClientConnection, kind: str) -> dict[str, Any]:
                 return message
 
 
-async def command(ws: ClientConnection, name: str, command_id: object = 1) -> dict[str, Any]:
-    await ws.send(json.dumps({"type": "command", "id": command_id, "name": name}))
+async def command(
+    ws: ClientConnection, name: str, command_id: object = 1, args: object = None
+) -> dict[str, Any]:
+    message = {"type": "command", "id": command_id, "name": name}
+    if args is not None:
+        message["args"] = args
+    await ws.send(json.dumps(message))
     return await receive(ws, "result")
 
 
@@ -219,3 +237,32 @@ async def test_unknown_command_and_bad_message(served: Served) -> None:
         result = await receive(ws, "result")
     assert (result["id"], result["ok"]) == (None, False)
     assert served.engine.closes == 0
+
+
+# Symbol commands (D-47)
+
+
+async def test_set_symbol_passes_its_arguments(served: Served) -> None:
+    args = {"symbol": "ETHUSDT", "leverage": 2, "strategy": None}
+    async with await hello(served.file) as ws:
+        result = await command(ws, "set_symbol", 4, args)
+    assert (result["id"], result["ok"], result["message"]) == (4, True, "ETHUSDT added")
+    assert served.engine.symbol_args == [args]
+
+
+async def test_refused_symbol_changes_report_why(served: Served) -> None:
+    async with await hello(served.file) as ws:
+        out_of_bounds = await command(ws, "set_symbol", 5, {"symbol": "ETHUSDT", "leverage": 11})
+        open_position = await command(ws, "remove_symbol", 6, {"symbol": "BTCUSDT"})
+    assert out_of_bounds["ok"] is False
+    assert "leverage must be between 1 and 10" in out_of_bounds["message"]
+    assert open_position["ok"] is False
+    assert "open LONG position" in open_position["message"]
+
+
+async def test_args_must_be_an_object(served: Served) -> None:
+    async with await hello(served.file) as ws:
+        result = await command(ws, "set_symbol", 7, ["ETHUSDT"])
+    assert (result["id"], result["ok"]) == (7, False)
+    assert "args must be an object" in result["message"]
+    assert served.engine.symbol_args == []

@@ -14,7 +14,8 @@ carries out its entry or exit through the trader (D-17, D-18, D-22).
 
 Every decision is appended to a CSV record, which a backtest replay of the same candles is
 checked against (D-36, D-38). A restart inside a candle decides on that candle again, so it
-can appear twice.
+can appear twice. Each strategy setting has its own file, named after the strategy and
+every parameter, so a replay never mixes two settings (D-47).
 """
 
 import asyncio
@@ -30,6 +31,7 @@ from typing import Protocol
 
 from quantdeck_engine.binance.rest import REQUEST_ERRORS
 from quantdeck_engine.binance.streams import Kline
+from quantdeck_engine.config import StrategyConfig
 from quantdeck_engine.strategy.base import Action, Enter, Exit, Strategy
 from quantdeck_engine.times import iso_utc, utc_text
 from quantdeck_engine.trading.executor import OrderOutcomeUnclear, SymbolTrader, TradingHalted
@@ -57,6 +59,12 @@ def action_name(action: Action) -> str:
     if isinstance(action, Exit):
         return "exit"
     return f"enter_{action.side.lower()}"
+
+
+def forward_record_path(directory: Path, symbol: str, strategy: StrategyConfig) -> Path:
+    """E.g. `BTCUSDT_4h_donchian_entry_period=55_exit_period=20.csv` (D-47)."""
+    params = "".join(f"_{key}={value}" for key, value in strategy.params_text().items())
+    return directory / f"{symbol}_{strategy.interval}_{strategy.name}{params}.csv"
 
 
 @dataclass(frozen=True)

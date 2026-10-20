@@ -104,6 +104,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Decision:** Engine state, limits, and streams are keyed by symbol, so adding symbols is a configuration change. The engine runs a single symbol until the first strategy has been forward-tested on testnet. The symbol itself is chosen with the first strategy.
 - **Why:** Hard-coding one symbol would force a restructure later, while running several from the start would need account-wide exposure limits and margin allocation before anything else works.
 - **Date:** 2026-10-03
+- **Note (2026-10-20):** Symbols are now added and removed while the engine runs (D-47). The entry gate counts every open position (D-24 note of 2026-10-19).
 
 ## D-16 Isolated margin, applied by the engine at startup
 
@@ -213,6 +214,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Why:** Per-symbol tables (D-15, D-16) are awkward as environment variables, and `tomllib` adds no dependency. Keeping the real file out of git keeps the user's values out of the public repo, as with `.env`. The bounds catch typos such as `1` for `0.01`, the same way an invalid `BINANCE_TESTNET` already stops the engine; raising one takes a code change.
 - **Alternatives:** More `.env` variables; SQLite edited from the GUI (premature without a GUI).
 - **Date:** 2026-10-10
+- **Note (2026-10-20):** Per-symbol leverage and the strategy moved to the engine-owned `engine/state/symbols.json` (D-47), checked against the same bounds. `config.toml` keeps the risk values; its `[symbols]` and `[strategy]` only start that file.
 
 ## D-29 The kill-switch halt record is a JSON file in `engine/state/`
 
@@ -277,6 +279,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - The client server's failures are logged and don't stop the engine; it keeps protecting positions without clients.
   - Message shapes are in `techContext.md`.
 - **Note (2026-10-16):** A third command, `stop_engine`, was added with D-34.
+- **Note (2026-10-20):** Commands may carry an `args` object; `set_symbol` and `remove_symbol` came with D-47. Clients get each symbol's settings in the state.
 - **Date:** 2026-10-16
 
 ## D-34 The GUI starts the engine when none is running and can stop it
@@ -399,6 +402,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Limitations:** A restart inside a candle repeats that candle's decision and records it twice; if a stop closed that candle's entry before the restart, the repeat enters again, which the backtest wouldn't. An entry carried out at startup fills at the current price, not at the candle's next open (D-40).
 - **Alternatives:** per-symbol strategy tables; ignoring the last warm-up candle's signal (loses exits across restarts); stopping the engine on a strategy error.
 - **Date:** 2026-10-19
+- **Note (2026-10-20):** Superseded in part by D-47: each symbol has its own strategy, kept in `symbols.json` and changed by clients while the engine runs, and the record is named after the strategy setting. The warm-up, deciding at startup, the record's contents, and the failure handling stand.
 
 ## D-44 15m candidates: the move fade is dropped; the daily-open breakout passed its holdout only nominally and stays backtest-only
 
@@ -450,6 +454,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Later, if a limit-entry strategy survives (out of scope here):** the engine's limit orders (`GTX`, expired by `GTD` or cancelled by the engine at the next close), partial fills, and counting a pending entry's risk at the entry gate (D-24).
 - **Alternatives:** Changing only the fee (what D-44 measured); an order that rests until filled or replaced; filling on a touch; 1m candles to order events within a candle.
 - **Note (2026-10-19):** No limit-entry strategy survived the first test of this model (D-46), so the engine work above waits.
+- **Note (2026-10-20):** Since D-47 the same check refuses such a strategy in `symbols.json` at startup and in a client's `set_symbol`.
 - **Date:** 2026-10-19
 
 ## D-46 Limit-entry candidates: neither family passed, so no limit-entry strategy goes forward
@@ -468,3 +473,26 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **By-product, not a candidate:** the trend pullback's market controls were positive on every coin in both periods, weakly in the holdout. They are a 4h trend follower, like the strategy already in the forward test (D-41). They weren't candidates here, and the holdout has now been seen, so a test of them would count as one more on the same history.
 - **Revisit:** Limit entries only with a signal that has an edge before costs, or if slippage on a larger account makes market entries costly.
 - **Date:** 2026-10-19
+
+## D-47 Each symbol's leverage and strategy live in an engine-owned file and change while the engine runs
+
+- **Decision:**
+  - **Settings file:** each symbol's leverage and strategy (name, interval, every parameter) live in `engine/state/symbols.json` (gitignored), which only the engine writes, atomically like the halt record (D-29). Risk values stay in the hand-edited `config.toml` (D-28). The first `run` or `trial` without the file creates it from `config.toml`'s `[symbols]` and `[strategy]`, the strategy on every symbol as D-43 had it; after that those tables are ignored with a WARNING. A file that can't be read or holds a value out of bounds stops the engine at startup. Parameters are saved with their defaults filled in, as strings.
+  - **Commands:** clients send `set_symbol` (add a symbol, or change its leverage and strategy) and `remove_symbol`, with an `args` object (GitHub issue #18). The engine checks every value against the same bounds as `config.toml`: leverage 1–10, a registered strategy and interval, the warm-up bound, no limit entries (D-45). It also refuses a symbol that isn't a trading perpetual margined in USDT, an 11th symbol, and any change to a symbol with an open position. The protocol version stays 1.
+  - **Applying:** one change at a time, holding the symbol's order lock while the exchange shows it flat, so no entry can run between the check and the change. The order is checks, then the exchange (margin type and leverage) and the strategy's warm-up, then saving the file, then the engine's state. If the save fails, the leverage is put back and nothing else has changed. Only the changed symbol is touched: its trader, strategy, account state, and kill-switch coverage; the display-only mark price stream resubscribes. A change of leverage alone keeps the running strategy.
+  - **New strategy:** a strategy set on a symbol warms up and decides on the latest closed candle at once, as at startup (D-43), so an entry signal there fills at the current price.
+  - **Forward record:** one CSV per symbol and strategy setting, named after the strategy and every parameter (`BTCUSDT_4h_donchian_entry_period=55_exit_period=20.csv`), so a replay never mixes two settings. The record written before this, `BTCUSDT_4h.csv`, stays as it is.
+  - **Margin asset:** fixed at USDT. With no symbols the engine still runs and watches the daily loss limit.
+  - **State:** each symbol carries its leverage and strategy setting next to D-43's last candle and signal; the top-level `strategy` is gone. The GUI shows them in the symbol table; its settings screen comes later.
+- **Why:**
+  - The user decided (2026-10-19) that the GUI adds and removes coins and changes a coin's strategy, parameters, and leverage, but not while that coin has an open position.
+  - A file of its own instead of `config.toml`: the engine saves a change without rewriting the user's hand-edited file and comments, and risk values stay where no client or engine bug can change them.
+  - The engine checks the values because the GUI only sends commands (safety principle 4), and a GUI bug must not get past the bounds.
+  - Only while flat: otherwise a position opened under one setting would be managed under another (sized and stopped by the old strategy, exited by the new one), and a leverage change would move an open position's liquidation price (D-16, D-25).
+  - Saving before acting, and putting the leverage back on failure, keep what the engine trades equal to what a restart would trade.
+  - Deciding at once was the user's choice: it matches a restart, and a new strategy doesn't wait up to a candle.
+  - USDT fixed: the daily loss limit covers one asset (D-23), and adding a symbol must not change it.
+- **Supersedes:** D-43's one `[strategy]` for every symbol. D-39's rule stands as an operating rule the code doesn't enforce: a strategy goes on a coin only after it held up on several coins, with parameters not tuned per coin.
+- **Limitations:** A symbol halted by D-16, D-19, or D-20 stays halted through a settings change; removing and adding it again clears the halt. A strategy stopped by an error (D-43) restarts only with a new setting or an engine restart. Two checkouts can still put two engines on one account (`progress.md` Known issues).
+- **Alternatives:** Writing changes into `config.toml` (rewrites the user's file and puts risk values within a client's reach); SQLite (D-04, still open); changing a symbol with an open position; a new strategy that waits for the next closed candle.
+- **Date:** 2026-10-20

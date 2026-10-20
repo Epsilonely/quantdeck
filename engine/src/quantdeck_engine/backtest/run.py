@@ -7,6 +7,7 @@ default, so the same conditions as the forward test), and the risk settings in
 
 import csv
 import logging
+from collections.abc import Mapping
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -17,7 +18,7 @@ from quantdeck_engine.backtest.data import HistoricalData
 from quantdeck_engine.backtest.report import format_report
 from quantdeck_engine.backtest.simulator import Costs, Market, Simulator, Trade
 from quantdeck_engine.binance.rest import BinanceRestClient
-from quantdeck_engine.config import MAX_LEVERAGE, Settings, TradingConfig
+from quantdeck_engine.config import MAX_LEVERAGE, Settings, SymbolConfig, TradingConfig
 from quantdeck_engine.strategy.base import Strategy
 from quantdeck_engine.times import utc_text
 from quantdeck_engine.trading.rules import SymbolRules
@@ -39,14 +40,15 @@ async def fetch_market(settings: Settings, symbol: str, leverage: int) -> Market
     return Market(SymbolRules.from_exchange_info(symbol_info), brackets, leverage)
 
 
-def leverage_for(trading: TradingConfig, symbol: str, override: int | None) -> int:
+def leverage_for(symbols: Mapping[str, SymbolConfig], symbol: str, override: int | None) -> int:
+    """`--leverage`, or else the symbol's in `symbols.json` (D-47)."""
     if override is not None:
         if not 1 <= override <= MAX_LEVERAGE:
             raise BacktestFailed(f"--leverage must be between 1 and {MAX_LEVERAGE}")
         return override
-    if symbol in trading.symbols:
-        return trading.symbols[symbol].leverage
-    raise BacktestFailed(f"{symbol} is not in config.toml; pass --leverage")
+    if symbol in symbols:
+        return symbols[symbol].leverage
+    raise BacktestFailed(f"{symbol} is not one of the engine's symbols; pass --leverage")
 
 
 def run_backtest(

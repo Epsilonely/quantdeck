@@ -13,6 +13,31 @@ const ACTION_CLASSES: Record<StrategyAction, string> = {
   exit: ''
 }
 
+// The symbol's leverage and strategy setting (D-47), with every parameter below it.
+function Setting({ symbol }: { symbol: SymbolState }): React.JSX.Element {
+  const strategy = symbol.strategy
+  const params = Object.entries(strategy?.params ?? {})
+    .map(([key, value]) => `${key}=${value}`)
+    .join(', ')
+  return (
+    <>
+      {symbol.leverage !== undefined && <div>{symbol.leverage}x</div>}
+      {!strategy ? (
+        <span className="muted" title="전략이 없어 진입하지 않습니다">
+          전략 없음
+        </span>
+      ) : strategy.name ? (
+        <div>
+          {strategy.name} {strategy.interval}
+          {params && <div className="muted">{params}</div>}
+        </div>
+      ) : (
+        <span className="muted">—</span>
+      )}
+    </>
+  )
+}
+
 function LastCandle({ strategy }: { strategy: SymbolStrategy | null }): React.JSX.Element {
   const candle = strategy?.last_candle
   if (!candle) return <span className="muted">{strategy ? '판단 전' : '—'}</span>
@@ -59,6 +84,7 @@ function SymbolTable({ symbols }: { symbols: SymbolState[] }): React.JSX.Element
         <tr>
           <th>심볼</th>
           <th>상태</th>
+          <th>설정</th>
           <th className="num">마크 가격</th>
           <th>포지션</th>
           <th className="num">진입가</th>
@@ -81,6 +107,9 @@ function SymbolTable({ symbols }: { symbols: SymbolState[] }): React.JSX.Element
               ) : (
                 <span className="tag ok">정상</span>
               )}
+            </td>
+            <td>
+              <Setting symbol={s} />
             </td>
             <td className="num">{s.mark_price ?? '—'}</td>
             <td>

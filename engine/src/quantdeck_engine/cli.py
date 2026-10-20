@@ -34,6 +34,7 @@ from quantdeck_engine.strategy.registry import (
     make_strategy,
     parse_parameters,
 )
+from quantdeck_engine.symbols import SymbolStore, load_symbols
 from quantdeck_engine.trading.executor import OrderOutcomeUnclear, TradingHalted
 from quantdeck_engine.trading.halt import HaltStore
 from quantdeck_engine.trading.rules import Side
@@ -58,7 +59,7 @@ def main() -> None:
         "trial",
         help="TESTNET ONLY: run entry, stop, close, and the kill switch once (places orders)",
     )
-    trial.add_argument("--symbol", help="a symbol from config.toml (default: the first)")
+    trial.add_argument("--symbol", help="a symbol from symbols.json (default: the first)")
     trial.add_argument("--side", choices=["long", "short"], default="long")
     trial.add_argument("--stop-percent", type=Decimal, default=Decimal(1))
     commands.add_parser("lift-halt", help="lift the kill switch's halt (D-27)")
@@ -135,7 +136,9 @@ def main() -> None:
         try:
             params = parse_parameters(args.strategy, args.param)
             strategy = make_strategy(args.strategy, args.interval, params)
-            leverage = leverage_for(trading, symbol, args.leverage)
+            # Read only: a backtest never creates symbols.json (D-47).
+            symbols = load_symbols(SymbolStore(), trading, create=False)
+            leverage = leverage_for(symbols, symbol, args.leverage)
             market = asyncio.run(fetch_market(settings, symbol, leverage))
             costs = Costs(args.fee, args.slippage, args.stop_slippage, args.maker_fee)
             report = run_backtest(
@@ -150,6 +153,7 @@ def main() -> None:
                 trades_csv=args.trades_csv,
             )
         except (
+            ConfigError,
             StrategyError,
             BacktestFailed,
             DataError,
@@ -168,6 +172,7 @@ def main() -> None:
         except KeyboardInterrupt:
             logger.info("Engine stopped by Ctrl+C")
         except (
+            ConfigError,
             EngineAlreadyRunning,
             RunFailed,
             StartupFailed,
@@ -186,11 +191,12 @@ def main() -> None:
         return
 
     if args.command == "trial":
-        symbol = (args.symbol or next(iter(trading.symbols))).upper()
+        symbol = args.symbol.upper() if args.symbol else None
         side = Side.LONG if args.side == "long" else Side.SHORT
         try:
             asyncio.run(run_trial(settings, trading, symbol, side, args.stop_percent))
         except (
+            ConfigError,
             TrialFailed,
             StartupFailed,
             UnknownSymbol,

@@ -10,6 +10,8 @@
   limit once every open position's stop is counted (D-24). Entries on all symbols take
   turns through the gate's entry slot. The kill switch flattens each symbol through
   `flatten` (D-27).
+- A client's settings change holds the symbol's lock while it is flat (`flat`), so no
+  entry runs under the old settings once the new ones are saved (D-47).
 
 Every decision that protects a position re-reads the exchange first (D-06). A symbol whose
 trading is halted still closes and protects positions; it only refuses new entries.
@@ -17,8 +19,8 @@ trading is halted still closes and protects positions; it only refuses new entri
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
-from contextlib import AbstractAsyncContextManager
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from decimal import Decimal
 from typing import Any, Protocol
 
@@ -65,6 +67,10 @@ class OrderOutcomeUnclear(Exception):
 
 class StopNotPlaced(Exception):
     """An exchange-side stop could not be placed or confirmed (D-19)."""
+
+
+class PositionOpen(Exception):
+    """The symbol has an open position, so its settings can't change (D-47)."""
 
 
 class EntryGate(Protocol):
@@ -265,6 +271,34 @@ class SymbolTrader:
             if await self.position() is None:
                 await self._cancel_leftovers()
 
+    # Settings changes (D-47). The methods after `flat` are called inside it.
+
+    @asynccontextmanager
+    async def flat(self) -> AsyncIterator[None]:
+        """Hold this symbol's lock while the exchange shows no position, so no entry can
+        start until the block ends. Raises `PositionOpen` if there is a position."""
+        async with self._lock:
+            position = await self.position()
+            if position is not None:
+                raise PositionOpen(
+                    f"{self.symbol} has an open {position.side} position {position.quantity}"
+                )
+            yield
+
+    async def set_leverage(self, leverage: int) -> None:
+        """Change the leverage on the exchange; `reconfigure` makes entries use it."""
+        await self._client.change_leverage(self.symbol, leverage)
+        logger.info("%s: leverage set to %dx", self.symbol, leverage)
+
+    def reconfigure(self, config: SymbolConfig) -> None:
+        if config.symbol != self.symbol:
+            raise ValueError(f"{config.symbol} settings given to the {self.symbol} trader")
+        self._config = config
+
+    async def clear_leftovers(self) -> None:
+        """Cancel any order left on the symbol, as at startup."""
+        await self._cancel_leftovers()
+
     async def flatten(self) -> bool:
         """Kill switch (D-27): close the position, then cancel every order on the symbol.
 
@@ -317,8 +351,7 @@ class SymbolTrader:
                 if e.code != NO_NEED_TO_CHANGE_MARGIN_TYPE:
                     raise
         if int(current["leverage"]) != self._config.leverage:
-            await self._client.change_leverage(self.symbol, self._config.leverage)
-            logger.info("%s: leverage set to %dx", self.symbol, self._config.leverage)
+            await self.set_leverage(self._config.leverage)
 
     async def _cancel_leftovers(self) -> None:
         """With no position, any open order on the symbol is a leftover (D-14, D-17, D-18)."""

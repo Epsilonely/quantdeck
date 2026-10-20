@@ -9,13 +9,16 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 
 from quantdeck_engine.binance.rest import BinanceRestClient
-from quantdeck_engine.config import TradingConfig
+from quantdeck_engine.config import SymbolConfig, TradingConfig
 from quantdeck_engine.trading.balance import BaseBalance
 from quantdeck_engine.trading.executor import SymbolTrader
 from quantdeck_engine.trading.halt import HaltStore
 from quantdeck_engine.trading.order_ids import ClientIdFactory
 from quantdeck_engine.trading.risk import RiskGuard
 from quantdeck_engine.trading.rules import SymbolRules
+
+# The daily loss limit covers one asset (D-23), so every symbol must be margined in it.
+MARGIN_ASSET = "USDT"
 
 
 class StartupFailed(Exception):
@@ -24,11 +27,13 @@ class StartupFailed(Exception):
 
 @dataclass(frozen=True)
 class Account:
-    """The traders for the configured symbols and the guard that covers them all (D-24)."""
+    """The traders for the configured symbols and the guard that covers them all (D-24).
+    The base balance and order IDs are shared with traders added later (D-47)."""
 
     rules: dict[str, SymbolRules]
     base: BaseBalance
     guard: RiskGuard
+    ids: ClientIdFactory
     traders: list[SymbolTrader]
 
 
@@ -36,31 +41,28 @@ async def build_account(
     client: BinanceRestClient,
     trading: TradingConfig,
     store: HaltStore,
-    *,
-    symbols: Iterable[str] | None = None,
+    symbols: Iterable[SymbolConfig],
 ) -> Account:
     """Check the account and build its traders and guard. Nothing is prepared or placed.
 
     Syncs the clock, requires one-way mode (D-05), reads each symbol's rules, and requires
-    one margin asset across the symbols, since the daily loss limit covers one (D-23).
-    `symbols` defaults to every symbol in `config.toml`; each must be configured there.
+    every symbol to be margined in USDT, the asset the daily loss limit covers (D-23).
     """
     await client.sync_time()
     if (await client.account_config())["dualSidePosition"]:
         raise StartupFailed("the account is in hedge mode; QuantDeck needs one-way mode (D-05)")
-    names = list(trading.symbols) if symbols is None else list(symbols)
-    configs = [trading.symbols[name] for name in names]
+    configs = list(symbols)
     rules = {
         config.symbol: SymbolRules.from_exchange_info(await client.symbol_info(config.symbol))
         for config in configs
     }
-    assets = sorted({r.margin_asset for r in rules.values()})
-    if len(assets) != 1:
-        raise StartupFailed(
-            f"the configured symbols use different margin assets ({', '.join(assets)}); "
-            "the daily loss limit covers one (D-23)"
-        )
-    base = BaseBalance(client, assets[0])
+    for r in rules.values():
+        if r.margin_asset != MARGIN_ASSET:
+            raise StartupFailed(
+                f"{r.symbol} is margined in {r.margin_asset}; the daily loss limit covers "
+                f"{MARGIN_ASSET} only (D-23)"
+            )
+    base = BaseBalance(client, MARGIN_ASSET)
     guard = RiskGuard(client, trading, base, store)
     ids = ClientIdFactory()
     traders = [
@@ -68,4 +70,4 @@ async def build_account(
         for config in configs
     ]
     guard.attach(traders)
-    return Account(rules=rules, base=base, guard=guard, traders=traders)
+    return Account(rules=rules, base=base, guard=guard, ids=ids, traders=traders)

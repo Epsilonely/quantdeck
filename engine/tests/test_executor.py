@@ -449,7 +449,7 @@ async def test_stop_is_placed_even_if_the_mark_price_read_fails() -> None:
     # The first read sizes the entry; the second, before the stop, fails.
     exchange.fail(
         *mark,
-        Failure(lambda: exchange._route(mark, {})),
+        Failure(lambda: exchange._route(mark, {"symbol": "BTCUSDT"})),
         Failure(httpx.ConnectError("down")),
     )
     plan = await make_trader(exchange).open_position(Side.LONG, D(59400))

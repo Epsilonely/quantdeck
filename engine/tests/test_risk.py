@@ -5,6 +5,7 @@ from pathlib import Path
 
 import pytest
 from fake_exchange import (
+    BTC,
     RULES,
     TRADING,
     Failure,
@@ -36,7 +37,7 @@ def make(exchange: FakeExchange, store: HaltStore) -> tuple[RiskGuard, SymbolTra
     guard = RiskGuard(client, TRADING, base, store, sleep=no_sleep)
     trader = SymbolTrader(
         client,
-        TRADING.symbols["BTCUSDT"],
+        BTC,
         TRADING,
         RULES,
         base,

@@ -8,15 +8,17 @@ risk_per_trade_percent = 1      # loss at the stop, per trade (max 2)
 daily_loss_limit_percent = 3    # net loss that fires the kill switch (max 10)
 max_notional_multiple = 2       # position notional <= this x base balance (max 5)
 
-# One table per symbol. Margin type is always isolated.
+# The symbols to start with. The engine trades them from engine/state/symbols.json, which
+# the first `run` creates from the tables below, with the [strategy] on every symbol. After
+# that, symbols, leverage, and strategies change from the GUI and these tables are ignored;
+# delete them then (D-47). Margin type is always isolated.
 [symbols.BTCUSDT]
 leverage = 2                    # 1 to 10; 2 leaves room for the 4h Donchian stops (D-41)
 
-# The strategy `run` trades on every symbol above, with the same parameters (D-43).
-# Leave this table out and `run` places no entries; it still protects positions and
-# watches the daily loss limit.
+# Leave this table out and the symbols start without a strategy: no entries, but positions
+# are still protected and the daily loss limit is still watched.
 [strategy]
-name = "donchian"               # donchian or bollinger
+name = "donchian"               # donchian, bollinger, daily-breakout, or move-fade
 interval = "4h"                 # a kline interval: 1m, 5m, 1h, 4h, 1d, ...
 
 [strategy.params]               # the first strategy (D-41)

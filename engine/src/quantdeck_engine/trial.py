@@ -30,9 +30,10 @@ from quantdeck_engine.binance.user_stream import (
     UserEvent,
     UserStreamConnected,
 )
-from quantdeck_engine.config import Settings, TradingConfig
+from quantdeck_engine.config import Settings, SymbolConfig, TradingConfig
 from quantdeck_engine.lock import InstanceLock
 from quantdeck_engine.startup import build_account
+from quantdeck_engine.symbols import SymbolStore, load_symbols
 from quantdeck_engine.trading.balance import BaseBalance, fetch_income
 from quantdeck_engine.trading.executor import SymbolTrader, TradingHalted
 from quantdeck_engine.trading.halt import HaltStore
@@ -84,34 +85,40 @@ def describe(event: UserEvent) -> str:
 async def run_trial(
     settings: Settings,
     trading: TradingConfig,
-    symbol: str,
+    symbol: str | None,
     side: Side,
     stop_percent: Decimal,
 ) -> None:
+    """Trade `symbol`, one of the engine's symbols (D-47), or the first of them."""
     if not settings.testnet:
         raise TrialFailed("trial places orders and runs on testnet only")
-    config = trading.symbols.get(symbol)
-    if config is None:
-        raise TrialFailed(f"{symbol} is not in config.toml [symbols]")
     if (record := HaltStore().load()) is not None:
         raise TrialFailed(f"the engine is halted by the kill switch ({record.reason})")
 
     # The same lock as `run`, so the trial never trades beside a running engine (D-14, D-31).
     with InstanceLock(), tempfile.TemporaryDirectory() as state_dir:
+        symbols = load_symbols(SymbolStore(), trading)
+        name = symbol or next(iter(symbols), None)
+        if name is None:
+            raise TrialFailed("the engine has no symbols; add one first")
+        config = symbols.get(name)
+        if config is None:
+            raise TrialFailed(f"{name} is not one of the engine's symbols ({', '.join(symbols)})")
         store = HaltStore(Path(state_dir) / "halt.json")
-        await _run(settings, trading, config.symbol, side, stop_percent, store)
+        await _run(settings, trading, config, side, stop_percent, store)
 
 
 async def _run(
     settings: Settings,
     trading: TradingConfig,
-    symbol: str,
+    config: SymbolConfig,
     side: Side,
     stop_percent: Decimal,
     store: HaltStore,
 ) -> None:
+    symbol = config.symbol
     async with BinanceRestClient(settings) as client:
-        account = await build_account(client, trading, store, symbols=[symbol])
+        account = await build_account(client, trading, store, [config])
         (trader,), guard, base = account.traders, account.guard, account.base
 
         connected = asyncio.Event()
