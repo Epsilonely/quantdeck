@@ -6,21 +6,17 @@ _Last updated: 2026-10-20_
 
 The first strategy is the Donchian breakout 55/20 on BTCUSDT 4h at 2× testnet leverage, picked by backtest (D-41). The evidence is positive but weak, which is enough for a testnet forward test and not for mainnet (D-41).
 
-The strategy runs in `run` (GitHub issue #11, D-43): each symbol's strategy warms up from REST, decides on the latest closed candle at startup and then on every closed candle from the feed (D-42), and every decision is appended to a CSV record in `engine/data/forward/`. The user's `engine/config.toml` has the `[symbols]` and `[strategy]` tables for D-41, so every `run`, including one the GUI starts on its own (D-34), trades on testnet.
+The strategy runs in `run` (GitHub issue #11, D-43): each symbol's strategy warms up from REST, decides on the latest closed candle at startup and then on every closed candle from the feed (D-42), and every decision is appended to a CSV record in `engine/data/forward/`. The user's `engine/state/symbols.json` holds BTCUSDT at 2× with the D-41 strategy, so every `run`, including one the GUI starts on its own (D-34), trades on testnet. Since 2026-10-20 the record is `BTCUSDT_4h_donchian_entry_period=55_exit_period=20.csv`; the rows before it are in `BTCUSDT_4h.csv`, and the replay tool must read both (D-47).
 
 The testnet forward test started 2026-10-19 at 11:23 KST. The engine died before the 13:00 KST close when the user closed the terminal running the GUI (GitHub issue #12); the GUI launcher now starts the engine outside its process tree, and the engine has run again since 13:40 KST, deciding the missed candle at startup. The user can't keep it running around the clock, so the forward test will have gaps; they don't invalidate the recorded decisions (D-43). The user keeps it going by leaving the GUI open. Work items are tracked as GitHub issues.
 
 The current track is trading several coins, each with its own strategy, set from the GUI (decided 2026-10-19). The GUI can add and remove coins and change a coin's strategy, parameters, and leverage, but not while that coin has an open position. Done so far:
 - The entry gate counts every open position's stop (GitHub issue #13, D-24 note).
-- The engine side (GitHub issue #18, D-47, 2026-10-20): `engine/state/symbols.json`, the `set_symbol` and `remove_symbol` commands, and per-symbol changes without a restart. The GUI symbol table shows each symbol's leverage and strategy. It is on the branch `worktree-per-symbol-settings`, not yet merged; tests pass, nothing has run on testnet.
+- The engine side (GitHub issue #18, D-47, merged 2026-10-20): `engine/state/symbols.json`, the `set_symbol` and `remove_symbol` commands, and per-symbol changes without a restart. The GUI symbol table shows each symbol's leverage and strategy.
+  - The user restarted the engine on it at 11:05 KST. It created `symbols.json` from `config.toml`, decided on the latest closed candle (no signal) into the new record file, and logged no warnings. The `[symbols]` and `[strategy]` tables are then deleted from the user's `config.toml`, which now holds risk values only.
+  - Testnet check, 11:09 KST, from a client script: `set_symbol` added ETHUSDT at 2× without a strategy in 0.6 s (margin type set to ISOLATED, leverage 2×, saved, mark price stream resubscribed), and `remove_symbol` took it out in 0.1 s. BTCUSDT and its strategy were untouched, and the GUI stayed connected. ETHUSDT keeps isolated 2× on the testnet account.
 
-Deploying it changes the running forward test, so it needs the user's OK:
-- After the merge, the running engine keeps the old code until it restarts; the GUI started from the new code still shows it.
-- On its first start the new engine creates `symbols.json` from the user's `config.toml` (BTCUSDT, 2×, Donchian 55/20 4h) and decides on the latest closed candle, as any restart does (D-43).
-- The forward record continues in `BTCUSDT_4h_donchian_entry_period=55_exit_period=20.csv`; the rows before it stay in `BTCUSDT_4h.csv`, and the replay tool must read both.
-- After that, `[symbols]` and `[strategy]` can be deleted from `config.toml`; until then each start logs a WARNING that they are ignored.
-
-A strategy goes on a coin only after it has held up on several coins (D-39); nothing enforces it in code (D-47). The work is done in a git worktree while the forward test runs from the main checkout; see Known issues in `progress.md` for what must not run there.
+Next is the GUI settings screen on top of this (Open questions). A strategy goes on a coin only after it has held up on several coins (D-39); nothing enforces it in code (D-47). Engine work is done in a git worktree while the forward test runs from the main checkout; see Known issues in `progress.md` for what must not run there.
 
 ## Open questions
 
@@ -44,9 +40,8 @@ Roughly in the order they're needed:
 ## Next steps
 
 1. Keep the forward test going: the next 4h closes, then the first entry and exit in the GUI and the CSV record. The roadmap item is checked off once `run` has traded the strategy on testnet (issue #11).
-2. Merge issue #18, then, with the user's OK, restart the engine on the new code and check on testnet: `symbols.json` created, BTCUSDT unchanged, and `set_symbol`/`remove_symbol` on a second coin from a client script (Current focus).
-3. The GUI settings screen on top of #18 (Open questions).
-4. The replay-and-compare tool for the forward test (Open questions); it reads both forward record files.
-5. How a packaged GUI finds `engine/` (`techContext.md`, GUI notes).
-6. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
-7. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet, and the kill switch's bulk cancels have only run on an empty book.
+2. The GUI settings screen on top of #18 (Open questions). Changing a symbol's strategy or leverage while running has been tested with fakes only; check it on testnet with the screen.
+3. The replay-and-compare tool for the forward test (Open questions); it reads both forward record files.
+4. How a packaged GUI finds `engine/` (`techContext.md`, GUI notes).
+5. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
+6. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet, and the kill switch's bulk cancels have only run on an empty book.
