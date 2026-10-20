@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
-import type { CommandName, CommandResult } from '../../shared/engine'
+import type { CommandName, CommandResult, EngineCommand } from '../../shared/engine'
 import LogView from './components/LogView'
+import SymbolEditor, { type EditTarget } from './components/SymbolEditor'
 import SymbolTable from './components/SymbolTable'
 import ThemeSwitch from './components/ThemeSwitch'
 import { clock, dateTime, elapsed, isNegative, isZero, riskDayStart } from './format'
@@ -11,17 +12,28 @@ const UPTIME_REFRESH_MS = 30_000
 const COMMAND_LABELS: Record<CommandName, string> = {
   emergency_close: '긴급 청산',
   lift_halt: '정지 해제',
-  stop_engine: '엔진 정지'
+  stop_engine: '엔진 정지',
+  set_symbol: '심볼 설정',
+  remove_symbol: '코인 제거'
 }
 
 interface ShownResult extends CommandResult {
   name: CommandName
 }
 
+function isSymbolCommand(name: CommandName): boolean {
+  return name === 'set_symbol' || name === 'remove_symbol'
+}
+
+function targetKey(target: EditTarget): string {
+  return target.mode === 'add' ? 'add' : `edit:${target.symbol}`
+}
+
 function App(): React.JSX.Element {
-  const { status, launch, state, logs } = useEngine()
+  const { status, launch, state, logs, catalog } = useEngine()
   const [busy, setBusy] = useState<CommandName | null>(null)
   const [result, setResult] = useState<ShownResult | null>(null)
+  const [editing, setEditing] = useState<EditTarget | null>(null)
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
@@ -31,16 +43,37 @@ function App(): React.JSX.Element {
 
   const connected = status?.phase === 'connected'
 
-  const run = async (name: CommandName): Promise<void> => {
+  const run = async (command: EngineCommand): Promise<void> => {
+    const { name } = command
     setBusy(name)
     try {
-      const reply = await window.api.engine.command(name)
+      const reply = await window.api.engine.command(command)
       if (reply) setResult({ name, ...reply })
+      // A symbol change that went through closes the settings panel (D-48).
+      if (reply?.ok && isSymbolCommand(name)) setEditing(null)
     } catch (e) {
       setResult({ name, ok: false, message: String(e) })
     } finally {
       setBusy(null)
     }
+  }
+
+  // A failed symbol change shows in the settings panel while it is open, next to the form.
+  const editorFailure =
+    editing && result && !result.ok && isSymbolCommand(result.name) ? result : null
+  const openEditor = (target: EditTarget | null): void => {
+    setEditing(target)
+    if (editorFailure) setResult(null) // it belonged to the panel being left
+  }
+
+  let editBlocked: string | null = null
+  if (!connected) editBlocked = '엔진에 연결되어 있지 않습니다'
+  else if (!catalog)
+    editBlocked = '이 엔진은 전략 목록을 보내지 않습니다. 엔진을 새 코드로 재시작하세요'
+  else if (busy !== null) editBlocked = '다른 명령을 보내는 중입니다'
+  let addBlocked = editBlocked
+  if (!addBlocked && catalog && state && state.symbols.length >= catalog.max_symbols) {
+    addBlocked = `코인은 최대 ${catalog.max_symbols}개입니다`
   }
 
   let statusText: string
@@ -88,7 +121,7 @@ function App(): React.JSX.Element {
         <span className="spacer" />
         <ThemeSwitch />
         {connected ? (
-          <button disabled={busy !== null} onClick={() => run('stop_engine')}>
+          <button disabled={busy !== null} onClick={() => run({ name: 'stop_engine' })}>
             {busy === 'stop_engine' ? '정지 중…' : '엔진 정지'}
           </button>
         ) : (
@@ -102,7 +135,7 @@ function App(): React.JSX.Element {
         <button
           className="danger"
           disabled={!connected || busy !== null}
-          onClick={() => run('emergency_close')}
+          onClick={() => run({ name: 'emergency_close' })}
         >
           {busy === 'emergency_close' ? '청산 중…' : '긴급 청산'}
         </button>
@@ -132,13 +165,13 @@ function App(): React.JSX.Element {
             {state.halt.reason && <div className="detail">{state.halt.reason}</div>}
           </div>
           <span className="spacer" />
-          <button disabled={!connected || busy !== null} onClick={() => run('lift_halt')}>
+          <button disabled={!connected || busy !== null} onClick={() => run({ name: 'lift_halt' })}>
             {busy === 'lift_halt' ? '해제 중…' : '정지 해제'}
           </button>
         </div>
       )}
 
-      {result && (
+      {result && !editorFailure && (
         <div className={`banner ${result.ok ? 'ok' : 'danger'}`}>
           <div>
             <strong>
@@ -188,8 +221,38 @@ function App(): React.JSX.Element {
           </section>
 
           <section>
-            <h2>심볼</h2>
-            <SymbolTable symbols={state.symbols} />
+            <div className="section-head">
+              <h2>심볼</h2>
+              <button
+                className="small"
+                disabled={addBlocked !== null}
+                title={addBlocked ?? '거래할 코인을 추가합니다'}
+                onClick={() => openEditor({ mode: 'add' })}
+              >
+                코인 추가
+              </button>
+              {connected && !catalog && <span className="hint">{editBlocked}</span>}
+            </div>
+            <SymbolTable
+              symbols={state.symbols}
+              editing={editing?.mode === 'edit' ? editing.symbol : null}
+              editBlocked={editBlocked}
+              onEdit={(symbol) => openEditor({ mode: 'edit', symbol })}
+            />
+            {editing && catalog && (
+              <SymbolEditor
+                key={targetKey(editing)}
+                target={editing}
+                symbols={state.symbols}
+                catalog={catalog}
+                connected={connected}
+                busy={busy}
+                failure={editorFailure}
+                onApply={(args) => run({ name: 'set_symbol', args })}
+                onRemove={(symbol) => run({ name: 'remove_symbol', args: { symbol } })}
+                onClose={() => openEditor(null)}
+              />
+            )}
           </section>
         </>
       ) : (

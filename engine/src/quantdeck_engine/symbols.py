@@ -2,7 +2,8 @@
 
 They live in `engine/state/symbols.json`, which only the engine writes: clients change it
 through the `set_symbol` and `remove_symbol` commands, checked here against the same bounds
-as `config.toml` (D-28). Risk values stay in the hand-edited `config.toml`, so no client or
+as `config.toml` (D-28), and learn what they can set from the catalog sent with `welcome`
+(D-48). Risk values stay in the hand-edited `config.toml`, so no client or
 engine bug can rewrite them.
 
 The first `run` or `trial` without the file creates it from `config.toml`'s `[symbols]` and
@@ -16,10 +17,13 @@ parameter never passes through a float.
 import json
 import logging
 from collections.abc import Mapping
+from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from quantdeck_engine.binance.streams import INTERVAL_MS
 from quantdeck_engine.config import (
+    MAX_LEVERAGE,
     MAX_SYMBOLS,
     ConfigError,
     StrategyConfig,
@@ -31,11 +35,22 @@ from quantdeck_engine.config import (
     strategy_config,
 )
 from quantdeck_engine.paths import SYMBOLS_FILE, write_atomic
-from quantdeck_engine.strategy.registry import StrategyError, parse_parameter_texts
+from quantdeck_engine.strategy.registry import (
+    STRATEGIES,
+    StrategyError,
+    default_strategy,
+    parameter_text,
+    parameter_types,
+    parameters_of,
+    parse_parameter_texts,
+)
 
 logger = logging.getLogger(__name__)
 
 FILE_VERSION = 1
+
+# How the catalog names a parameter's type (D-48).
+_TYPE_NAMES: dict[type, str] = {int: "int", Decimal: "decimal", bool: "bool"}
 
 
 class SymbolChangeRefused(Exception):
@@ -176,3 +191,32 @@ def parse_remove_symbol(args: Mapping[str, Any]) -> str:
     """`remove_symbol`'s arguments: `{"symbol"}`."""
     reject_unknown(args, {"symbol"}, "remove_symbol")
     return check_symbol_name(args.get("symbol"), "remove_symbol")
+
+
+def catalog() -> dict[str, Any]:
+    """What `set_symbol` accepts, for a client's settings screen (D-48): the bounds, the
+    intervals, and every registered strategy with its default interval and parameters.
+
+    Built from the strategy registry, so no client keeps its own copy. Defaults are text,
+    as parameters are everywhere else. Whether a setting enters with limit orders depends
+    on its values, so it isn't listed: `set_symbol` refuses those (D-45).
+    """
+    return {
+        "max_leverage": MAX_LEVERAGE,
+        "max_symbols": MAX_SYMBOLS,
+        "intervals": list(INTERVAL_MS),
+        "strategies": [_catalog_entry(name) for name in STRATEGIES],
+    }
+
+
+def _catalog_entry(name: str) -> dict[str, Any]:
+    strategy = default_strategy(name)
+    types = parameter_types(name)
+    return {
+        "name": name,
+        "interval": strategy.interval,
+        "params": [
+            {"name": key, "type": _TYPE_NAMES[types[key]], "default": parameter_text(value)}
+            for key, value in parameters_of(strategy).items()
+        ],
+    }

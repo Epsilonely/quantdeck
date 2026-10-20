@@ -87,8 +87,61 @@ export interface LogRecord {
   message: string
 }
 
-export const COMMAND_NAMES = ['emergency_close', 'lift_halt', 'stop_engine'] as const
+// What `set_symbol` accepts, sent with `welcome` (D-48). Engines before 2026-10-20 don't send
+// it. Parameter defaults are text, like parameter values everywhere.
+export type ParameterType = 'int' | 'decimal' | 'bool'
+
+export interface ParameterSpec {
+  name: string
+  type: ParameterType
+  default: string
+}
+
+export interface StrategySpec {
+  name: string
+  interval: string // its default interval
+  params: ParameterSpec[]
+}
+
+export interface StrategyCatalog {
+  max_leverage: number
+  max_symbols: number
+  intervals: string[]
+  strategies: StrategySpec[]
+}
+
+// A symbol's strategy setting as `set_symbol` takes it (D-47).
+export interface StrategySetting {
+  name: string
+  interval: string
+  params: Record<string, string>
+}
+
+export interface SetSymbolArgs {
+  symbol: string
+  leverage: number
+  strategy: StrategySetting | null // null: no strategy, no entries
+}
+
+export interface RemoveSymbolArgs {
+  symbol: string
+}
+
+export const COMMAND_NAMES = [
+  'emergency_close',
+  'lift_halt',
+  'stop_engine',
+  'set_symbol',
+  'remove_symbol'
+] as const
 export type CommandName = (typeof COMMAND_NAMES)[number]
+
+export type EngineCommand =
+  | { name: 'emergency_close' }
+  | { name: 'lift_halt' }
+  | { name: 'stop_engine' }
+  | { name: 'set_symbol'; args: SetSymbolArgs }
+  | { name: 'remove_symbol'; args: RemoveSymbolArgs }
 
 export interface CommandResult {
   ok: boolean
@@ -117,15 +170,18 @@ export interface EngineSnapshot {
   launch: LaunchState
   state: EngineState | null // the last state received; stale while disconnected
   logs: LogRecord[]
+  catalog: StrategyCatalog | null // from the last welcome; null if that engine sent none
 }
 
 export interface EngineApi {
   snapshot(): Promise<EngineSnapshot>
-  // The main process asks the user to confirm first; null means the user cancelled.
-  command(name: CommandName): Promise<CommandResult | null>
+  // The main process checks the command, asks the user to confirm with what it will send, and
+  // sends it; null means the user cancelled.
+  command(command: EngineCommand): Promise<CommandResult | null>
   startEngine(): Promise<void>
   onStatus(listener: (status: ConnectionStatus) => void): () => void
   onState(listener: (state: EngineState) => void): () => void
   onLogs(listener: (update: LogsUpdate) => void): () => void
   onLaunch(listener: (launch: LaunchState) => void): () => void
+  onCatalog(listener: (catalog: StrategyCatalog | null) => void): () => void
 }

@@ -36,6 +36,11 @@ def parameter_types(name: str) -> dict[str, type]:
     return {f.name: f.type for f in fields(cls) if f.init and f.name != "interval"}
 
 
+def default_strategy(name: str) -> Strategy:
+    """Strategy `name` with every default, its interval included."""
+    return _class(name)()
+
+
 def make_strategy(name: str, interval: str, params: Mapping[str, object]) -> Strategy:
     """Build strategy `name` on `interval` with `params`, as `config.toml` would give them:
     ints, Decimals, and bools (an int is accepted for a Decimal parameter, never a bool)."""

@@ -5,13 +5,14 @@
 
 import { readFile } from 'fs/promises'
 import type {
-  CommandName,
   CommandResult,
   ConnectionStatus,
+  EngineCommand,
   EngineSnapshot,
   EngineState,
   LogRecord,
-  LogsUpdate
+  LogsUpdate,
+  StrategyCatalog
 } from '../shared/engine'
 
 const PROTOCOL = 1
@@ -23,6 +24,7 @@ export interface EngineClientEvents {
   status(status: ConnectionStatus): void
   state(state: EngineState): void
   logs(update: LogsUpdate): void
+  catalog(catalog: StrategyCatalog | null): void
 }
 
 interface ConnectionInfo {
@@ -31,7 +33,7 @@ interface ConnectionInfo {
 }
 
 type EngineMessage =
-  | { type: 'welcome'; protocol: number }
+  | { type: 'welcome'; protocol: number; catalog?: unknown }
   | { type: 'logs'; records: LogRecord[] }
   | { type: 'state'; state: EngineState }
   | { type: 'result'; id: unknown; ok: boolean; message: string }
@@ -45,6 +47,7 @@ export class EngineClient {
   private status: ConnectionStatus = { phase: 'connecting', detail: null, since: now() }
   private state: EngineState | null = null
   private logs: LogRecord[] = []
+  private catalog: StrategyCatalog | null = null
 
   constructor(
     private readonly connectionFile: string,
@@ -63,10 +66,11 @@ export class EngineClient {
   }
 
   snapshot(): Omit<EngineSnapshot, 'launch'> {
-    return { status: this.status, state: this.state, logs: [...this.logs] }
+    return { status: this.status, state: this.state, logs: [...this.logs], catalog: this.catalog }
   }
 
-  command(name: CommandName): Promise<CommandResult> {
+  /** The command as it is, so the caller must have checked it (main/commands.ts). */
+  command(command: EngineCommand): Promise<CommandResult> {
     const socket = this.socket
     if (!socket || this.status.phase !== 'connected') {
       return Promise.resolve({ ok: false, message: '엔진에 연결되어 있지 않습니다' })
@@ -81,7 +85,7 @@ export class EngineClient {
         clearTimeout(timer)
         resolve(result)
       })
-      socket.send(JSON.stringify({ type: 'command', id, name }))
+      socket.send(JSON.stringify({ type: 'command', id, ...command }))
     })
   }
 
@@ -123,6 +127,9 @@ export class EngineClient {
           }
           welcomed = true
           backlogPending = true
+          // Before the status, so a screen that opens on "connected" finds the catalog.
+          this.catalog = parseCatalog(message.catalog)
+          this.events.catalog(this.catalog)
           this.setStatus('connected', null)
           break
         case 'logs':
@@ -221,6 +228,35 @@ async function readConnectionFile(path: string): Promise<ConnectionInfo> {
     throw new Error('연결 파일에 port나 token이 없습니다')
   }
   return { port: data.port as number, token: data.token }
+}
+
+// The engine is ours, but a malformed catalog would break the settings screen, so it is checked
+// here once. An engine before 2026-10-20 sends none (D-48).
+function parseCatalog(value: unknown): StrategyCatalog | null {
+  if (value === undefined) return null
+  const catalog = value as StrategyCatalog
+  const valid =
+    typeof catalog === 'object' &&
+    catalog !== null &&
+    Number.isInteger(catalog.max_leverage) &&
+    Number.isInteger(catalog.max_symbols) &&
+    Array.isArray(catalog.intervals) &&
+    catalog.intervals.every((interval) => typeof interval === 'string') &&
+    Array.isArray(catalog.strategies) &&
+    catalog.strategies.every(
+      (strategy) =>
+        typeof strategy?.name === 'string' &&
+        typeof strategy.interval === 'string' &&
+        Array.isArray(strategy.params) &&
+        strategy.params.every(
+          (param) =>
+            typeof param?.name === 'string' &&
+            ['int', 'decimal', 'bool'].includes(param.type) &&
+            typeof param.default === 'string'
+        )
+    )
+  if (!valid) console.error('[engine] the catalog in welcome is malformed; ignored')
+  return valid ? catalog : null
 }
 
 function now(): string {

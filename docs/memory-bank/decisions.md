@@ -280,6 +280,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - Message shapes are in `techContext.md`.
 - **Note (2026-10-16):** A third command, `stop_engine`, was added with D-34.
 - **Note (2026-10-20):** Commands may carry an `args` object; `set_symbol` and `remove_symbol` came with D-47. Clients get each symbol's settings in the state.
+- **Note (2026-10-20):** `welcome` also carries the catalog of what `set_symbol` accepts (D-48).
 - **Date:** 2026-10-16
 
 ## D-34 The GUI starts the engine when none is running and can stop it
@@ -483,7 +484,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - **New strategy:** a strategy set on a symbol warms up and decides on the latest closed candle at once, as at startup (D-43), so an entry signal there fills at the current price.
   - **Forward record:** one CSV per symbol and strategy setting, named after the strategy and every parameter (`BTCUSDT_4h_donchian_entry_period=55_exit_period=20.csv`), so a replay never mixes two settings. The record written before this, `BTCUSDT_4h.csv`, stays as it is.
   - **Margin asset:** fixed at USDT. With no symbols the engine still runs and watches the daily loss limit.
-  - **State:** each symbol carries its leverage and strategy setting next to D-43's last candle and signal; the top-level `strategy` is gone. The GUI shows them in the symbol table; its settings screen comes later.
+  - **State:** each symbol carries its leverage and strategy setting next to D-43's last candle and signal; the top-level `strategy` is gone. The GUI shows them in the symbol table; its settings screen is D-48.
 - **Why:**
   - The user decided (2026-10-19) that the GUI adds and removes coins and changes a coin's strategy, parameters, and leverage, but not while that coin has an open position.
   - A file of its own instead of `config.toml`: the engine saves a change without rewriting the user's hand-edited file and comments, and risk values stay where no client or engine bug can change them.
@@ -495,4 +496,19 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Supersedes:** D-43's one `[strategy]` for every symbol. D-39's rule stands as an operating rule the code doesn't enforce: a strategy goes on a coin only after it held up on several coins, with parameters not tuned per coin.
 - **Limitations:** A symbol halted by D-16, D-19, or D-20 stays halted through a settings change; removing and adding it again clears the halt. A strategy stopped by an error (D-43) restarts only with a new setting or an engine restart. Two checkouts can still put two engines on one account (`progress.md` Known issues).
 - **Alternatives:** Writing changes into `config.toml` (rewrites the user's file and puts risk values within a client's reach); SQLite (D-04, still open); changing a symbol with an open position; a new strategy that waits for the next closed candle.
+- **Date:** 2026-10-20
+
+## D-48 GUI symbol settings: the engine sends a strategy catalog, and the main process confirms each change with the copy it sends
+
+- **Decision:**
+  - **Catalog:** the engine's `welcome` carries what `set_symbol` accepts: the leverage and symbol-count bounds, the kline intervals, and every registered strategy with its default interval and each parameter's name, type (`int`, `decimal`, `bool`), and default as text. It is built from the strategy registry. The protocol version stays 1. Connected to an engine that sends no catalog, the GUI turns the settings off and asks for a restart on new code.
+  - **Confirmation:** `set_symbol` and `remove_symbol` go through the native dialog in the main process, like the other commands (GitHub issue #19). The main process checks the command's shape only: a known name, exactly the expected keys, a symbol in the engine's pattern, a whole-number leverage, a strategy that is null or a name, interval, and text parameters, and text limited to characters that can't break the dialog's lines. It writes the dialog from that copy against the last state it received (an addition, or each value before → after) and sends that same copy. A new or changed strategy's dialog says it decides on the latest closed candle at once and can enter at the current price (D-47), and that the forward record moves to a new file. Bounds stay the engine's check.
+  - **Screen:** a panel under the symbol table, opened by an add button or a row's change button: symbol (when adding), leverage, strategy, interval, and the parameters, filled with the current values, or the strategy's defaults when another strategy is chosen, with a reset to defaults. While the symbol has a position, the panel says the engine refuses and disables apply and remove; apply is also off while disconnected, while a command is in progress, when nothing changed, and on a typing mistake (format only). A success closes the panel and shows the engine's answer in the result banner; a failure stays in the panel with the reason.
+- **Why:**
+  - Catalog from the engine: the parameters and their defaults are the strategies' own code (D-07, D-36), so a copy in the GUI would drift when a strategy or a default changes. In `welcome` rather than the state, because it comes from code and can't change while the engine runs, and the state goes out about once a second (D-33).
+  - Confirmation in the main process: a strategy set on a symbol can enter at once (D-47), so a renderer bug must not send a change unconfirmed, nor show one setting and send another. Writing the dialog from the copy that is sent makes it say exactly what goes out; the character limits keep a value from adding lines that pass for dialog text.
+  - A panel on the main screen keeps positions and the log in view while a coin is set up.
+  - Whether a setting enters with limit orders depends on its values (`trend-pullback`'s defaults do), so the catalog doesn't say; the engine's refusal explains it (D-45).
+- **Relation to #7:** one function in the main process writes the confirmation of all five commands, so #7 changes only how it is shown. Confirming in the renderer (#7's option B) would now also let a renderer bug send `set_symbol`.
+- **Alternatives:** a strategy list hard-coded in the GUI; the catalog in the state; a separate tab or a modal form; confirming in the renderer.
 - **Date:** 2026-10-20

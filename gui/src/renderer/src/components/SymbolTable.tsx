@@ -76,7 +76,14 @@ function LastSignal({ strategy }: { strategy: SymbolStrategy | null }): React.JS
   )
 }
 
-function SymbolTable({ symbols }: { symbols: SymbolState[] }): React.JSX.Element {
+interface Props {
+  symbols: SymbolState[]
+  editing: string | null // the symbol open in the settings panel
+  editBlocked: string | null // why settings can't be changed now
+  onEdit(symbol: string): void
+}
+
+function SymbolTable({ symbols, editing, editBlocked, onEdit }: Props): React.JSX.Element {
   if (symbols.length === 0) return <p className="muted">설정된 심볼이 없습니다.</p>
   return (
     <table className="symbols">
@@ -97,7 +104,7 @@ function SymbolTable({ symbols }: { symbols: SymbolState[] }): React.JSX.Element
       </thead>
       <tbody>
         {symbols.map((s) => (
-          <tr key={s.symbol}>
+          <tr key={s.symbol} className={s.symbol === editing ? 'editing' : undefined}>
             <td className="strong">{s.symbol}</td>
             <td>
               {s.halted ? (
@@ -110,6 +117,14 @@ function SymbolTable({ symbols }: { symbols: SymbolState[] }): React.JSX.Element
             </td>
             <td>
               <Setting symbol={s} />
+              <button
+                className="small"
+                disabled={editBlocked !== null}
+                title={editBlocked ?? `${s.symbol}의 레버리지와 전략을 바꿉니다`}
+                onClick={() => onEdit(s.symbol)}
+              >
+                변경
+              </button>
             </td>
             <td className="num">{s.mark_price ?? '—'}</td>
             <td>

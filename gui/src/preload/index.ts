@@ -14,12 +14,13 @@ function subscribe<T>(channel: string, listener: (value: T) => void): () => void
 
 const engine: EngineApi = {
   snapshot: () => ipcRenderer.invoke('engine:snapshot'),
-  command: (name) => ipcRenderer.invoke('engine:command', name),
+  command: (command) => ipcRenderer.invoke('engine:command', command),
   startEngine: () => ipcRenderer.invoke('engine:start'),
   onStatus: (listener) => subscribe('engine:status', listener),
   onState: (listener) => subscribe('engine:state', listener),
   onLogs: (listener) => subscribe('engine:logs', listener),
-  onLaunch: (listener) => subscribe('engine:launch', listener)
+  onLaunch: (listener) => subscribe('engine:launch', listener),
+  onCatalog: (listener) => subscribe('engine:catalog', listener)
 }
 
 const theme: ThemeApi = {

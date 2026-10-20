@@ -4,8 +4,9 @@
   holds the port and a token made new at every start; clients read it to connect.
 - A client's first message must be `{"type": "hello", "token": ...}`; anything else closes
   the connection. Connections with an `Origin` header (browsers) are refused at the handshake.
-- After the hello the client gets `welcome`, the recent log records, and the whole state.
-  The state is sent again whenever it changes, and log records as they happen.
+- After the hello the client gets `welcome` (with the catalog of what `set_symbol` accepts,
+  D-48), the recent log records, and the whole state. The state is sent again whenever it
+  changes, and log records as they happen.
 - Commands are `{"type": "command", "id": ..., "name": ..., "args": {...}}`; the reply is a
   `result` with the same `id`. Names: `emergency_close` (the kill switch, D-27),
   `lift_halt`, `stop_engine` (D-34), and `set_symbol` and `remove_symbol` (D-47), the
@@ -33,7 +34,7 @@ from websockets.exceptions import ConnectionClosed
 from quantdeck_engine.binance.rest import REQUEST_ERRORS
 from quantdeck_engine.config import ConfigError, Secret
 from quantdeck_engine.paths import CONNECTION_FILE, write_atomic
-from quantdeck_engine.symbols import SymbolChangeRefused
+from quantdeck_engine.symbols import SymbolChangeRefused, catalog
 from quantdeck_engine.trading.executor import OrderOutcomeUnclear
 from quantdeck_engine.trading.risk import LiftRefused
 
@@ -144,6 +145,10 @@ class ClientServer:
         self._publish_interval = publish_interval
         self._auth_timeout = auth_timeout
         self._token = Secret(secrets.token_urlsafe(32))
+        # The catalog comes from code, so it is the same for every client of this engine.
+        self._welcome = _dumps(
+            {"type": "welcome", "protocol": PROTOCOL_VERSION, "catalog": catalog()}
+        )
         self._clients: set[_Client] = set()
         self._last_state: str | None = None
         self.port: int | None = None
@@ -173,7 +178,7 @@ class ClientServer:
         # Registered and given its first messages without an await in between, so nothing
         # broadcast in the meantime lands ahead of them.
         self._clients.add(client)
-        client.outbox.put_nowait(_dumps({"type": "welcome", "protocol": PROTOCOL_VERSION}))
+        client.outbox.put_nowait(self._welcome)
         client.outbox.put_nowait(_dumps({"type": "logs", "records": list(self._logs.records)}))
         client.outbox.put_nowait(self._state_message())
         writer = asyncio.create_task(self._write(client))

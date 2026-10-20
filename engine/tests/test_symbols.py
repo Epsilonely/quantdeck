@@ -8,8 +8,10 @@ import pytest
 from fake_exchange import TRADING
 
 from quantdeck_engine.config import ConfigError, SymbolConfig, TradingConfig, strategy_config
+from quantdeck_engine.strategy.registry import STRATEGIES
 from quantdeck_engine.symbols import (
     SymbolStore,
+    catalog,
     load_symbols,
     parse_remove_symbol,
     parse_set_symbol,
@@ -221,3 +223,52 @@ def test_remove_symbol_arguments() -> None:
         parse_remove_symbol({"symbol": "BTCUSDT", "close": True})
     with pytest.raises(ConfigError, match="symbol names"):
         parse_remove_symbol({})
+
+
+# The catalog clients get with welcome (D-48)
+
+
+def test_catalog_lists_the_bounds_and_every_strategy() -> None:
+    data = catalog()
+    assert data["max_leverage"] == 10
+    assert data["max_symbols"] == 10
+    assert "4h" in data["intervals"]
+    assert [s["name"] for s in data["strategies"]] == list(STRATEGIES)
+    donchian = data["strategies"][0]
+    assert donchian == {
+        "name": "donchian",
+        "interval": "1h",
+        "params": [
+            {"name": "entry_period", "type": "int", "default": "20"},
+            {"name": "exit_period", "type": "int", "default": "10"},
+        ],
+    }
+    types = {
+        (s["name"], p["name"]): (p["type"], p["default"])
+        for s in data["strategies"]
+        for p in s["params"]
+    }
+    assert types["bollinger", "width"] == ("decimal", "2")
+    assert types["daily-breakout", "long_only"] == ("bool", "false")
+    json.dumps(data)  # sent as it is
+
+
+def test_catalog_defaults_are_accepted_by_set_symbol() -> None:
+    for strategy in catalog()["strategies"]:
+        args = {
+            "symbol": "BTCUSDT",
+            "leverage": 2,
+            "strategy": {
+                "name": strategy["name"],
+                "interval": strategy["interval"],
+                "params": {p["name"]: p["default"] for p in strategy["params"]},
+            },
+        }
+        if strategy["name"] == "trend-pullback":
+            # Its defaults enter with limit orders, which only the backtest fills (D-45).
+            with pytest.raises(ConfigError, match="limit orders"):
+                parse_set_symbol(args)
+        else:
+            config = parse_set_symbol(args)
+            assert config.strategy is not None
+            assert config.strategy.params_text() == args["strategy"]["params"]

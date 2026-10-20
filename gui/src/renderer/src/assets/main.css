@@ -16,6 +16,7 @@
   --profit: #3fb27f;
   --loss: #e5534b;
   --mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
+  --sans: 'Segoe UI', 'Malgun Gothic', system-ui, sans-serif;
 }
 
 @media (prefers-color-scheme: light) {
@@ -52,7 +53,7 @@ body,
 body {
   background: var(--bg);
   color: var(--text);
-  font-family: 'Segoe UI', 'Malgun Gothic', system-ui, sans-serif;
+  font-family: var(--sans);
   font-size: 14px;
   line-height: 1.5;
 }
@@ -169,6 +170,46 @@ button.danger {
 
 button.plain {
   background: transparent;
+}
+
+/* Small buttons keep the UI font inside the table's monospace cells. */
+button.small {
+  font-family: var(--sans);
+  font-size: 12px;
+  padding: 1px 10px;
+}
+
+button.danger-outline {
+  color: var(--danger);
+  border-color: var(--danger);
+}
+
+input,
+select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg-sunken);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+}
+
+input[type='checkbox'] {
+  padding: 0;
+  accent-color: var(--info);
+  vertical-align: middle;
+}
+
+input:focus-visible,
+select:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 1px;
+}
+
+.hint {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 /* On for a moment while the theme changes (ThemeSwitch), so colors fade instead of snapping. */
@@ -327,6 +368,114 @@ table.symbols td {
 
 table.symbols .num {
   text-align: right;
+}
+
+table.symbols td button.small {
+  display: block;
+  margin-top: 4px;
+}
+
+table.symbols tr.editing td {
+  background: var(--bg-raised);
+}
+
+.section-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.section-head h2 {
+  margin-bottom: 0;
+}
+
+/* The symbol settings panel (D-48), under the symbol table. */
+.editor {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.editor-head,
+.params-head,
+.editor .actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+h3 {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.editor .fields {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 10px 16px;
+}
+
+.editor .field {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 180px;
+}
+
+.editor .field.narrow {
+  min-width: 0;
+  width: 130px;
+}
+
+.editor .field .label,
+.params-head .label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.editor .field .static {
+  font-family: var(--mono);
+  padding: 5px 0;
+}
+
+.editor .field-error {
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.params {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.params input {
+  font-family: var(--mono);
+}
+
+.notice {
+  padding: 6px 10px;
+  border-left: 3px solid;
+  border-radius: 4px;
+  background: var(--bg-sunken);
+  font-size: 13px;
+}
+
+.notice.warn {
+  border-color: var(--warn);
+}
+
+.notice.danger {
+  border-color: var(--danger);
 }
 
 .log-section {

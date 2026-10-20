@@ -1,5 +1,11 @@
 import { useEffect, useState } from 'react'
-import type { ConnectionStatus, EngineState, LaunchState, LogRecord } from '../../shared/engine'
+import type {
+  ConnectionStatus,
+  EngineState,
+  LaunchState,
+  LogRecord,
+  StrategyCatalog
+} from '../../shared/engine'
 
 const LOG_CAPACITY = 1000
 
@@ -8,6 +14,7 @@ export interface EngineView {
   launch: LaunchState
   state: EngineState | null
   logs: LogRecord[]
+  catalog: StrategyCatalog | null // what set_symbol accepts (D-48); null from older engines
 }
 
 export function useEngine(): EngineView {
@@ -15,6 +22,7 @@ export function useEngine(): EngineView {
   const [state, setState] = useState<EngineState | null>(null)
   const [logs, setLogs] = useState<LogRecord[]>([])
   const [launch, setLaunch] = useState<LaunchState>({ phase: 'idle', message: null })
+  const [catalog, setCatalog] = useState<StrategyCatalog | null>(null)
 
   useEffect(() => {
     const { engine } = window.api
@@ -24,6 +32,7 @@ export function useEngine(): EngineView {
       engine.onStatus(setStatus),
       engine.onState(setState),
       engine.onLaunch(setLaunch),
+      engine.onCatalog(setCatalog),
       engine.onLogs((update) =>
         setLogs((shown) =>
           update.reset ? update.records : [...shown, ...update.records].slice(-LOG_CAPACITY)
@@ -37,6 +46,7 @@ export function useEngine(): EngineView {
       setLaunch(snapshot.launch)
       setState(snapshot.state)
       setLogs(snapshot.logs)
+      setCatalog(snapshot.catalog)
     })
     return () => {
       active = false
@@ -44,5 +54,5 @@ export function useEngine(): EngineView {
     }
   }, [])
 
-  return { status, launch, state, logs }
+  return { status, launch, state, logs, catalog }
 }

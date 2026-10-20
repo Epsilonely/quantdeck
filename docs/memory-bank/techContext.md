@@ -6,7 +6,7 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 
 | Component | Technology | Status |
 |---|---|---|
-| GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the commands; starts the engine when none is running (D-34); light/dark theme (D-35) |
+| GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the commands; starts the engine when none is running (D-34); symbol settings panel (D-48); light/dark theme (D-35) |
 | Charts | lightweight-charts | Planned, not installed |
 | Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch, `run` (D-31) with a strategy per symbol (D-43, D-47) serving clients (D-32, D-33), backtests (D-37 to D-40, D-45) |
 | Binance client | In-house, asyncio on httpx + websockets (D-10) | REST including orders and algo orders, kline stream, user data stream |
@@ -61,7 +61,7 @@ Every message is a JSON object with a `type`. Amounts are strings in fixed-point
 | Direction | `type` | Fields |
 |---|---|---|
 | client → engine | `hello` | `token`. Must be the first message, within 5 s; otherwise the engine closes with code 1008 |
-| engine → client | `welcome` | `protocol` |
+| engine → client | `welcome` | `protocol`, `catalog` (below; D-48) |
 | engine → client | `logs` | `records`: list of `{time, level, logger, message}`. First the backlog (up to 200, INFO and above), then each new record as it is logged |
 | engine → client | `state` | `state`: the whole state (below). Sent after `welcome`, then whenever it changes (checked every 0.25 s) |
 | client → engine | `command` | `id` (any JSON value, echoed back), `name`: `emergency_close`, `lift_halt`, `stop_engine`, `set_symbol`, or `remove_symbol`; `args` (an object, optional, used by the last two) |
@@ -91,6 +91,17 @@ symbols      [{symbol, halted: str | null (this symbol's own halt, D-19/D-20),
 
 Strategy fields (D-43, D-47): `params` holds every parameter, as strings like amounts. `action` is `enter_long`, `enter_short`, or `exit`; `outcome` is text for the user, and `stopped` says why this symbol's strategy stopped. These fields, `leverage`, and `started_at` were added without changing the protocol version, so a client must accept them missing from an older engine. Engines before 2026-10-20 sent one top-level `strategy` instead of the per-symbol `name`, `interval`, and `params`.
 
+**Catalog** (D-48). What `set_symbol` accepts, built from the strategy registry; an engine before 2026-10-20 sends none.
+
+```
+max_leverage  int
+max_symbols   int
+intervals     [str]  the kline intervals, e.g. "4h"
+strategies    [{name, interval (its default), params: [{name, type: "int" | "decimal" | "bool", default: str}]}]
+```
+
+Defaults are text, like parameter values. Whether a setting enters with limit orders depends on its values, so the catalog doesn't say; `set_symbol` refuses those (D-45).
+
 **Commands.** `emergency_close` fires the kill switch (D-27); `ok` is false if a symbol couldn't be flattened. `lift_halt` answers `ok: true` with "halt lifted" or "not halted", and `ok: false` while today's loss is still at the limit. `stop_engine` (D-34) answers `ok: true` once any kill switch in progress has finished; the engine then closes every connection with code 1001 and deletes the connection file. The process itself exits a few seconds later, after its Binance streams close.
 
 `set_symbol` (D-47) takes `args` `{symbol, leverage: int, strategy: null | {name, interval, params: {name: str}}}`: a new symbol is added, a known one changed; left-out parameters take their defaults. It answers `ok: true` with what it did (`ETHUSDT added: 2x, no strategy`, `... changed: ...`, or `... unchanged`), and `ok: false` with the reason when a value is out of bounds, the symbol can't be traded, or it has an open position. `remove_symbol` takes `{symbol}` and is refused the same way while the symbol has a position. A refused or failed change has changed nothing.
@@ -103,7 +114,8 @@ A client whose unsent messages pile up past 1000 is disconnected.
 - The main process finds `engine/` relative to the app path, which works only when run from source (`npm run dev`). A packaged app needs another way to find the connection file and the engine's virtualenv.
 - Closing a terminal tab of the Claude desktop app ends the tab's whole process tree, detached processes included, as long as their parent is alive; a detached process whose parent had already exited survived (2026-10-19). An engine started as Electron's direct child therefore died with the terminal running `npm run dev`, without its clean shutdown, and missed a 4h decision. Hence the starter in the D-34 note.
 - The GUI starts the engine as `engine/.venv/Scripts/pythonw.exe -m quantdeck_engine run` (D-34), so the venv must exist (`uv sync`). That launcher is uv's trampoline, which runs the real interpreter as its child, so one engine shows as two `pythonw.exe` processes. The engine inherits Electron's inheritable handles: started from a GUI run with `--remoteDebuggingPort`, it kept that port bound after the GUI quit, and the next GUI couldn't open its debugging port (2026-10-16). Use a different port, or stop the engine, when testing over the DevTools protocol.
-- The preload script exposes only `window.api.engine` (snapshot, the commands, starting the engine, and status/state/logs/launch listeners) and `window.api.theme` (get and set the theme); the template's general `window.electron` IPC access was removed. The main process accepts only the known command names and asks for confirmation in a native dialog before sending any of them.
+- The preload script exposes only `window.api.engine` (snapshot, the commands, starting the engine, and status/state/logs/launch/catalog listeners) and `window.api.theme` (get and set the theme); the template's general `window.electron` IPC access was removed. The main process accepts only the known command names, checks the shape of `set_symbol`'s and `remove_symbol`'s `args`, and asks for confirmation in a native dialog written from the copy it then sends (D-48).
+- Screen checks without Electron or an engine, as in a worktree where neither may run (`progress.md` Known issues): `npx electron-vite build`, copy `out/renderer/` elsewhere, add a `<script>` before the bundle that defines a fake `window.api` returning a made-up snapshot, and serve the copy on `127.0.0.1` for the browser pane. Used for the settings panel on 2026-10-20.
 - Theme (D-35): the choice is saved as `theme.json` in Electron's userData folder (`%APPDATA%\gui` when run from source). `main.css` keeps every color in `:root` variables, dark by default and light under `prefers-color-scheme: light`; new UI uses the variables, never literal colors. lightweight-charts takes colors in JavaScript, so charts will need to read the variables and redraw when the theme changes.
 - Screen checks over the DevTools protocol: while the window is behind other windows, `document.visibilityState` is `hidden` and Chromium doesn't repaint, so a Win32 window capture (`PrintWindow`) shows the last painted frame while the title bar is current (2026-10-16). Take a `Page.captureScreenshot` first, which forces a paint. To catch an animation mid-way, slow it with `Animation.setPlaybackRate` in the same DevTools session.
 - Electron 39's built-in `WebSocket` (main process, checked 2026-10-16) differs from Node 24's:

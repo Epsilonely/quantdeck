@@ -5,42 +5,14 @@ import icon from '../../resources/icon.png?asset'
 import { EngineClient } from './engine-client'
 import { EngineLauncher } from './engine-launcher'
 import { isThemeSource, loadTheme, setTheme, themeBackground } from './theme'
-import {
-  COMMAND_NAMES,
-  type CommandName,
-  type CommandResult,
-  type EngineSnapshot
-} from '../shared/engine'
+import { confirmation, parseCommand } from './commands'
+import type { CommandResult, EngineSnapshot } from '../shared/engine'
 
 // engine/ in this checkout, for the connection file (D-32) and starting the engine (D-34). When
 // run from source, the app path is gui/. A packaged app would need another way to find it; that
 // is still open.
 const ENGINE_DIR = join(app.getAppPath(), '..', 'engine')
 const CONNECTION_FILE = join(ENGINE_DIR, 'state', 'connection.json')
-
-const CONFIRMATIONS: Record<CommandName, { message: string; detail: string; button: string }> = {
-  emergency_close: {
-    message: '긴급 청산을 실행할까요?',
-    detail:
-      '킬스위치를 발동합니다. 모든 포지션을 시장가 reduceOnly 주문으로 청산하고, 모든 주문을 취소한 뒤, ' +
-      '직접 정지를 해제할 때까지 거래를 멈춥니다 (D-27).',
-    button: '긴급 청산'
-  },
-  lift_halt: {
-    message: '거래 정지를 해제할까요?',
-    detail:
-      '킬스위치의 정지를 해제합니다. 오늘 손실이 아직 한도에 있으면 엔진이 거부합니다 (D-33).',
-    button: '정지 해제'
-  },
-  stop_engine: {
-    message: '엔진을 정지할까요?',
-    detail:
-      '엔진 프로세스를 종료합니다. 정지된 동안에는 일일 손실 확인과 킬스위치가 동작하지 않고, ' +
-      '열린 포지션은 거래소에 걸린 손절 주문만 지킵니다. 진행 중인 킬스위치가 있으면 끝난 뒤에 ' +
-      '정지합니다 (D-34).',
-    button: '엔진 정지'
-  }
-}
 
 function broadcast(channel: string, value: unknown): void {
   for (const window of BrowserWindow.getAllWindows()) window.webContents.send(channel, value)
@@ -59,7 +31,8 @@ const engine = new EngineClient(CONNECTION_FILE, {
     if (status.phase !== 'connecting') firstAttempt = false
   },
   state: (state) => broadcast('engine:state', state),
-  logs: (update) => broadcast('engine:logs', update)
+  logs: (update) => broadcast('engine:logs', update),
+  catalog: (catalog) => broadcast('engine:catalog', catalog)
 })
 
 function snapshot(): EngineSnapshot {
@@ -116,25 +89,26 @@ app.whenReady().then(() => {
     if (!BrowserWindow.fromWebContents(event.sender)) return
     if (snapshot().status.phase !== 'connected') launcher.start()
   })
-  ipcMain.handle('engine:command', async (event, name: unknown): Promise<CommandResult | null> => {
+  ipcMain.handle('engine:command', async (event, value: unknown): Promise<CommandResult | null> => {
     const window = BrowserWindow.fromWebContents(event.sender)
-    if (!window || !COMMAND_NAMES.includes(name as CommandName)) {
-      return { ok: false, message: `알 수 없는 명령: ${String(name)}` }
-    }
-    // Confirmed here rather than in the renderer, so nothing the renderer does alone can send one.
-    const confirmation = CONFIRMATIONS[name as CommandName]
+    const command = parseCommand(value)
+    if (typeof command === 'string') return { ok: false, message: command }
+    if (!window) return { ok: false, message: '명령을 보낸 창을 찾을 수 없습니다' }
+    // Confirmed here rather than in the renderer, with the copy that is sent, so nothing the
+    // renderer does alone can send a command, or show one setting and send another.
+    const ask = confirmation(command, engine.snapshot().state)
     const { response } = await dialog.showMessageBox(window, {
       type: 'warning',
       title: 'QuantDeck',
-      message: confirmation.message,
-      detail: confirmation.detail,
-      buttons: [confirmation.button, '취소'],
+      message: ask.message,
+      detail: ask.detail,
+      buttons: [ask.button, '취소'],
       defaultId: 1,
       cancelId: 1,
       noLink: true
     })
     if (response !== 0) return null
-    return engine.command(name as CommandName)
+    return engine.command(command)
   })
 
   loadTheme()

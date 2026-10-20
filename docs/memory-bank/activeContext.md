@@ -15,8 +15,9 @@ The current track is trading several coins, each with its own strategy, set from
 - The engine side (GitHub issue #18, D-47, merged 2026-10-20): `engine/state/symbols.json`, the `set_symbol` and `remove_symbol` commands, and per-symbol changes without a restart. The GUI symbol table shows each symbol's leverage and strategy.
   - The user restarted the engine on it at 11:05 KST. It created `symbols.json` from `config.toml`, decided on the latest closed candle (no signal) into the new record file, and logged no warnings. The `[symbols]` and `[strategy]` tables are then deleted from the user's `config.toml`, which now holds risk values only.
   - Testnet check, 11:09 KST, from a client script: `set_symbol` added ETHUSDT at 2× without a strategy in 0.6 s (margin type set to ISOLATED, leverage 2×, saved, mark price stream resubscribed), and `remove_symbol` took it out in 0.1 s. BTCUSDT and its strategy were untouched, and the GUI stayed connected. ETHUSDT keeps isolated 2× on the testnet account.
+- The GUI settings panel (GitHub issue #19, D-48): adding and removing coins and changing their leverage, strategy, and parameters from a panel under the symbol table, with the engine's catalog in `welcome` and the main process's confirmation written from the command it sends. Checked with a fake API in the browser pane only; it hasn't met an engine yet. The engine the user is running predates the catalog, so the panel stays off until that engine restarts on the new code.
 
-Next is the GUI settings screen on top of this (Open questions). A strategy goes on a coin only after it has held up on several coins (D-39); nothing enforces it in code (D-47). Engine work is done in a git worktree while the forward test runs from the main checkout; see Known issues in `progress.md` for what must not run there.
+Next is trying the panel on testnet from the main checkout (Next steps). A strategy goes on a coin only after it has held up on several coins (D-39); nothing enforces it in code (D-47), and the panel only reminds the user. Engine work is done in a git worktree while the forward test runs from the main checkout; see Known issues in `progress.md` for what must not run there.
 
 ## Open questions
 
@@ -31,16 +32,17 @@ Roughly in the order they're needed:
   The 15m holdout (2024 onward) has now been used. A new 15m idea needs its own fixed grid, and its result counts as one more test on the same history. Maker entries didn't rescue anything: on the conservative fill model (GitHub issue #16, D-45), two 1h limit-entry families failed their pre-set rules (GitHub issue #17, D-46), so the engine gets no limit orders for now. A limit changes which trades are taken more than what they cost, so it would need a signal with an edge before costs.
 - **Engine operation:** the GUI starts `run` when none is running and stops it on request (D-34). Still open: running it without the GUI (a Windows service or scheduled task) and what restarts it after a crash.
 - **Storage:** what SQLite records, and whether logs go there (D-12; D-33 keeps recent logs in memory for now). Historical candles (D-38), the halt record (D-29), the forward test record (D-43), and the symbol settings (D-47) are settled.
-- **GUI settings screen:** how the GUI learns each strategy's parameters and defaults (hard-coded in the GUI, or a list the engine sends), and how `set_symbol` and `remove_symbol` are confirmed. The main process asks before every command today, and a settings change can enter at once (D-47), so it ties into #7.
-- **GUI confirmation dialogs (#7):** the user wants the native confirmation boxes for the three commands replaced by an in-app looking modal, and is still weighing the approach (2026-10-16):
+- **GUI confirmation dialogs (#7):** the user wants the native confirmation boxes for the commands replaced by an in-app looking modal, and is still weighing the approach (2026-10-16):
   - A separate frameless, transparent modal window that the main process lays over the GUI. The confirmation stays in a page the main window's renderer can't touch, so a renderer bug still can't send a command unconfirmed, as with the native box today. More work: its own page (a second electron-vite entry), preload, and window management; creating the window can take 0.1–0.3 s, which a hidden pre-created window would avoid.
   - A React modal in the main window. Simplest, but the renderer then confirms on its own and the main process can't tell whether the user did, so a renderer bug could send `emergency_close` or `stop_engine` unconfirmed.
+
+  It now covers five commands. The main process writes every confirmation from the command it sends (D-48), so either approach changes only how it is shown; the React modal would also let a renderer bug send `set_symbol`, which can enter at once.
 - **Later:** GUI `sandbox: false`, Discord bot stack, which alerts it sends, and whether its commands need a narrower permission than the GUI's (safety principle 9), mainnet prerequisites (Ed25519 per D-11, IP whitelist, go-live criteria, mainnet risk values — D-23 to D-25 and D-41 set testnet values only).
 
 ## Next steps
 
 1. Keep the forward test going: the next 4h closes, then the first entry and exit in the GUI and the CSV record. The roadmap item is checked off once `run` has traded the strategy on testnet (issue #11).
-2. The GUI settings screen on top of #18 (Open questions). Changing a symbol's strategy or leverage while running has been tested with fakes only; check it on testnet with the screen.
+2. Try the settings panel (D-48) on testnet from the main checkout: the engine has to restart on the new code to send the catalog, and each add, change, and remove needs the user's OK, since a strategy can enter at once (D-47). Changing a running symbol's strategy or leverage has been tested with fakes only.
 3. The replay-and-compare tool for the forward test (Open questions); it reads both forward record files.
 4. How a packaged GUI finds `engine/` (`techContext.md`, GUI notes).
 5. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.

@@ -13,7 +13,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from quantdeck_engine.config import ConfigError
 from quantdeck_engine.server import PROTOCOL_VERSION, ClientServer, ConnectionFile, LogBuffer
-from quantdeck_engine.symbols import SymbolChangeRefused
+from quantdeck_engine.symbols import SymbolChangeRefused, catalog
 from quantdeck_engine.trading.risk import LiftRefused
 
 
@@ -144,6 +144,7 @@ async def test_client_gets_welcome_logs_and_state_in_order(
         first = [json.loads(await ws.recv()) for _ in range(3)]
     assert [m["type"] for m in first] == ["welcome", "logs", "state"]
     assert first[0]["protocol"] == PROTOCOL_VERSION
+    assert first[0]["catalog"] == catalog()  # D-48
     assert [r["message"] for r in first[1]["records"]] == ["before the client connected"]
     assert first[1]["records"][0]["level"] == "INFO"
     assert first[2]["state"] == {"halted": False}
