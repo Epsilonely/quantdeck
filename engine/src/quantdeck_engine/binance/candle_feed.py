@@ -152,14 +152,19 @@ class ClosedCandleFeed:
     ) -> object | None:
         """The next stream event, or None once the clock reaches `until`."""
         get = asyncio.ensure_future(queue.get())
-        done, _ = await asyncio.wait(
-            {get, reader},
-            timeout=max(until - self._clock(), 0),
-            return_when=asyncio.FIRST_COMPLETED,
-        )
+        try:
+            done, _ = await asyncio.wait(
+                {get, reader},
+                timeout=max(until - self._clock(), 0),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            # On every way out, cancellation included (a symbol change stops the strategy,
+            # D-47): a read left pending is destroyed later, and asyncio logs an ERROR.
+            # A read that already returned ignores this; one that hadn't takes no item.
+            get.cancel()
         if get in done:
             return get.result()
-        get.cancel()
         if reader in done:
             reader.result()  # raises the stream's error, if it had one
             raise FeedStopped(f"{self.symbol} {self.interval} kline stream ended")

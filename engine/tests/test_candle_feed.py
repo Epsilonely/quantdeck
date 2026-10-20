@@ -117,6 +117,14 @@ async def take(feed: ClosedCandleFeed, n: int) -> list[int]:
         return [(await anext(candles)).open_time // MINUTE - T0 // MINUTE for _ in range(n)]
 
 
+def queue_reads() -> set[asyncio.Task[object]]:
+    return {
+        task
+        for task in asyncio.all_tasks()
+        if getattr(task.get_coro(), "__qualname__", None) == "Queue.get"
+    }
+
+
 async def test_warm_up_returns_the_last_closed_candles() -> None:
     # Candle 10 is open, 9 closed 30 s ago (REST's copy not trusted yet), 8 closed 90 s ago.
     exchange = Exchange(list(range(11)), now_ms=WARM)
@@ -245,6 +253,32 @@ async def test_cancelling_a_reader_closes_the_stream_within_the_close_timeout(
         elapsed = await time_to_cancel(task)
 
     assert 0.1 < elapsed < 1  # waited out the timeout, not the server
+
+
+async def test_cancelling_a_reader_leaves_no_queue_read_pending() -> None:
+    # A symbol change or removal cancels the reader while it waits for the stream (D-47).
+    # A queue read left pending is destroyed minutes later, and asyncio logs an ERROR.
+    exchange = Exchange(list(range(11)), now_ms=WARM)
+    feed = exchange.feed()
+    await feed.warm_up(3)
+    exchange.events.put_nowait(kline(9))
+    received = asyncio.Event()
+
+    async def read() -> None:
+        async with aclosing(feed.candles()) as candles:
+            async for _ in candles:
+                received.set()  # and on to wait for the next candle
+
+    task = asyncio.create_task(read())
+    async with asyncio.timeout(2):
+        await received.wait()
+    waiting = queue_reads()  # held, so garbage collection can't hide one left pending
+    assert waiting
+
+    task.cancel()
+    await asyncio.wait({task})
+
+    assert [get for get in waiting if not get.done()] == []
 
 
 def test_warm_up_count_is_bounded() -> None:
