@@ -9,8 +9,10 @@ from typing import Any
 
 import httpx
 import pytest
+from fake_stream_server import lingering_server, time_to_cancel
 from websockets.asyncio.server import Server, ServerConnection, serve
 
+from quantdeck_engine.binance import streams
 from quantdeck_engine.binance.rest import BinanceRestClient
 from quantdeck_engine.binance.user_stream import (
     AccountUpdate,
@@ -297,6 +299,31 @@ async def test_keepalive_runs_while_connected() -> None:
             await asyncio.sleep(0.2)
 
     assert api.puts >= 2
+
+
+async def test_cancelling_the_stream_closes_it_within_the_close_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Stopping the engine waits for this; the server holds on to the connection after the
+    # close handshake, as Binance does.
+    monkeypatch.setattr(streams, "CLOSE_TIMEOUT", 0.2)
+    connected = asyncio.Event()
+
+    async def follow(client: BinanceRestClient, ws_root: str) -> None:
+        async with aclosing(user_data_stream(client, ws_root)) as stream:
+            async for _ in stream:
+                connected.set()
+
+    api = FakeListenKeyApi(["lk-1"])
+    async with (
+        lingering_server() as server,
+        BinanceRestClient(SETTINGS, transport=httpx.MockTransport(api)) as client,
+    ):
+        task = asyncio.create_task(follow(client, server.url))
+        await connected.wait()
+        elapsed = await time_to_cancel(task)
+
+    assert 0.1 < elapsed < 1  # waited out the timeout, not the server
 
 
 async def test_unparsed_events_are_passed_on_raw(caplog: pytest.LogCaptureFixture) -> None:

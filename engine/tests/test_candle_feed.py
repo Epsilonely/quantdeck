@@ -1,15 +1,17 @@
 import asyncio
 import logging
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import aclosing
 from decimal import Decimal
 
 import httpx
 import pytest
+from fake_stream_server import lingering_server, time_to_cancel
 
+from quantdeck_engine.binance import streams
 from quantdeck_engine.binance.candle_feed import ClosedCandleFeed, FeedStopped
 from quantdeck_engine.binance.rest import BinanceRestClient
-from quantdeck_engine.binance.streams import Kline
+from quantdeck_engine.binance.streams import Kline, kline_stream
 from quantdeck_engine.config import parse_settings
 
 SETTINGS = parse_settings({"BINANCE_API_KEY": "test-key", "BINANCE_API_SECRET": "test-secret"})
@@ -210,6 +212,39 @@ async def test_a_stream_that_ends_stops_the_feed() -> None:
 
     with pytest.raises(FeedStopped):
         await take(feed, 1)
+
+
+async def test_cancelling_a_reader_closes_the_stream_within_the_close_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A symbol change waits for this while it holds the symbol's order lock (D-47); the
+    # server holds on to the connection after the close handshake, as Binance does.
+    monkeypatch.setattr(streams, "CLOSE_TIMEOUT", 0.2)
+    connected = asyncio.Event()
+
+    def stream(
+        ws_root: str, symbol: str, interval: str, *, on_connect: Callable[[], None]
+    ) -> AsyncIterator[Kline]:
+        def connect() -> None:
+            connected.set()
+            on_connect()
+
+        return kline_stream(ws_root, symbol, interval, on_connect=connect)
+
+    async def read(feed: ClosedCandleFeed) -> None:
+        async with aclosing(feed.candles()) as candles:
+            async for _ in candles:
+                pass
+
+    exchange = Exchange([], now_ms=WARM)
+    client = BinanceRestClient(SETTINGS, transport=httpx.MockTransport(exchange.handler))
+    async with lingering_server() as server:
+        feed = ClosedCandleFeed(client, server.url, "BTCUSDT", "1m", stream=stream)
+        task = asyncio.create_task(read(feed))
+        await connected.wait()
+        elapsed = await time_to_cancel(task)
+
+    assert 0.1 < elapsed < 1  # waited out the timeout, not the server
 
 
 def test_warm_up_count_is_bounded() -> None:

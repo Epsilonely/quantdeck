@@ -50,7 +50,7 @@ Source: [Connect](https://developers.binance.com/en/docs/products/derivatives-tr
 - The server sends a ping frame every 3 minutes; no pong within 10 minutes → disconnected.
 - Max 10 incoming messages per second per connection.
 - Max 1024 streams per connection.
-- Observed on testnet (2026-10-03): when the client closes a stream, the close handshake completes (code 1000) but `websockets` still waits 5–7 s before the connection is gone, up to its `close_timeout` (default 10 s). With `close_timeout=2` the close took 2 s.
+- Observed on testnet: when the client closes a stream, the close handshake completes (code 1000, 2026-10-03), but the server keeps the TCP connection open for several seconds, and `websockets` waits for it to drop, up to its `close_timeout` (default 10 s). Timed on 2026-10-20 on the `/market` kline and mark price streams: with the default the connection dropped 5.2–9.5 s after a close (6 closes), never within 2 s, so with `close_timeout=2` every close ended at the timeout, in 2.0 s (8 closes). The `/private` user data stream wasn't timed.
 
 ### Mark price stream (2026-10-16)
 

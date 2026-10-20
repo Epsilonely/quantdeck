@@ -20,10 +20,10 @@ from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from typing import Any
 
-from websockets.asyncio.client import connect
 from websockets.exceptions import WebSocketException
 
 from quantdeck_engine.binance.rest import REQUEST_ERRORS, BinanceRestClient
+from quantdeck_engine.binance.streams import connect_stream
 
 logger = logging.getLogger(__name__)
 
@@ -238,7 +238,7 @@ async def user_data_stream(
         try:
             listen_key = await client.start_user_stream()
             # Never log this URL: it carries the listenKey.
-            async with connect(f"{ws_root}/private/ws/{listen_key.reveal()}") as ws:
+            async with connect_stream(f"{ws_root}/private/ws/{listen_key.reveal()}") as ws:
                 failures = 0
                 keepalive = asyncio.create_task(_keep_alive(client, keepalive_seconds))
                 try:

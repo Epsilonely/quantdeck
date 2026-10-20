@@ -1,9 +1,13 @@
+import asyncio
 import json
 from contextlib import aclosing
 from decimal import Decimal
 
+import pytest
+from fake_stream_server import lingering_server
 from websockets.asyncio.server import ServerConnection, serve
 
+from quantdeck_engine.binance import streams
 from quantdeck_engine.binance.streams import (
     kline_stream,
     kline_stream_url,
@@ -116,6 +120,22 @@ async def test_kline_stream_reports_every_connect() -> None:
                     break
 
     assert reported == 2
+
+
+async def test_a_stream_closes_within_the_close_timeout_while_the_server_holds_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Binance keeps the connection open after the close handshake, and websockets' own
+    # default would wait 10 s for it to drop.
+    monkeypatch.setattr(streams, "CLOSE_TIMEOUT", 0.2)
+    loop = asyncio.get_running_loop()
+    async with lingering_server(json.dumps(SAMPLE)) as server:
+        async with aclosing(kline_stream(server.url, "BTCUSDT", "1m")) as stream:
+            await anext(stream)
+            started = loop.time()
+        elapsed = loop.time() - started
+
+    assert 0.1 < elapsed < 1  # waited out the timeout, not the server
 
 
 MARK_PRICE = {

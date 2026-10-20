@@ -40,6 +40,11 @@ INTERVAL_MS = {
 # How long after its close REST's copy of a candle is trusted. The stream's closed message
 # is final at once; REST lagged it by more than 10 s on testnet (2026-10-19, D-42).
 SETTLE_MS = 60_000
+# Seconds a closing stream waits for Binance to drop the connection after the close
+# handshake; then websockets aborts it. Its default of 10 s held up symbol changes and
+# shutdown, since testnet took 5-9.5 s to drop it (binanceNotes.md). The engine is done
+# with the stream by then, so aborting loses nothing.
+CLOSE_TIMEOUT = 2.0
 
 
 # Slots: a backtest holds every candle of its period in memory.
@@ -116,6 +121,12 @@ def settled_klines(
     return candles
 
 
+def connect_stream(url: str) -> connect:
+    """`websockets` connect for every Binance stream, so a close takes `CLOSE_TIMEOUT` at
+    most: `async with` for one connection, `async for` to reconnect forever."""
+    return connect(url, close_timeout=CLOSE_TIMEOUT)
+
+
 async def _messages(
     url: str, name: str, on_connect: Callable[[], None] | None = None
 ) -> AsyncIterator[str | bytes]:
@@ -123,7 +134,7 @@ async def _messages(
 
     Messages sent while reconnecting are lost; `on_connect` runs on every (re)connect.
     """
-    async for ws in connect(url):
+    async for ws in connect_stream(url):
         async with ws:
             logger.info("%s stream %s connected", name, url)
             if on_connect is not None:
