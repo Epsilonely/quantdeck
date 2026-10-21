@@ -512,3 +512,17 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Relation to #7:** one function in the main process writes the confirmation of all five commands, so #7 changes only how it is shown. Confirming in the renderer (#7's option B) would now also let a renderer bug send `set_symbol`.
 - **Alternatives:** a strategy list hard-coded in the GUI; the catalog in the state; a separate tab or a modal form; confirming in the renderer.
 - **Date:** 2026-10-20
+
+## D-49 GUI fonts: Pretendard and JetBrains Mono, bundled with the app
+
+- **Decision:**
+  - The GUI's text font is Pretendard (the variable version), for Hangul and Latin alike. Values, IDs, and logs, which already used the monospace font, use JetBrains Mono; Hangul in them falls back to Pretendard.
+  - Both come from npm packages (`pretendard`, `@fontsource-variable/jetbrains-mono`, OFL-1.1) installed as devDependencies, and the renderer bundle carries their woff2 files, about 2.1 MB.
+  - Digits are tabular everywhere (`font-variant-numeric: tabular-nums`), and ligatures are off wherever the monospace font is used.
+- **Why:**
+  - Pretendard's Latin is based on Inter and its Hangul on Source Han Sans, drawn to match, so mixed Korean and English text keeps one weight and height. It has tabular figures (`tnum`), which keep numbers aligned in columns and still while they update.
+  - JetBrains Mono tells 0 from O and 1 from l and I at a glance, which matters for prices and order IDs.
+  - Bundled rather than referenced by name as installed fonts, at the user's choice (2026-10-21): the GUI then looks the same on a machine without them and in a packaged app, and no system font change alters it. The CSP (`default-src 'self'`) rules out a font CDN. The npm packages keep font files out of git; as devDependencies, electron-builder doesn't pack the whole Pretendard package (98 MB unpacked) into the app, and Vite copies only the woff2 files the CSS uses.
+  - Ligatures off: JetBrains Mono joins `->`, `>=`, and `!=` into single glyphs (→, ≥, ≠), so logs and values would no longer show the characters as sent (seen in the browser pane, 2026-10-21).
+- **Alternatives:** the system fonts (Segoe UI, Malgun Gothic, Cascadia Mono), used until now; the installed fonts by name; the IBM Plex family (Sans KR, Sans, Mono); Pretendard with tabular figures in the symbol table instead of the monospace font (not tried).
+- **Date:** 2026-10-21

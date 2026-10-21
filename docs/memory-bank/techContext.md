@@ -7,6 +7,7 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 | Component | Technology | Status |
 |---|---|---|
 | GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the commands; starts the engine when none is running (D-34); symbol settings panel (D-48); light/dark theme (D-35) |
+| Fonts | Pretendard, JetBrains Mono, bundled from npm (D-49) | In use |
 | Charts | lightweight-charts | Planned, not installed |
 | Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch, `run` (D-31) with a strategy per symbol (D-43, D-47) serving clients (D-32, D-33), backtests (D-37 to D-40, D-45) |
 | Binance client | In-house, asyncio on httpx + websockets (D-10) | REST including orders and algo orders, kline stream, user data stream |

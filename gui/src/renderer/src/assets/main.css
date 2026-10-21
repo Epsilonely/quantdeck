@@ -15,8 +15,12 @@
   --danger: #e5534b;
   --profit: #3fb27f;
   --loss: #e5534b;
-  --mono: ui-monospace, 'Cascadia Mono', Consolas, monospace;
-  --sans: 'Segoe UI', 'Malgun Gothic', system-ui, sans-serif;
+  /* Both fonts are bundled (main.tsx). Monospace fonts have no Hangul, so Hangul in --mono text
+     falls through to Pretendard. JetBrains Mono joins sequences such as >= and -> into one glyph,
+     so every rule that uses --mono also turns ligatures off: logs, IDs, and values show the
+     characters as sent. */
+  --mono: 'JetBrains Mono Variable', 'Cascadia Mono', Consolas, 'Pretendard Variable', monospace;
+  --sans: 'Pretendard Variable', 'Segoe UI', 'Malgun Gothic', system-ui, sans-serif;
 }
 
 @media (prefers-color-scheme: light) {
@@ -56,10 +60,13 @@ body {
   font-family: var(--sans);
   font-size: 14px;
   line-height: 1.5;
+  /* Every digit has the same width, so numbers line up in columns and don't shift as they update. */
+  font-variant-numeric: tabular-nums;
 }
 
 code {
   font-family: var(--mono);
+  font-variant-ligatures: none;
   background: var(--bg-raised);
   padding: 1px 5px;
   border-radius: 3px;
@@ -340,6 +347,7 @@ button:focus-visible {
 
 .card .value {
   font-family: var(--mono);
+  font-variant-ligatures: none;
   font-size: 15px;
 }
 
@@ -364,6 +372,7 @@ table.symbols th {
 
 table.symbols td {
   font-family: var(--mono);
+  font-variant-ligatures: none;
 }
 
 table.symbols .num {
@@ -442,6 +451,7 @@ h3 {
 
 .editor .field .static {
   font-family: var(--mono);
+  font-variant-ligatures: none;
   padding: 5px 0;
 }
 
@@ -460,6 +470,7 @@ h3 {
 
 .params input {
   font-family: var(--mono);
+  font-variant-ligatures: none;
 }
 
 .notice {
@@ -493,6 +504,7 @@ h3 {
   border-radius: 4px;
   padding: 6px 10px;
   font-family: var(--mono);
+  font-variant-ligatures: none;
   font-size: 12px;
 }
 
