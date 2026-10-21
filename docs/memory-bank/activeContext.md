@@ -1,6 +1,6 @@
 # Active Context
 
-_Last updated: 2026-10-20_
+_Last updated: 2026-10-21_
 
 ## Current focus
 
@@ -17,13 +17,17 @@ The current track is trading several coins, each with its own strategy, set from
   - Testnet check, 11:09 KST, from a client script: `set_symbol` added ETHUSDT at 2× without a strategy in 0.6 s (margin type set to ISOLATED, leverage 2×, saved, mark price stream resubscribed), and `remove_symbol` took it out in 0.1 s. BTCUSDT and its strategy were untouched, and the GUI stayed connected.
 - The GUI settings panel (GitHub issue #19, D-48): adding and removing coins and changing their leverage, strategy, and parameters from a panel under the symbol table, with the engine's catalog in `welcome` and the main process's confirmation written from the command it sends. The user restarted the engine on it at 13:49 KST (one start in between was refused by the instance lock while the old engine's streams closed, the known issue in `progress.md`), then from the GUI added ETHUSDT at 3× with the Bollinger reversion on 1h, changed its `width` from 2 to 4, and removed it, between 13:50 and 14:18 KST. Every step was logged without warnings, no signal came, and BTCUSDT was untouched. The change and the removal took 7–9 s, waiting for the old strategy's kline stream to close. With the 2 s stream close timeout (GitHub issue #20), the user restarted the engine at 16:12 KST and repeated the three steps: 1.0 s, 2.6 s, and 2.3 s. ETHUSDT keeps isolated 3× on the testnet account.
 
-The engine again trades BTCUSDT alone. A strategy goes on a coin only after it has held up on several coins (D-39); nothing enforces it in code (D-47), and the panel only reminds the user. Engine work is done in a git worktree while the forward test runs from the main checkout; see Known issues in `progress.md` for what must not run there.
+A strategy goes on a coin only after it has held up on several coins (D-39); nothing enforces it in code (D-47), and the panel only reminds the user. One deliberate exception, as an engine exercise rather than a strategy: on 2026-10-21 at 15:21 KST the user added ETHUSDT from the GUI with Donchian 20/10 on 5m at 5×, then changed it to 3m and, at 16:13, to 1m with 30/10. It entered long at 16:21 KST, and the user fired the emergency close at 16:24 (`progress.md`), so the account is halted until the user lifts it; lifting is the user's call alone. The 15m grid (D-44 note) shows such short channels lose after costs; the point is many entries, stops, and exits on testnet within days, where the 4h strategy takes weeks per trade, plus real signals for the replay tool. It shares the account with BTCUSDT, so a day of its losses can fire the kill switch, which also closes BTCUSDT and halts both until the user lifts it. Engine work is done in a git worktree while the forward test runs from the main checkout; see Known issues in `progress.md` for what must not run there.
 
 ## Open questions
 
 Roughly in the order they're needed:
 
 - **Forward test:** what counts as passing (how many trades or weeks, how close to the backtest's signals), and the tool that replays the recorded candles through the backtest and compares the signals (D-36, D-38). Pausing and resuming entries from the GUI (D-33) is still open. An engine started with a BTCUSDT position opened under 5× refuses to trade the symbol until it is closed (D-16).
+- **Per-symbol close and halt (asked for by the user on 2026-10-21):** a button on a symbol's row that closes that symbol's position at market (`reduceOnly`) and halts that symbol alone, while the others keep trading. The account-wide emergency close (D-33) stays as it is. To decide:
+  - whether the halt survives a restart, as the account halt does through its record (D-29), and how it is lifted; removing and re-adding a symbol already clears the engine's own per-symbol halts (D-47);
+  - whether a pause without a close (entries off, exits still on signal) comes with it, which is the GUI pause above (D-33);
+  - its close counts toward today's loss like any other (D-24), and its confirmation goes through the main process like every command (D-48).
 - **Strategy:** adding to an open position is out of scope for now (D-22). Take profit and trailing stops are deferred: the chosen strategy exits on its channel (D-36), and `TRAILING_STOP_MARKET` can't use `closePosition` (D-18).
 - **15m strategies:** the user wanted one, Donchian or not. The search (GitHub issue #15, D-44) found none worth forward-testing:
   - the move fade lost everywhere;
@@ -43,6 +47,7 @@ Roughly in the order they're needed:
 
 1. Keep the forward test going: the next 4h closes, then the first entry and exit in the GUI and the CSV record. The roadmap item is checked off once `run` has traded the strategy on testnet (issue #11).
 2. The replay-and-compare tool for the forward test (Open questions); it reads both forward record files.
-3. How a packaged GUI finds `engine/` (`techContext.md`, GUI notes).
-4. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
-5. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet, and the kill switch's bulk cancels have only run on an empty book.
+3. Per-symbol close and halt from the GUI (Open questions, GitHub issue #24).
+4. How a packaged GUI finds `engine/` (`techContext.md`, GUI notes).
+5. More income-history delay samples are optional; `trial` needs the user's OK each time since it places orders.
+6. Remaining Binance checks are listed under To verify in `binanceNotes.md`; several need a stop to actually trigger on testnet, and the kill switch's bulk cancels have only run on an empty book.
