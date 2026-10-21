@@ -39,6 +39,7 @@ from quantdeck_engine.strategy.registry import (
     STRATEGIES,
     StrategyError,
     default_strategy,
+    parameter_descriptions,
     parameter_text,
     parameter_types,
     parameters_of,
@@ -195,7 +196,8 @@ def parse_remove_symbol(args: Mapping[str, Any]) -> str:
 
 def catalog() -> dict[str, Any]:
     """What `set_symbol` accepts, for a client's settings screen (D-48): the bounds, the
-    intervals, and every registered strategy with its default interval and parameters.
+    intervals, and every registered strategy with its default interval and parameters, each
+    with the help the GUI shows next to it.
 
     Built from the strategy registry, so no client keeps its own copy. Defaults are text,
     as parameters are everywhere else. Whether a setting enters with limit orders depends
@@ -212,11 +214,17 @@ def catalog() -> dict[str, Any]:
 def _catalog_entry(name: str) -> dict[str, Any]:
     strategy = default_strategy(name)
     types = parameter_types(name)
+    descriptions = parameter_descriptions(name)
     return {
         "name": name,
         "interval": strategy.interval,
         "params": [
-            {"name": key, "type": _TYPE_NAMES[types[key]], "default": parameter_text(value)}
+            {
+                "name": key,
+                "type": _TYPE_NAMES[types[key]],
+                "default": parameter_text(value),
+                "description": descriptions[key],
+            }
             for key, value in parameters_of(strategy).items()
         ],
     }

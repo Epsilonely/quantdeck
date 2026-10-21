@@ -15,17 +15,33 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from quantdeck_engine.binance.streams import Kline
-from quantdeck_engine.strategy.base import Action, Enter, Exit, Position
+from quantdeck_engine.strategy.base import Action, Enter, Exit, Position, parameter
 from quantdeck_engine.trading.rules import Side
 
 
 @dataclass
 class BollingerReversion:
     interval: str = "1h"
-    period: int = 20
-    width: Decimal = Decimal(2)
-    stop_width: Decimal = Decimal(1)
-    limit_offset: Decimal = Decimal(0)  # in standard deviations; 0 enters at market
+    period: int = parameter(
+        20,
+        "밴드를 계산하는 봉 수. 현재 봉을 포함한 최근 이 개수 종가의 평균(가운데 선)과 "
+        "표준편차로 밴드를 그립니다.",
+    )
+    width: Decimal = parameter(
+        Decimal(2),
+        "밴드 폭(표준편차의 배수). 종가가 평균 ± 이 배수 × 표준편차 밖에서 마감하면 반대 "
+        "방향으로 진입하고, 종가가 가운데 선에 닿거나 넘어가면 청산합니다.",
+    )
+    stop_width: Decimal = parameter(
+        Decimal(1),
+        "스톱 거리(표준편차의 배수). 진입 신호가 난 종가(지정가 진입이면 지정가)에서 이만큼 더 "
+        "바깥에 스톱을 둡니다.",
+    )
+    limit_offset: Decimal = parameter(
+        Decimal(0),
+        "지정가 진입 거리(표준편차의 배수). 0이면 시장가로 진입합니다. 0보다 크면 종가보다 "
+        "이만큼 바깥에 지정가를 거는데, 지정가 진입은 백테스트 전용이라 엔진이 거부합니다.",
+    )
     _closes: deque[Decimal] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:

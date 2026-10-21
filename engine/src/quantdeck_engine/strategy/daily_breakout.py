@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from quantdeck_engine.binance.streams import INTERVAL_MS, Kline
-from quantdeck_engine.strategy.base import Action, Enter, Exit, Position
+from quantdeck_engine.strategy.base import Action, Enter, Exit, Position, parameter
 from quantdeck_engine.trading.rules import Side
 
 DAY_MS = 24 * 60 * 60 * 1000
@@ -25,8 +25,15 @@ DAY_MS = 24 * 60 * 60 * 1000
 @dataclass
 class DailyOpenBreakout:
     interval: str = "15m"
-    k: Decimal = Decimal("0.5")
-    long_only: bool = False
+    k: Decimal = parameter(
+        Decimal("0.5"),
+        "돌파 기준 배수. 당일 00:00 UTC 시가에서 전날(UTC) 고가−저가 폭 × k 이상 벗어나 처음 "
+        "마감한 봉의 방향으로 진입합니다. 스톱은 당일 시가, 청산은 그날 마지막 봉이며 하루에 "
+        "한 번만 진입합니다.",
+    )
+    long_only: bool = parameter(
+        False, "켜면 위쪽 돌파(롱)만 진입하고, 아래쪽 돌파(숏)는 건너뜁니다."
+    )
     _step: int = field(init=False, repr=False)
     _previous: deque[Kline] = field(init=False, repr=False)
 

@@ -95,6 +95,7 @@ export interface ParameterSpec {
   name: string
   type: ParameterType
   default: string
+  description?: string // help in Korean, shown next to the parameter; older engines send none
 }
 
 export interface StrategySpec {

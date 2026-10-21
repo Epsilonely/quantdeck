@@ -16,7 +16,7 @@ from decimal import Decimal
 from itertools import pairwise
 
 from quantdeck_engine.binance.streams import INTERVAL_MS, Kline
-from quantdeck_engine.strategy.base import Action, Enter, Exit, Position
+from quantdeck_engine.strategy.base import Action, Enter, Exit, Position, parameter
 from quantdeck_engine.trading.rules import Side
 
 DAY_MS = 24 * 60 * 60 * 1000
@@ -32,11 +32,28 @@ class _Bar:
 @dataclass
 class TrendPullback:
     interval: str = "1h"
-    bar_minutes: int = 240
-    trend_period: int = 55
-    atr_period: int = 14
-    limit_atr: Decimal = Decimal("0.5")  # 0 enters at market
-    stop_atr: Decimal = Decimal(2)
+    bar_minutes: int = parameter(
+        240,
+        "추세와 ATR을 재는 묶음 봉의 길이(분, 240이면 4시간). 봉 간격의 배수이면서 "
+        "하루(1440분)를 나누어떨어지게 해야 합니다.",
+    )
+    trend_period: int = parameter(
+        55,
+        "추세를 판단하는 묶음 봉 수. 마지막 묶음 봉 종가가 이 개수 종가의 평균보다 위면 상승, "
+        "아래면 하락 추세로 보고 그 방향으로만 진입합니다. 묶음 봉이 평균 반대쪽에서 마감하면 "
+        "청산합니다.",
+    )
+    atr_period: int = parameter(14, "ATR(묶음 봉의 평균 변동폭)을 계산하는 묶음 봉 수.")
+    limit_atr: Decimal = parameter(
+        Decimal("0.5"),
+        "지정가 진입 거리(ATR 배수). 종가에서 이만큼 되돌린 가격에 지정가를 겁니다. 0이면 "
+        "시장가로 진입합니다. 0보다 크면 지정가 진입이라 엔진이 거부하므로(백테스트 전용), "
+        "엔진에서 쓰려면 0으로 두세요.",
+    )
+    stop_atr: Decimal = parameter(
+        Decimal(2),
+        "스톱 거리(ATR 배수). 진입가(지정가 진입이면 지정가)에서 이만큼 떨어진 곳에 스톱을 둡니다.",
+    )
     _step: int = field(init=False, repr=False)
     _bar_ms: int = field(init=False, repr=False)
     _bars: deque[_Bar] = field(init=False, repr=False)

@@ -98,10 +98,10 @@ Strategy fields (D-43, D-47): `params` holds every parameter, as strings like am
 max_leverage  int
 max_symbols   int
 intervals     [str]  the kline intervals, e.g. "4h"
-strategies    [{name, interval (its default), params: [{name, type: "int" | "decimal" | "bool", default: str}]}]
+strategies    [{name, interval (its default), params: [{name, type: "int" | "decimal" | "bool", default: str, description: str}]}]
 ```
 
-Defaults are text, like parameter values. Whether a setting enters with limit orders depends on its values, so the catalog doesn't say; `set_symbol` refuses those (D-45).
+Defaults are text, like parameter values. `description` is the parameter's help in Korean, which the settings panel shows when the pointer is over the `?` after the name; it is declared with the parameter in the strategy's code, and a test fails if any parameter lacks one. An engine before 2026-10-21 sends no `description`, and the panel then shows no `?`. Whether a setting enters with limit orders depends on its values, so the catalog doesn't say; `set_symbol` refuses those (D-45).
 
 **Commands.** `emergency_close` fires the kill switch (D-27); `ok` is false if a symbol couldn't be flattened. `lift_halt` answers `ok: true` with "halt lifted" or "not halted", and `ok: false` while today's loss is still at the limit. `stop_engine` (D-34) answers `ok: true` once any kill switch in progress has finished; the engine then closes every connection with code 1001 and deletes the connection file. The process itself exits a few seconds later, after its Binance streams close.
 

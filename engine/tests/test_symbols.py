@@ -235,14 +235,13 @@ def test_catalog_lists_the_bounds_and_every_strategy() -> None:
     assert "4h" in data["intervals"]
     assert [s["name"] for s in data["strategies"]] == list(STRATEGIES)
     donchian = data["strategies"][0]
-    assert donchian == {
-        "name": "donchian",
-        "interval": "1h",
-        "params": [
-            {"name": "entry_period", "type": "int", "default": "20"},
-            {"name": "exit_period", "type": "int", "default": "10"},
-        ],
-    }
+    assert donchian["name"] == "donchian"
+    assert donchian["interval"] == "1h"
+    assert [{k: p[k] for k in ("name", "type", "default")} for p in donchian["params"]] == [
+        {"name": "entry_period", "type": "int", "default": "20"},
+        {"name": "exit_period", "type": "int", "default": "10"},
+    ]
+    assert set(donchian["params"][0]) == {"name", "type", "default", "description"}
     types = {
         (s["name"], p["name"]): (p["type"], p["default"])
         for s in data["strategies"]
@@ -251,6 +250,13 @@ def test_catalog_lists_the_bounds_and_every_strategy() -> None:
     assert types["bollinger", "width"] == ("decimal", "2")
     assert types["daily-breakout", "long_only"] == ("bool", "false")
     json.dumps(data)  # sent as it is
+
+
+def test_catalog_describes_every_parameter() -> None:
+    # The GUI shows it next to the parameter; a parameter added without parameter() has none.
+    for strategy in catalog()["strategies"]:
+        for p in strategy["params"]:
+            assert p["description"].strip(), f"{strategy['name']}.{p['name']} has no description"
 
 
 def test_catalog_defaults_are_accepted_by_set_symbol() -> None:

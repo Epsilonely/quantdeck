@@ -8,6 +8,7 @@ import type {
   StrategySetting,
   SymbolState
 } from '../../../shared/engine'
+import HelpTip from './HelpTip'
 
 // Adds a symbol or changes its leverage and strategy (D-47, D-48). The panel only builds the
 // command: the main process asks the user to confirm with what it sends, and the engine checks
@@ -270,7 +271,7 @@ function SymbolEditor({
             {spec.params.map((p) =>
               p.type === 'bool' ? (
                 <label className="field check" key={p.name}>
-                  <span className="label">{p.name}</span>
+                  <ParameterLabel spec={p} />
                   <span>
                     <input
                       type="checkbox"
@@ -286,7 +287,7 @@ function SymbolEditor({
                 </label>
               ) : (
                 <label className="field narrow" key={p.name}>
-                  <span className="label">{p.name}</span>
+                  <ParameterLabel spec={p} />
                   <input
                     value={draft.params[p.name] ?? ''}
                     inputMode={p.type === 'int' ? 'numeric' : 'decimal'}
@@ -331,6 +332,16 @@ function SymbolEditor({
         )}
       </div>
     </div>
+  )
+}
+
+// The parameter's name, with its help from the catalog when the engine sends one.
+function ParameterLabel({ spec }: { spec: ParameterSpec }): React.JSX.Element {
+  return (
+    <span className="label">
+      {spec.name}
+      {spec.description && <HelpTip text={spec.description} />}
+    </span>
   )
 }
 

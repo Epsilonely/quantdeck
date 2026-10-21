@@ -36,6 +36,17 @@ def parameter_types(name: str) -> dict[str, type]:
     return {f.name: f.type for f in fields(cls) if f.init and f.name != "interval"}
 
 
+def parameter_descriptions(name: str) -> dict[str, str]:
+    """A strategy's parameters and their help for clients (D-48), `interval` excluded; empty
+    for a parameter declared without `parameter()`."""
+    cls = _class(name)
+    return {
+        f.name: f.metadata.get("description", "")
+        for f in fields(cls)
+        if f.init and f.name != "interval"
+    }
+
+
 def default_strategy(name: str) -> Strategy:
     """Strategy `name` with every default, its interval included."""
     return _class(name)()

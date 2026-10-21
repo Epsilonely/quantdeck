@@ -10,15 +10,24 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from quantdeck_engine.binance.streams import Kline
-from quantdeck_engine.strategy.base import Action, Enter, Exit, Position
+from quantdeck_engine.strategy.base import Action, Enter, Exit, Position, parameter
 from quantdeck_engine.trading.rules import Side
 
 
 @dataclass
 class DonchianBreakout:
     interval: str = "1h"
-    entry_period: int = 20
-    exit_period: int = 10
+    entry_period: int = parameter(
+        20,
+        "진입 채널의 길이(봉 수). 종가가 직전 이 개수 봉의 최고가 위에서 마감하면 롱, "
+        "최저가 아래에서 마감하면 숏으로 진입합니다.",
+    )
+    exit_period: int = parameter(
+        10,
+        "청산 채널의 길이(봉 수)로, 진입 채널 이하여야 합니다. 스톱은 진입할 때 직전 이 개수 "
+        "봉의 반대쪽 끝(롱이면 최저가)에 두고 옮기지 않으며, 종가가 이 채널을 포지션 반대쪽으로 "
+        "벗어나면 청산합니다.",
+    )
     _previous: deque[Kline] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:

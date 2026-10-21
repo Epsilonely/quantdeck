@@ -252,7 +252,8 @@ function parseCatalog(value: unknown): StrategyCatalog | null {
           (param) =>
             typeof param?.name === 'string' &&
             ['int', 'decimal', 'bool'].includes(param.type) &&
-            typeof param.default === 'string'
+            typeof param.default === 'string' &&
+            (param.description === undefined || typeof param.description === 'string')
         )
     )
   if (!valid) console.error('[engine] the catalog in welcome is malformed; ignored')

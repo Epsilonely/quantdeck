@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 
 from quantdeck_engine.binance.streams import INTERVAL_MS, Kline
-from quantdeck_engine.strategy.base import Action, Enter, Exit, Position
+from quantdeck_engine.strategy.base import Action, Enter, Exit, Position, parameter
 from quantdeck_engine.trading.rules import Side
 
 DAY_MS = 24 * 60 * 60 * 1000
@@ -26,9 +26,18 @@ DAY_MS = 24 * 60 * 60 * 1000
 @dataclass
 class MoveFade:
     interval: str = "15m"
-    bar_minutes: int = 120
-    k: Decimal = Decimal(3)
-    lookback: int = 120
+    bar_minutes: int = parameter(
+        120,
+        "움직임을 재는 묶음 봉의 길이(분). 봉들을 UTC 기준으로 이 길이씩 묶습니다. 봉 간격의 "
+        "배수이면서 하루(1440분)를 나누어떨어지게 해야 합니다.",
+    )
+    k: Decimal = parameter(
+        Decimal(3),
+        "진입 기준(표준편차의 배수). 묶음 봉의 수익률이 −k×σ 이하면 롱, +k×σ 이상이면 숏으로 "
+        "되돌림을 노립니다. 스톱은 같은 크기의 움직임을 한 번 더 버티는 곳에 두고, 다음 묶음 "
+        "봉이 마감하면 청산합니다.",
+    )
+    lookback: int = parameter(120, "σ(묶음 봉 수익률의 표준편차)를 계산하는 직전 묶음 봉의 개수.")
     _step: int = field(init=False, repr=False)
     _bar_ms: int = field(init=False, repr=False)
     _returns: deque[Decimal] = field(init=False, repr=False)

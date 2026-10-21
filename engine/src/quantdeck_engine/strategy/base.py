@@ -10,7 +10,7 @@ a decision (D-06), and it treats every position on its symbol as its own, adopte
 included (D-14, D-19). Sizing, risk, and orders stay outside the strategy (D-22 to D-25).
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Protocol
 
@@ -44,6 +44,12 @@ class Exit:
 
 
 Action = Enter | Exit
+
+
+def parameter[T](default: T, description: str) -> T:
+    """A strategy parameter: a dataclass field with `default` and the help the GUI's settings
+    show next to it (D-48). The help is in Korean, the language the GUI speaks to the user."""
+    return field(default=default, metadata={"description": description})
 
 
 class Strategy(Protocol):

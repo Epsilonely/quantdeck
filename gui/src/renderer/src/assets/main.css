@@ -473,6 +473,56 @@ h3 {
   font-variant-ligatures: none;
 }
 
+/* A parameter's help (HelpTip): a "?" after its name, and the tip shown over it on hover or
+   focus. The tip is fixed to the window; HelpTip places it. */
+.help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  margin-left: 5px;
+  border: 1px solid currentColor;
+  border-radius: 50%;
+  color: var(--text-muted);
+  font-family: var(--sans);
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
+  vertical-align: 1px;
+  cursor: help;
+}
+
+.help:hover {
+  color: var(--info);
+}
+
+.help:focus-visible {
+  color: var(--info);
+  outline: 2px solid var(--info);
+  outline-offset: 1px;
+}
+
+.help-tip {
+  position: fixed;
+  z-index: 10;
+  width: max-content;
+  max-width: 280px;
+  padding: 6px 9px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 25%);
+  font-size: 12px;
+  font-weight: 400;
+  line-height: 1.5;
+  text-align: left;
+  /* Hangul breaks between words, not inside them. */
+  word-break: keep-all;
+  pointer-events: none;
+}
+
 .notice {
   padding: 6px 10px;
   border-left: 3px solid;
