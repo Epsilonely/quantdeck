@@ -2,6 +2,8 @@
 
 Design decisions and why they were made. Add new entries at the bottom. When a decision is reversed, mark the old entry `Superseded by D-XX` instead of deleting it.
 
+The backtest and the strategy search (D-37 to D-41, D-44 to D-46) are in `strategyResearch.md`. The two files share one numbering: a new entry takes the next number after the highest in either file and goes at the bottom of the file for its area.
+
 Safety rules (`reduceOnly`, exchange-side stops, kill switch, key handling, …) live in CLAUDE.md, not here.
 
 Entries dated `initial` were carried over from README.md. Where README gives no reason, **Why** says _not recorded_ — fill it in when known.
@@ -177,7 +179,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Alternatives:** A fixed USDT amount; a multiple of the risk amount; an equity-based loss that includes unrealized PnL.
 - **Note (2026-10-16):** The counted income types also include `SPECIAL_FUNDING_FEE`, `INSURANCE_CLEAR` (liquidation clearance fee), and `POSITION_LIMIT_INCREASE_FEE`, all costs of trading. Rebates (`COMMISSION_REBATE`, `FEE_RETURN`, ...) are not counted, so they can't make room for more losses. A type missing from the docs' list is logged as a WARNING and not counted.
 - **Note (2026-10-19, GitHub issue #13):** The room left also subtracts what every open position on the account loses if its stop fires: the loss to the stop that fires first, plus the taker fee to close there (0.05%). Positions and stops are read from REST at each entry (D-06, D-30), so a position counts whichever symbol it is on and whichever trader opened it (D-14). A position without a stop blocks entries until its emergency stop is placed (D-19), since its loss has no bound. Entries on all symbols take turns: each holds one account-wide slot from the gate until its stop is placed, so two entries at the same candle close can't both count on the same room. Assuming every stop fires together, coins that move together can't push the day past the limit either; the caveat above still applies. This replaces the original limitation, under which the room ignored positions on other symbols; harmless with one symbol and one entry per position (D-15, D-22), but it had to go before a second symbol trades.
-- **Note (2026-10-22, GitHub issue #25):** At the user's request, the GUI's today's loss card also shows, on a smaller line, every open position's unrealized PnL and the loss with it counted, so the distance to the limit can be seen while positions are open. Display only, as the user agreed: the limit, the entry gate, and the kill switch still count realized results, for the reasons above. The engine computes both from the display-only mark prices (D-33) and sends none until every position's price has arrived, since a partial total would mislead. Today's loss is re-read a few seconds after a position closes (D-30, D-31 note), so for those seconds the closed position's unrealized part is gone while its realized result hasn't arrived yet.
+- **Note (2026-10-22, GitHub issue #25):** At the user's request, the GUI's today's loss card also shows, on a smaller line, every open position's unrealized PnL and the loss with it counted, so the distance to the limit can be seen while positions are open. Display only, as the user agreed: the limit, the entry gate, and the kill switch still count realized results, for the reasons above. Both come from the display-only mark prices (D-33; fields in `techContext.md`). Today's loss is re-read a few seconds after a position closes (D-30, D-31 note), so for those seconds the closed position's unrealized part is gone while its realized result hasn't arrived yet.
 - **Date:** 2026-10-10
 
 ## D-25 Position cap 2× the base, leverage 5× capped at 10×, stop within half the liquidation distance
@@ -324,61 +326,6 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Alternatives:** Strategies driven by ticks or forming candles; strategies that keep their own record of their positions.
 - **Date:** 2026-10-18
 
-## D-37 The backtest reuses the live sizing and risk rules
-
-- **Decision:**
-  - The backtest sizes entries with the live code (D-22, D-25): the risk amount from the day's base balance, `stepSize` rounding, `MIN_NOTIONAL`, the notional caps, and the liquidation-distance check. It also applies the daily loss limit and the entry gate (D-23, D-24).
-  - When the simulated day's loss reaches the limit, the backtest closes the position and takes no entries for the rest of that UTC day, then resumes the next UTC day as if the user had lifted the halt (D-27). The report counts how often this happened.
-- **Why:** The results then include what the live engine would really skip or trim, such as entries below `MIN_NOTIONAL` or entries capped by the room left under the limit. How often the limit fires is one of the criteria for choosing a strategy (D-39). Live, a halt waits for the user; a backtest has no user, so it lifts at the next day boundary, the earliest a lift changes anything (D-27).
-- **Note:** The rest of the fill model is D-40.
-- **Date:** 2026-10-18
-
-## D-38 Backtest candles come from Binance's mainnet archive and REST, kept as the downloaded zip files
-
-- **Decision:**
-  - Backtests run on mainnet data: monthly zips from data.binance.vision (`futures/um`), daily zips for the current month, and REST `GET /fapi/v1/klines` for the days not yet archived. Every zip is checked against its `.CHECKSUM`, and loaded candles are checked for gaps and duplicates. Mark price klines and funding rates come from the same archive when the fill model needs them.
-  - To check a forward test (D-36), the backtest replays the testnet candles the engine actually saw, fetched from testnet REST, not mainnet data.
-  - The zip files are kept as downloaded in `engine/data/` (gitignored) and read directly, with no conversion step. Parquet (D-04) waits until the data outgrows this, such as years of 1m candles or trade data.
-- **Why:** Testnet prices and volume differ from mainnet's, and there is no testnet archive (`binanceNotes.md`), so mainnet data is the closest to the market a strategy would eventually trade. The archive is free, needs no key, and comes with checksums; REST fills in the days not archived yet. Keeping the original files means they can always be re-verified against Binance's checksums. Seven years of BTCUSDT 1h candles is about 60,000 rows, small enough to read from the zips on every run, so Parquet would add a large dependency (pyarrow or similar) and a conversion step for no gain yet.
-- **Alternatives:** Parquet from the start (D-04); REST only (slow paging, rate limits, no checksums); testnet data.
-- **Date:** 2026-10-18
-
-## D-39 The first strategy is picked by backtest
-
-- **Decision:** The candidates are a Donchian channel breakout (trend following) and a Bollinger Band mean reversion, both on closed candles (D-36), tested on BTCUSDT first (D-15). Both run through the backtest with costs, and the first strategy is the one that does better on: expectancy per trade after fees, slippage, and funding; maximum drawdown and longest losing streak; and how often the daily loss limit would have fired (D-37). If neither holds up, the candidates change; nothing goes to the forward test on a guess. The chosen strategy is then run on two or three other major coins (ETHUSDT and the like) with the BTCUSDT parameters unchanged; parameters are not tuned per coin.
-- **Why:** Which strategy is profitable can't be known before measuring it. Win rate alone doesn't decide it: a trend follower loses often and wins big, a mean reverter wins often and loses big, and either can end up ahead or behind after costs. The two cover both styles, have few parameters, and derive their stop price from their own rules (D-22). The daily limit is a small number of stop-outs (three on testnet, D-24), so long losing streaks mean halts, which is why they are a criterion. A strategy that works only on the coin it was chosen on has likely been fitted to that coin's history; tuning parameters per coin would make that more likely, not less. BTCUSDT comes first for its liquidity (backtest fills closest to real ones) and its archive back to 2020. Trading several coins at once is a separate step (D-15, D-24 note of 2026-10-19).
-- **Not a candidate for now:** A volatility breakout, which enters inside a forming candle and exits on time; it doesn't fit D-36.
-- **Date:** 2026-10-18
-- **Note (2026-10-19):** Both first candidates lost on BTCUSDT 1h after costs, so the candidates changed as this entry says; the choice is D-41.
-
-## D-40 Backtest fill model: next open with slippage, mark-price stops, taker fees, archived funding
-
-- **Decision:**
-  - A strategy's entry or exit fills at the next candle's open, moved against the trade by a market slippage (default 0.02%). Entries are sized at that candle's mark price open.
-  - Stops trigger when a candle's mark price range reaches them (D-18). They fill at the stop, or at the candle's last price open if the mark price opened past the stop, moved against the trade by a stop slippage (default 0.05%). A fill past the estimated liquidation price is cut at that price.
-  - Every fill pays the taker fee (default 0.05%, the regular tier).
-  - Funding from the archive settles while a position is open: quantity × mark price × rate. A funding at a candle's open time comes before that candle's fills.
-  - Symbol rules and leverage brackets are the configured network's current values (testnet by default); risk settings come from `engine/config.toml` (D-37). The starting balance defaults to 5000 USDT, the period to 2020-01-01 through yesterday, and the report breaks results down by year.
-  - All costs are command-line options.
-- **Why:** The live engine sends its market order right after a candle closes (D-17, D-36), so the next open is where it fills, and funding at that instant settles first. Triggering on the mark price matches the live stop; mark price candles are in the archive (D-38). Slippage and fees are set on the pessimistic side of a small BTCUSDT order, since an edge that only survives optimistic costs isn't one. The testnet rules and brackets match the forward test's conditions.
-- **Limitations:** With hourly candles, where the last price traded when a mark price stop fired is unknown, so the stop price stands in for it. Candles longer than the funding interval settle a funding inside a candle at its open. Current rules and brackets are applied to all of history.
-- **Note (2026-10-19):** Limit entries have their own fill model, with the maker fee (D-45). Everything above still applies to market entries, exits, and stops.
-- **Date:** 2026-10-19
-
-## D-41 First strategy: Donchian breakout 55/20 on BTCUSDT 4h, at 2× leverage on testnet
-
-- **Decision:** The first strategy for the testnet forward test is the Donchian breakout with entry period 55 and exit period 20 on 4h candles, trading BTCUSDT. Testnet leverage goes from 5× to 2× (D-25). The Bollinger mean reversion is dropped.
-- **How it was chosen (D-39), all with D-40 costs and the testnet risk values:**
-  - On BTCUSDT 1h with default parameters, both first candidates lost: Donchian 20/10 −27.0% (−0.010 R per trade), Bollinger −99.5% (−0.321 R). Donchian was ahead before costs; Bollinger lost even before them.
-  - A grid fixed in advance, Donchian {1h, 4h} × {20/10, 55/20}, was chosen on 2020–2023 and checked on 2024-01-01 to 2026-10-17. 1h was near zero or negative in both periods. On 2020–2023, 4h 55/20 led 4h 20/10 on expectancy (+0.455 vs +0.442 R), drawdown (10.4% vs 11.1%), and losing streak (5 vs 9). On the holdout it stayed positive but weaker: +9.2%, +0.141 R over 68 trades (t ≈ 0.8).
-  - The same parameters on other coins, full history through 2026-10-17, at 2×: ETHUSDT +0.080 R (179 trades), XRPUSDT +0.201 R (159), SOLUSDT +0.289 R (151); BTCUSDT +0.199 R (172). Max drawdowns 8–14%. The daily limit never fired in any run.
-  - At 5×, the D-25 check skipped more entry signals than were traded on the altcoins (ETH 326, XRP 240, SOL 509) and 106 on BTC; a breakout repeats its signal each candle while flat, so these count signals, not distinct trades. The 20-candle exit channel is often more than the ~10% from entry that 5× allows. At 2× BTC skipped none, with similar results, so the 5× results came from a filtered subset of the strategy's trades.
-- **Why:** It was positive in the selection period, the holdout, and on three other coins with unchanged parameters, so the result isn't fitted to one coin's history. The forward test on testnet costs nothing, and its job is to show the live engine trades as the backtest does (D-36). Lower leverage doesn't change the planned loss per trade (D-25); it moves the liquidation price to about 50% away and ties up more margin, which is fine with one symbol.
-- **Limits of the evidence:** Each result alone is not statistically clear (t between about 0.8 and 2), coins move together so the four don't count as four independent tests, and the holdout expectancy was a third of the selection period's. That is enough for a forward test, not for mainnet; go-live criteria are still open. Funding cost more than fees in most 4h runs, since positions are held for days.
-- **Date:** 2026-10-19
-- **Note (2026-10-21):** The selection and holdout figures above for BTCUSDT (+0.455 R, and +0.141 R over 68 trades) were run at 5×, where the liquidation-distance check skipped 89 and 17 entry signals. At the 2× the strategy trades, BTCUSDT 55/20 gives +0.325 R over 96 trades (+33.8%) on 2020–2023 and +0.068 R over 74 trades (+4.5%) on 2024-01-01 to 2026-10-17, with no skips; that is the expectancy to hold the forward test against.
-- **Note (2026-10-21), robustness grid:** fixed before the runs, 4h with entry {20, 30, 40, 55, 70, 85, 100} × exit {10, 15, 20, 30, 40} (exit ≤ entry, 32 settings) on BTCUSDT, ETHUSDT, SOLUSDT, and XRPUSDT at 2×, with D-40 costs (SOLUSDT and XRPUSDT at 0.04% slippage and 0.10% on stops). On 2020–2023 every setting was positive on every coin (BTCUSDT +0.23 to +0.64 R). On 2024 to 2026-10-20 (seen before), 27, 32, 30, and 32 of the 32 were positive, but smaller: around 55/20 on BTCUSDT +0.01 to +0.08 R. So 55/20 sits in a broad positive region rather than on a lucky peak, and the parameters stay. The longer exit (40) did better on BTCUSDT and ETHUSDT in the seen holdout, which is no reason to switch. Win rates were 27–53%; BTCUSDT 55/20 on 2020–2023 won 37.5% of trades, averaging +1.82 R on wins and −0.57 R on losses, since most exits come on the 20-candle channel before the stop. The period held strong trends (2020–21 rally, 2022 crash), which favors any trend follower.
-
 ## D-42 The strategy reads closed candles through a feed that fills gaps from REST and waits rather than skip
 
 - **Decision:**
@@ -393,14 +340,14 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 ## D-43 `run` trades one strategy from `config.toml`, acts on the latest closed candle at startup, and records every decision
 
 - **Decision:**
-  - **Settings:** one top-level `[strategy]` table in `engine/config.toml` (`name`, `interval`, and `[strategy.params]`) applies to every configured symbol, each with its own instance. Without the table, `run` places no entries, as before. The name must be in the strategy registry, the interval a kline stream interval, and the parameters pass the same checks as in the backtest; the warm-up has a code bound. Anything else stops the engine at startup (D-28).
+  - **Settings (superseded by D-47):** one top-level `[strategy]` table in `engine/config.toml` applied to every symbol. Each symbol now has its own strategy in `symbols.json`, checked as this table was: a registered name, a kline stream interval, the backtest's parameter checks, and the warm-up's code bound.
   - **Warm-up:** at startup the engine loads the strategy's `warmup` closed candles from REST (D-42), feeds them to it, and carries out the signal of the most recent one. Later candles come from the closed-candle feed.
   - **Each candle:** the engine reads the position from REST (D-06), retrying while REST fails as the feed does (D-42), passes the candle and the position to the strategy, and carries out an entry or exit through the live paths (D-17, D-18, D-22).
-  - **Record:** every candle the strategy decided on appends a row to `engine/data/forward/<SYMBOL>_<interval>.csv`: the candle, the position it saw, the action and stop price, and the outcome. A failed write logs a WARNING and changes nothing else.
-  - **Clients:** the state gains a top-level `strategy` (name, interval, parameters) and, per symbol, the last candle decided on, the last signal with its outcome, and why the strategy stopped, if it did. The protocol version stays 1. The GUI shows the strategy in the header and two columns in the symbol table.
+  - **Record:** every candle the strategy decided on appends a row to a CSV in `engine/data/forward/` (one file per symbol and strategy setting since D-47): the candle, the position it saw, the action and stop price, and the outcome. A failed write logs a WARNING and changes nothing else.
+  - **Clients:** per symbol, the state carries the last candle decided on, the last signal with its outcome, and why the strategy stopped, if it did. The protocol version stays 1. The top-level `strategy` this also added, shown in the GUI header, gave way to per-symbol settings in D-47.
   - **Failures:** while the account or the symbol is halted (`TradingHalted`; D-16, D-19, D-20, D-27), an entry signal is logged and skipped; exits always run. A request error or an unclear order outcome (D-20) is logged as an ERROR, and the strategy goes on with the next candle. Any other error stops that symbol's strategy with a CRITICAL log; the engine keeps running, so the kill switch, monitoring, and exchange-side stops carry on.
 - **Why:**
-  - One table for every symbol: D-39 runs the chosen parameters unchanged on every coin, and per-symbol settings would invite tuning each one.
+  - One table for every symbol (superseded by D-47, which keeps this as an operating rule): D-39 runs the chosen parameters unchanged on every coin, and per-symbol settings would invite tuning each one.
   - Acting on the latest closed candle at startup: the GUI stops and starts the engine (D-34), and an exit signal on a candle that closed while it was down would otherwise be lost, leaving open a position the backtest would have closed. The strategy decides from candles and the exchange's position only (D-36), so the restart gives the same decision.
   - Retrying the position read instead of skipping the candle: the strategy's indicators need every candle (D-42), and deciding without the position could miss an exit.
   - The record is what a forward test is checked against: replaying its candles through the backtest must give the same signals (D-36, D-38). It sits with the downloaded data in `engine/data/` (gitignored). It is a record, not state: nothing reads it back (D-06).
@@ -408,78 +355,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Limitations:** A restart inside a candle repeats that candle's decision and records it twice; if a stop closed that candle's entry before the restart, the repeat enters again, which the backtest wouldn't. An entry carried out at startup fills at the current price, not at the candle's next open (D-40).
 - **Alternatives:** per-symbol strategy tables; ignoring the last warm-up candle's signal (loses exits across restarts); stopping the engine on a strategy error.
 - **Date:** 2026-10-19
-- **Note (2026-10-20):** Superseded in part by D-47: each symbol has its own strategy, kept in `symbols.json` and changed by clients while the engine runs, and the record is named after the strategy setting. The warm-up, deciding at startup, the record's contents, and the failure handling stand.
-
-## D-44 15m candidates: the move fade is dropped; the daily-open breakout passed its holdout only nominally and stays backtest-only
-
-- **Decision:** Of the two 15m candidates (GitHub issue #15), the fade of large 1h/2h moves is dropped. The daily-open breakout, long only with k = 0.8, passed the checks fixed before the runs, but it isn't forward-tested: its holdout edge can't be told from zero. The 4h Donchian (D-41) stays the forward test's strategy. Both new strategies stay in the registry for backtests, as the Bollinger reversion does.
-- **The strategies (D-36 interface):**
-  - Daily-open breakout: O is the 00:00 UTC open and R the previous UTC day's high minus low. The day's first candle to close at or beyond O ± k·R enters that way, with the stop at O, and the position closes on the day's last candle. A day takes at most one entry.
-  - Move fade: 1h or 2h bars built from the 15m candles on UTC boundaries. A bar return of at least k·σ against the previous 120 bars' returns enters the other way, with a stop that allows the same move again, and the position closes when the next bar closes.
-  - Both exit on clock time read from the candle, never on time since entry, so they fit D-36.
-- **How they were tested** (D-40 costs, with SOLUSDT and XRPUSDT at 0.04% slippage and 0.10% on stops; 2× leverage; testnet risk values; the grid and pass rules were fixed in the issue before any run):
-  - **Baselines,** BTCUSDT 15m, 2020–2023, after costs (before costs in brackets):
-    - Donchian 20/10: −0.153 R per trade (+0.007 R)
-    - Donchian 55/20: −0.081 R (+0.014 R)
-    - Bollinger: −1.008 R (+0.023 R)
-
-    A 15m decision with a tight stop can't carry about 0.1–0.16 R of costs per trade.
-  - **Selection,** 2020–2023 (SOLUSDT from 2020-10) on BTC, ETH, SOL, and XRP, with 7 settings. A setting passed with positive expectancy on BTC and on two of the other three coins, and at least 30 trades on each.
-    - The move fade lost on every coin in all three settings, −0.03 to −0.11 R.
-    - The daily breakout passed in three of its four settings. Long only with k = 0.8 had the best mean, +0.103 R: BTC +0.143, ETH +0.175, SOL +0.068, XRP +0.025, with 239–300 trades each.
-    - Much of that came from 2020. On BTC it made +34% that year and +2–6% in each later year.
-  - **Holdout,** 2024-01-01 to 2026-10-18, long only with k = 0.8:
-    - BTC +0.011 R (228 trades, t ≈ 0.2), ETH +0.050 R (t ≈ 0.7), SOL +0.023 R (t ≈ 0.4), XRP −0.007 R.
-    - That is positive on three of four coins, the rule for passing, but every t is under 0.7, and 2025 lost on BTC, ETH, and SOL.
-    - Stops were a median 2–3% from entry, so fees took about 0.04–0.06 R per trade. Max drawdowns were 11–17%, and the daily limit never fired.
-- **Why:** The holdout expectancy fell to about a tenth of the selection period's, and the selection result leaned on one bull year in a long-only setting. Passing a rule set before the run is reason to keep the strategy, not to put it on the account in place of the 4h strategy, whose holdout was clearer (+0.141 R over 68 trades, D-41). One strategy trades per account (D-43), so forward-testing it would mean pausing the 4h test.
-- **Revisit:** Once per-coin strategies exist, or after more out-of-sample data. Maker (limit) entries would cut its costs, but they need a fill model first (D-17, D-40).
-- **Note (2026-10-19):** The fill model exists now (D-45). The two limit-entry families tested on it failed (D-46); this strategy wasn't among them.
-- **Date:** 2026-10-19
-- **Note (2026-10-21), Donchian 15m grid:** at the user's request, fixed before the runs: entry {20, 55, 110, 220, 440, 880} × exit {10, 20, 40, 80, 160, 320} (exit ≤ entry, 26 settings), the same coins, costs, and 2× as the 4h grid in D-41's note. On 2020–2023, 15, 17, 12, and 13 of the 26 settings were positive on BTCUSDT, ETHUSDT, SOLUSDT, and XRPUSDT, so the grid fails the rule (a majority on BTCUSDT and two other coins). The split is by time span, not by coin: channels of hours lose on every coin (BTCUSDT 20/10: 3,523 trades, 25.7% won, −0.153 R, −99.2%, the daily limit hit on 34 days), and only channels of several days are positive. 880/320, the same span as 4h 55/20, matched the 4h strategy without beating it consistently (BTCUSDT +0.297 against +0.325 R on 2020–2023, +0.016 against +0.068 R on 2024 onward) with 20–35% more trades. The edge is in multi-day trends; deciding every 15 minutes adds nothing, so the 4h strategy stays. The 2024+ 15m data had been seen before (above), so this counts as one more test on it.
-
-## D-45 Limit entries in the backtest: post-only for one candle, filled only when traded through
-
-- **Decision:**
-  - **Interface (extends D-36):** an entry may carry a limit price. The order is placed at the next candle's open, as live would send it right after the close, and cancelled at that candle's close if it hasn't filled; the strategy then decides again. An entry without a limit price stays a market order. Exits stay market orders and stops stay `STOP_MARKET` `closePosition` orders (safety principles 5 and 6). Each strategy declares whether it uses limit entries.
-  - **Fill model (extends D-40):**
-    - The limit is rounded to the tick away from the market (down for a long, up for a short), and the entry is sized at it with the live sizing, gate, and caps (D-22, D-24, D-25, D-37).
-    - A buy limit at or above the next open, or a sell limit at or below it, is rejected, as Binance rejects a post-only (`GTX`) order that would trade at once (`binanceNotes.md`).
-    - Otherwise it fills only if the last price trades through it by at least one tick within that candle: a buy when the low reaches the limit minus a tick, a sell when the high reaches the limit plus a tick. A touch doesn't fill.
-    - A fill is at the limit, with the maker fee (default 0.02%, the regular tier, `--maker-fee`) and no slippage.
-    - If the fill candle's mark price range also reaches the stop, the stop fires in that candle after the fill: at the stop price with the stop slippage, even if the mark price opened past it.
-    - The report counts limit entries placed, filled, rejected as crossing, and left unfilled.
-  - **Live:** the engine can't place limit entries yet. Loading `config.toml` (D-28) refuses a `[strategy]` that uses them, so `run` doesn't start. If a strategy returns one anyway, the strategy runner stops that symbol's strategy without placing an order (D-43).
-- **Why:** The 15m search (D-44) changed only the fee and kept the market entry's time and price. That misses what a limit entry really does: a better price, but also adverse selection (it fills when the price runs through it, against the trade at first) and missed fills (no fill when the price moves away, often the best trades). An edge must survive those before any engine work. Each choice sits on the pessimistic side:
-  - One candle only: an order that lived across candles would make the strategy remember it, and a restart could then decide differently (D-36).
-  - A trade-through: a touch says nothing about the order's place in the queue, but once the price trades past the limit, every order resting there has filled.
-  - The same-candle stop takes the worst order within the candle, since candles can't tell it (D-40 Limitations).
-  - Sizing at the limit matches the fill price, so a stop-out still loses about one risk amount (D-22).
-  - Refusing live: otherwise a strategy chosen on maker fills would trade at market with taker costs and different fills, which isn't the strategy that was backtested (D-07).
-- **Unchanged:** market-entry results are identical. BTCUSDT 4h Donchian 55/20 and 15m Bollinger, 2020–2023, gave the same report and trade list before and after (2026-10-19).
-- **Limitations:** No partial fills, queue position, or spread. The fill uses only the last price candle; the mark price only triggers the stop.
-- **Later, if a limit-entry strategy survives (out of scope here):** the engine's limit orders (`GTX`, expired by `GTD` or cancelled by the engine at the next close), partial fills, and counting a pending entry's risk at the entry gate (D-24).
-- **Alternatives:** Changing only the fee (what D-44 measured); an order that rests until filled or replaced; filling on a touch; 1m candles to order events within a candle.
-- **Note (2026-10-19):** No limit-entry strategy survived the first test of this model (D-46), so the engine work above waits.
-- **Note (2026-10-20):** Since D-47 the same check refuses such a strategy in `symbols.json` at startup and in a client's `set_symbol`.
-- **Date:** 2026-10-19
-
-## D-46 Limit-entry candidates: neither family passed, so no limit-entry strategy goes forward
-
-- **Decision:** Two limit-entry families were tested on the D-45 fill model (GitHub issue #17). The Bollinger reversion with a deeper limit is dropped, and the trend pullback's chosen setting failed its holdout. No limit-entry strategy goes to a forward test, the engine gets no limit orders for now, and the grid isn't widened. Both stay in the registry for backtests.
-- **The strategies (D-36 interface, 1h candles, each limit valid for one candle):**
-  - Bollinger with a limit offset: the existing signal (a close outside the 20-candle mean ± 2σ), entered with a limit a·σ beyond the close and the stop s·σ beyond the limit. a = 0 is the existing market entry.
-  - Trend pullback: 4h bars built from the 1h candles. The trend is the last bar's close against the mean of the last 55 bar closes, and ATR is the mean true range of the last 14 bars. While flat, every candle enters with the trend, with a limit k·ATR beyond its close and the stop m·ATR beyond the limit. The position closes when a bar closes across the mean. k = 0 enters at market.
-- **How they were tested** (rules fixed in the issue before any run; D-40 costs with the 0.02% maker fee, SOLUSDT and XRPUSDT at 0.04% slippage and 0.10% on stops; 2× leverage; testnet risk values):
-  - **Selection,** 2020–2023 (SOLUSDT from 2020-10) on BTC, ETH, SOL, and XRP: 8 limit settings, a or k ∈ {0.5, 1} × s or m ∈ {2, 3}, each against the market control with the same stop. A setting passed with positive expectancy on BTC and two of the other three coins (at least 30 trades each) and with a higher expectancy than its control on BTC and two of the other three.
-  - **Bollinger:** the limit cut its control's loss by a fifth to a third (means −0.077 to −0.103 R against −0.114 and −0.157 R), but every setting lost on every coin (t −1.4 to −4.1). Before costs, BTC was about zero across all six settings (−0.020 to +0.029 R): a limit saves costs, but there was no edge to save them for.
-  - **Trend pullback:** all four limit settings passed both rules (means +0.129 to +0.236 R; controls +0.105 and +0.156 R). k = 1, m = 2 had the highest mean, +0.236 R: BTC +0.156, ETH +0.013, SOL +0.517, XRP +0.260 (180–303 trades, t 0.1–1.5). SOL carried the mean, and ETH was flat.
-  - **Fills:** with k = 1, 1–2% of the limit orders filled (about 8% at k = 0.5), since a new order went out every hour while flat. None was rejected as crossing: a 1h candle opens next to the previous close.
-  - **Holdout,** 2024-01-01 to 2026-10-18, k = 1, m = 2: positive on ETH only (+0.058 R); BTC −0.076, SOL −0.029, XRP −0.022 (176–228 trades, every |t| under 1). The rule needed three of four. Its market control was positive on all four but weak (mean +0.077 R, t 0.1–0.8), so the limit's lead from the selection period reversed.
-- **Why:** The rules set before the runs decide it: the Bollinger family failed the selection, and the trend pullback failed its holdout. Deep limit fills in a trend look adversely selected: they catch the dips that keep going and miss the trends that never pull back. A limit changes which trades are taken more than what they cost, so it can't create an edge the signal lacks.
-- **By-product, not a candidate:** the trend pullback's market controls were positive on every coin in both periods, weakly in the holdout. They are a 4h trend follower, like the strategy already in the forward test (D-41). They weren't candidates here, and the holdout has now been seen, so a test of them would count as one more on the same history.
-- **Revisit:** Limit entries only with a signal that has an edge before costs, or if slippage on a larger account makes market entries costly.
-- **Date:** 2026-10-19
+- **Note (2026-10-20):** Superseded in part by D-47, as marked above: each symbol has its own strategy, kept in `symbols.json` and changed by clients while the engine runs. The warm-up, deciding at startup, the record's contents, and the failure handling stand.
 
 ## D-47 Each symbol's leverage and strategy live in an engine-owned file and change while the engine runs
 
@@ -500,7 +376,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - Deciding at once was the user's choice: it matches a restart, and a new strategy doesn't wait up to a candle.
   - USDT fixed: the daily loss limit covers one asset (D-23), and adding a symbol must not change it.
 - **Supersedes:** D-43's one `[strategy]` for every symbol. D-39's rule stands as an operating rule the code doesn't enforce: a strategy goes on a coin only after it held up on several coins, with parameters not tuned per coin.
-- **Limitations:** A symbol halted by D-16, D-19, or D-20 stays halted through a settings change; removing and adding it again clears the halt. A strategy stopped by an error (D-43) restarts only with a new setting or an engine restart. Two checkouts can still put two engines on one account (`progress.md` Known issues).
+- **Limitations:** A symbol halted by D-16, D-19, or D-20 stays halted through a settings change; removing and adding it again clears the halt. A strategy stopped by an error (D-43) restarts only with a new setting or an engine restart. Two checkouts can still put two engines on one account (GitHub issue #27; until it is fixed, CLAUDE.md keeps engines out of worktrees).
 - **Alternatives:** Writing changes into `config.toml` (rewrites the user's file and puts risk values within a client's reach); SQLite (D-04, still open); changing a symbol with an open position; a new strategy that waits for the next closed candle.
 - **Date:** 2026-10-20
 - **Note (2026-10-22):** A symbol's entry may also carry the user's pause, `paused_at` (D-50).
@@ -509,8 +385,8 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 
 - **Decision:**
   - **Catalog:** the engine's `welcome` carries what `set_symbol` accepts: the leverage and symbol-count bounds, the kline intervals, and every registered strategy with its default interval and each parameter's name, type (`int`, `decimal`, `bool`), and default as text. It is built from the strategy registry. The protocol version stays 1. Connected to an engine that sends no catalog, the GUI turns the settings off and asks for a restart on new code.
-  - **Confirmation:** `set_symbol` and `remove_symbol` go through the native dialog in the main process, like the other commands (GitHub issue #19). The main process checks the command's shape only: a known name, exactly the expected keys, a symbol in the engine's pattern, a whole-number leverage, a strategy that is null or a name, interval, and text parameters, and text limited to characters that can't break the dialog's lines. It writes the dialog from that copy against the last state it received (an addition, or each value before → after) and sends that same copy. A new or changed strategy's dialog says it decides on the latest closed candle at once and can enter at the current price (D-47), and that the forward record moves to a new file. Bounds stay the engine's check.
-  - **Screen:** a panel under the symbol table, opened by an add button or a row's change button: symbol (when adding), leverage, strategy, interval, and the parameters, filled with the current values, or the strategy's defaults when another strategy is chosen, with a reset to defaults. While the symbol has a position, the panel says the engine refuses and disables apply and remove; apply is also off while disconnected, while a command is in progress, when nothing changed, and on a typing mistake (format only). A success closes the panel and shows the engine's answer in the result banner; a failure stays in the panel with the reason.
+  - **Confirmation:** `set_symbol` and `remove_symbol` go through the native dialog in the main process, like the other commands (GitHub issue #19). The main process checks only the command's shape: a known name, the expected keys and types, and text limited to characters that can't break the dialog's lines. It writes the dialog from that copy against the last state it received (an addition, or each value before → after) and sends that same copy. A new or changed strategy's dialog says it decides on the latest closed candle at once and can enter at the current price (D-47), and that the forward record moves to a new file. Bounds stay the engine's check.
+  - **Screen:** a panel under the symbol table, opened by an add button or a row's change button, filled with the current values, or the chosen strategy's defaults. While the symbol has a position, the panel disables apply and remove, since the engine refuses them. A success closes the panel and shows the engine's answer in the result banner; a failure stays in the panel with the reason.
 - **Why:**
   - Catalog from the engine: the parameters and their defaults are the strategies' own code (D-07, D-36), so a copy in the GUI would drift when a strategy or a default changes. In `welcome` rather than the state, because it comes from code and can't change while the engine runs, and the state goes out about once a second (D-33).
   - Confirmation in the main process: a strategy set on a symbol can enter at once (D-47), so a renderer bug must not send a change unconfirmed, nor show one setting and send another. Writing the dialog from the copy that is sent makes it say exactly what goes out; the character limits keep a value from adding lines that pass for dialog text.

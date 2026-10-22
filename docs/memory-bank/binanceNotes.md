@@ -110,6 +110,7 @@ Source: [General Info](https://developers.binance.com/en/docs/products/derivativ
 
 - Headers: `X-MBX-USED-WEIGHT-<n><unit>` (per IP) on every response; `X-MBX-ORDER-COUNT-<n><unit>` (per account) on order responses.
 - 429 = rate limit hit, 418 = IP auto-banned after repeated 429s, 403 = WAF block, 5xx = server error (outcome of an order unknown).
+- Mainnet response (2026-10-19): a backtest of SOLUSDT 15m from 2020-01-01, before the symbol's first archived month, found no archive files for those months and asked REST for every missing day, and mainnet answered 429 (2400 weight per minute per IP). Start a backtest at the symbol's first archived month (Historical data archive below), and don't repeat a run that got a 429 right away.
 
 ### User data stream (2026-10-03)
 

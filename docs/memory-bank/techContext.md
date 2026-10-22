@@ -14,14 +14,14 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 | Discord bot | Undecided | Not started |
 | Storage | SQLite (trades, orders, logs); historical candles as Binance's downloaded zip files in `engine/data/`, Parquet deferred (D-38) | Planned; diagnostic logs go to files (D-12), the kill-switch halt record is `engine/state/halt.json` (D-29), and the symbols with their settings and the user's pauses are `engine/state/symbols.json` (D-47, D-50) |
 | Engine ↔ clients | WebSocket on `127.0.0.1`, token from a connection file (D-32) | Engine server and GUI client done |
-| Exchange | Binance USDⓈ-M Futures, HMAC keys (D-11) | Testnet; `run` has traded strategies there since 2026-10-21 (`progress.md`) |
+| Exchange | Binance USDⓈ-M Futures, HMAC keys (D-11) | Testnet; `run` has traded strategies there since 2026-10-21 |
 
 ## Requirements
 
 - Node.js 22+, npm 11+
-- Python 3.12+ and uv (engine). On the development machine uv was installed with winget; a shell opened before that install needs a restart to find `uv`.
+- Python 3.12+ and uv (engine)
 - Development machine: Windows 11
-- GitHub CLI (`gh`) for issues, installed with winget on 2026-10-03 and logged in as the repo owner. Like `uv`, a shell opened before the install needs a restart to find it; until then use `C:\Program Files\GitHub CLI\gh.exe`.
+- GitHub CLI (`gh`) for issues, logged in as the repo owner
 
 ## Layout
 
@@ -92,9 +92,9 @@ symbols      [{symbol, halted: str | null (the engine's own halt of it, D-16/D-1
                stops:  [{client_algo_id, side, type, trigger_price, close_position}]}]
 ```
 
-Strategy fields (D-43, D-47): `params` holds every parameter, as strings like amounts. `action` is `enter_long`, `enter_short`, or `exit`; `outcome` is text for the user, and `stopped` says why this symbol's strategy stopped. `unrealized_pnl` is every open position's unrealized PnL at the display-only mark prices, before closing fees, and `loss_with_unrealized` is `loss` minus it, both rounded to 0.01; they are null with no position open or before every position's mark price has arrived, and only the GUI uses them (D-24 note of 2026-10-22). These fields, `leverage`, `paused_at` (2026-10-22), the two unrealized fields (2026-10-22), and `started_at` were added without changing the protocol version, so a client must accept them missing from an older engine; the GUI takes a missing `paused_at` to mean the engine can't pause a symbol. Engines before 2026-10-20 sent one top-level `strategy` instead of the per-symbol `name`, `interval`, and `params`.
+Strategy fields (D-43, D-47): `params` holds every parameter, as strings like amounts. `action` is `enter_long`, `enter_short`, or `exit`; `outcome` is text for the user, and `stopped` says why this symbol's strategy stopped. `unrealized_pnl` is every open position's unrealized PnL at the display-only mark prices, before closing fees, and `loss_with_unrealized` is `loss` minus it, both rounded to 0.01; they are null with no position open or before every position's mark price has arrived, since a partial total would mislead, and only the GUI uses them (D-24 note of 2026-10-22). Fields are added without changing the protocol version (the strategy fields, `leverage`, `paused_at`, the unrealized fields, and `started_at` all were), so a client must accept any of them missing from an older engine; the GUI takes a missing `paused_at` to mean the engine can't pause a symbol.
 
-**Catalog** (D-48). What `set_symbol` accepts, built from the strategy registry; an engine before 2026-10-20 sends none.
+**Catalog** (D-48). What `set_symbol` accepts, built from the strategy registry. Like the state's added fields, `catalog` and `description` may be missing from an older engine; the GUI then turns the settings off or shows no `?`.
 
 ```
 max_leverage  int
@@ -103,13 +103,13 @@ intervals     [str]  the kline intervals, e.g. "4h"
 strategies    [{name, interval (its default), params: [{name, type: "int" | "decimal" | "bool", default: str, description: str}]}]
 ```
 
-Defaults are text, like parameter values. `description` is the parameter's help in Korean, which the settings panel shows when the pointer is over the `?` after the name; it is declared with the parameter in the strategy's code, and a test fails if any parameter lacks one. An engine before 2026-10-21 sends no `description`, and the panel then shows no `?`. Whether a setting enters with limit orders depends on its values, so the catalog doesn't say; `set_symbol` refuses those (D-45).
+Defaults are text, like parameter values. `description` is the parameter's help in Korean, which the settings panel shows when the pointer is over the `?` after the name; it is declared with the parameter in the strategy's code, and a test fails if any parameter lacks one. Whether a setting enters with limit orders depends on its values, so the catalog doesn't say; `set_symbol` refuses those (D-45).
 
 **Commands.** `emergency_close` fires the kill switch (D-27); `ok` is false if a symbol couldn't be flattened. `lift_halt` answers `ok: true` with "halt lifted" or "not halted", and `ok: false` while today's loss is still at the limit. `stop_engine` (D-34) answers `ok: true` once any kill switch in progress has finished; the engine then closes every connection with code 1001 and deletes the connection file. The process itself exits a few seconds later, after its Binance streams close.
 
-`set_symbol` (D-47) takes `args` `{symbol, leverage: int, strategy: null | {name, interval, params: {name: str}}}`: a new symbol is added, a known one changed; left-out parameters take their defaults. It answers `ok: true` with what it did (`ETHUSDT added: 2x, no strategy`, `... changed: ...`, or `... unchanged`), and `ok: false` with the reason when a value is out of bounds, the symbol can't be traded, or it has an open position. `remove_symbol` takes `{symbol}` and is refused the same way while the symbol has a position. A refused or failed change has changed nothing.
+`set_symbol` (D-47) takes `args` `{symbol, leverage: int, strategy: null | {name, interval, params: {name: str}}}`: a new symbol is added, a known one changed; left-out parameters take their defaults. It answers `ok: false` with the reason when a value is out of bounds, the symbol can't be traded, or it has an open position. `remove_symbol` takes `{symbol}` and is refused the same way while the symbol has a position. A refused or failed change has changed nothing.
 
-`pause_symbol`, `close_symbol`, and `resume_symbol` (D-50) take `{symbol}` and are refused for a symbol the engine doesn't have. `pause_symbol` answers `SYMBOL paused: ...` or `SYMBOL already paused since ...`. `close_symbol` answers `SYMBOL closed LONG 0.083; paused since ...` or `SYMBOL had no position; paused since ...`; if the pause couldn't be saved, it answers `ok: false` with the same text and why a restart would trade the symbol again, though the position was closed. `resume_symbol` answers `SYMBOL resumed: ...`, adding any halt that still blocks entries (the engine's own, or the kill switch's), or `SYMBOL not paused`.
+`pause_symbol`, `close_symbol`, and `resume_symbol` take `{symbol}`; what they answer and how they fail is in D-50. `resume_symbol`'s message also names any halt that still blocks entries.
 
 A client whose unsent messages pile up past 1000 is disconnected.
 
@@ -119,8 +119,9 @@ A client whose unsent messages pile up past 1000 is disconnected.
 - The main process finds `engine/` relative to the app path, which works only when run from source (`npm run dev`). A packaged app needs another way to find the connection file and the engine's virtualenv.
 - Closing a terminal tab of the Claude desktop app ends the tab's whole process tree, detached processes included, as long as their parent is alive; a detached process whose parent had already exited survived (2026-10-19). An engine started as Electron's direct child therefore died with the terminal running `npm run dev`, without its clean shutdown, and missed a 4h decision. Hence the starter in the D-34 note.
 - The GUI starts the engine as `engine/.venv/Scripts/pythonw.exe -m quantdeck_engine run` (D-34), so the venv must exist (`uv sync`). That launcher is uv's trampoline, which runs the real interpreter as its child, so one engine shows as two `pythonw.exe` processes. The engine inherits Electron's inheritable handles: started from a GUI run with `--remoteDebuggingPort`, it kept that port bound after the GUI quit, and the next GUI couldn't open its debugging port (2026-10-16). Use a different port, or stop the engine, when testing over the DevTools protocol.
-- The preload script exposes only `window.api.engine` (snapshot, the commands, starting the engine, and status/state/logs/launch/catalog listeners) and `window.api.theme` (get and set the theme); the template's general `window.electron` IPC access was removed. The main process accepts only the known command names, checks the shape of every symbol command's `args`, and asks for confirmation in a native dialog written from the copy it then sends (D-48).
-- Screen checks without Electron or an engine, as in a worktree where neither may run (`progress.md` Known issues): `npx electron-vite build`, copy `out/renderer/` elsewhere, add a `<script>` before the bundle that defines a fake `window.api` returning a made-up snapshot, and serve the copy on `127.0.0.1` for the browser pane. Used for the settings panel on 2026-10-20.
+- The preload script exposes only `window.api.engine` (snapshot, the commands, starting the engine, and status/state/logs/launch/catalog listeners) and `window.api.theme` (get and set the theme); the template's general `window.electron` IPC access was removed. The main process checks and confirms every command before sending it (D-48).
+- Screen checks without Electron or an engine, as in a worktree where neither may run (CLAUDE.md working rules): `npx electron-vite build`, copy `out/renderer/` elsewhere, add a `<script>` before the bundle that defines a fake `window.api` returning a made-up snapshot, and serve the copy on `127.0.0.1` for the browser pane.
+- A stopping engine waits about 2 s for each Binance stream to close (`binanceNotes.md`, GitHub issue #20) before it releases the instance lock (D-31), so a start pressed meanwhile is refused and the GUI shows the lock error. A symbol change that replaces or removes a running strategy waits the same 2 s, holding that symbol's order lock.
 - Theme (D-35): the choice is saved as `theme.json` in Electron's userData folder (`%APPDATA%\gui` when run from source). `main.css` keeps every color in `:root` variables, dark by default and light under `prefers-color-scheme: light`; new UI uses the variables, never literal colors. lightweight-charts takes colors in JavaScript, so charts will need to read the variables and redraw when the theme changes.
 - Screen checks over the DevTools protocol: while the window is behind other windows, `document.visibilityState` is `hidden` and Chromium doesn't repaint, so a Win32 window capture (`PrintWindow`) shows the last painted frame while the title bar is current (2026-10-16). Take a `Page.captureScreenshot` first, which forces a paint. To catch an animation mid-way, slow it with `Animation.setPlaybackRate` in the same DevTools session.
 - Electron 39's built-in `WebSocket` (main process, checked 2026-10-16) differs from Node 24's:
