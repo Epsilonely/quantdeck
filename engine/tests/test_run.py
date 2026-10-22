@@ -14,7 +14,12 @@ from websockets.asyncio.client import connect
 
 from quantdeck_engine.binance.rest import UnknownSymbol
 from quantdeck_engine.binance.streams import kline_from_row
-from quantdeck_engine.binance.user_stream import AccountUpdate, UserStreamConnected
+from quantdeck_engine.binance.user_stream import (
+    AccountUpdate,
+    OrderUpdate,
+    UserStreamConnected,
+    parse_order_update,
+)
 from quantdeck_engine.config import ConfigError, SymbolConfig, parse_settings, strategy_config
 from quantdeck_engine.lock import EngineAlreadyRunning, InstanceLock
 from quantdeck_engine.run import Engine, RunFailed, run_engine, start_engine
@@ -194,6 +199,27 @@ async def test_reconnect_and_funding_request_a_check(
     engine = await start(FakeExchange(), store, symbol_store)
     engine.on_event(UserStreamConnected())
     assert engine.checker.requested
+
+
+def order_update(execution_type: str, symbol: str = "BTCUSDT") -> OrderUpdate:
+    o = {"s": symbol, "c": "qd_e_BTCUSDT_1_00", "S": "BUY", "o": "MARKET", "x": execution_type}
+    o |= {"X": "FILLED", "i": 7, "ps": "BOTH", "R": False, "q": "0.083", "p": "0", "sp": "0"}
+    o |= {"ap": "60000", "l": "0.083", "L": "60000", "z": "0.083", "rp": "0", "t": 1, "T": 1}
+    return parse_order_update({"E": 1, "o": o})
+
+
+async def test_fills_and_reconnects_ask_for_the_trades(
+    store: HaltStore, symbol_store: SymbolStore
+) -> None:
+    # D-51: read again from the exchange, never added from the event.
+    engine = await start(FakeExchange(), store, symbol_store)
+    engine.on_event(order_update("NEW"))
+    assert not engine.history._wake.is_set()
+    engine.on_event(order_update("TRADE", "ETHUSDT"))
+    assert engine.history._requested == {"ETHUSDT"} and not engine.history._requested_all
+    engine.on_event(UserStreamConnected())
+    assert engine.history._requested_all
+    assert engine.trades() is None  # until the first read
 
 
 async def test_closed_position_requests_a_check_and_cancels_its_stop(

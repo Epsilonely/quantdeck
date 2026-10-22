@@ -553,11 +553,182 @@ h3 {
   border-color: var(--danger);
 }
 
+/* The main column and, beside it, the recent trades panel (D-51). Each scrolls on its own, so the
+   header and its emergency close stay in view. */
+.workspace {
+  display: flex;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.main-column {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+
+/* A header button that shows or hides a panel. */
+button[aria-pressed='true'] {
+  background: var(--bg-sunken);
+  border-color: var(--text-muted);
+}
+
 .log-section {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 180px;
+}
+
+.trades-panel {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: 340px;
+  min-height: 0;
+  padding: 10px 4px 0 12px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.trades-totals {
+  padding: 0 8px 8px 0;
+  border-bottom: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.trades-totals span {
+  font-family: var(--mono);
+  font-variant-ligatures: none;
+}
+
+.trades-note {
+  padding: 10px 0;
+  font-size: 13px;
+}
+
+.trades-scroll {
+  flex: 1;
+  min-height: 0;
+  padding-right: 8px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.trades-scroll ul {
+  list-style: none;
+  padding: 0;
+}
+
+/* Stays at the top while its day's trades scroll under it. */
+.trades-day {
+  position: sticky;
+  top: 0;
+  padding: 8px 0 4px;
+  background: var(--bg-raised);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.trade {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+
+.trade-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.trade-line > * {
+  white-space: nowrap;
+}
+
+/* Quantity and price, then the fees at the right; fees in two assets drop to their own line. */
+.trade-line.sub {
+  flex-wrap: wrap;
+  row-gap: 0;
+}
+
+.trade-fee {
+  margin-left: auto;
+}
+
+.trade-time,
+.trade-symbol,
+.trade-pnl,
+.trade-line.sub {
+  font-family: var(--mono);
+  font-variant-ligatures: none;
+}
+
+.trade-time {
+  color: var(--text-muted);
+}
+
+.trade-symbol {
+  font-weight: 600;
+}
+
+.trade-line.sub {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+/* A trade's role (D-21) as a small badge, colored by how it ended. */
+.role {
+  padding: 0 6px;
+  border: 1px solid currentColor;
+  border-radius: 8px;
+  font-size: 11px;
+}
+
+.role-entry {
+  color: var(--info);
+}
+
+.role-exit {
+  color: var(--ok);
+}
+
+.role-stop {
+  color: var(--warn);
+}
+
+.role-kill,
+.role-liquidation,
+.role-adl {
+  color: var(--danger);
+}
+
+.role-other {
+  color: var(--text-muted);
+}
+
+/* Too narrow for two columns: the panel goes under the main column and the page scrolls. */
+@media (max-width: 960px) {
+  .workspace {
+    flex-direction: column;
+    overflow-y: auto;
+  }
+
+  .main-column {
+    flex: none;
+    overflow: visible;
+  }
+
+  .trades-panel {
+    width: auto;
+    max-height: 60vh;
+  }
 }
 
 .logs {

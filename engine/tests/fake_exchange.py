@@ -104,6 +104,11 @@ class FakeExchange:
     # `positionRisk` rows for symbols other than `symbol`, which no order here changes.
     other_positions: list[dict[str, Any]] = field(default_factory=list)
     orders: dict[str, dict[str, Any]] = field(default_factory=dict)  # every order, by client ID
+    # Trade history (D-51): `userTrades` rows, older orders for `allOrders`, and algo orders no
+    # longer open for `allAlgoOrders`, every symbol's.
+    user_trades: list[dict[str, Any]] = field(default_factory=list)
+    past_orders: list[dict[str, Any]] = field(default_factory=list)
+    past_algo_orders: list[dict[str, Any]] = field(default_factory=list)
     failures: dict[tuple[str, str], list[Failure]] = field(default_factory=dict)
     requests: list[tuple[str, str, dict[str, str]]] = field(default_factory=list)
 
@@ -194,7 +199,36 @@ class FakeExchange:
                 return httpx.Response(200, json=[balance])
             case ("GET", "/fapi/v1/income"):
                 page, limit = int(p["page"]), int(p["limit"])
-                return httpx.Response(200, json=self.incomes[(page - 1) * limit : page * limit])
+                rows = self.incomes
+                if "incomeType" in p:
+                    rows = [i for i in rows if i.get("incomeType") == p["incomeType"]]
+                return httpx.Response(200, json=rows[(page - 1) * limit : page * limit])
+            case ("GET", "/fapi/v1/userTrades"):
+                start, end = int(p["startTime"]), int(p["endTime"])
+                rows = [
+                    t
+                    for t in self.user_trades
+                    if t["symbol"] == p["symbol"] and start <= t["time"] <= end
+                ]
+                rows.sort(key=lambda t: (t["time"], t["id"]))
+                return httpx.Response(200, json=rows[: int(p["limit"])])
+            case ("GET", "/fapi/v1/allOrders"):
+                rows = [
+                    o
+                    for o in [*self.orders.values(), *self.past_orders]
+                    if o["symbol"] == p["symbol"] and o["orderId"] >= int(p.get("orderId", 0))
+                ]
+                rows.sort(key=lambda o: o["orderId"])
+                return httpx.Response(200, json=rows[: int(p["limit"])])
+            case ("GET", "/fapi/v1/allAlgoOrders"):
+                # Filtered by creation time; a row without one is in every period.
+                start, end = int(p["startTime"]), int(p["endTime"])
+                rows = [
+                    a
+                    for a in [*self.algo_orders, *self.past_algo_orders]
+                    if a["symbol"] == p["symbol"] and start <= a.get("createTime", start) <= end
+                ]
+                return httpx.Response(200, json=rows[: int(p["limit"])])
             case ("GET", "/fapi/v1/klines"):
                 # The most recent rows only, as without startTime (the warm-up).
                 return httpx.Response(200, json=self.klines[-int(p["limit"]) :])

@@ -286,6 +286,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Note (2026-10-20):** Commands may carry an `args` object; `set_symbol` and `remove_symbol` came with D-47. Clients get each symbol's settings in the state.
 - **Note (2026-10-20):** `welcome` also carries the catalog of what `set_symbol` accepts (D-48).
 - **Note (2026-10-22):** Pausing entries came per symbol with D-50 (`pause_symbol`, `close_symbol`, `resume_symbol`); there is still no account-wide pause.
+- **Note (2026-10-22):** A second whole-list message, `trades`, came with D-51: the last 7 days' trades, sent only when they change.
 - **Date:** 2026-10-16
 
 ## D-34 The GUI starts the engine when none is running and can stop it
@@ -427,4 +428,25 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Discord bot (safety principle 9):** `pause_symbol` and `close_symbol` are stop and close actions; `resume_symbol` starts trading again, so it is not.
 - **Limitations:** a close that fails (a request error or an unclear outcome, D-20) leaves the pause in place; the stop still protects the position, and the user can press it again. The close isn't retried as the kill switch's is (D-27). `trial` ignores the pause; it runs only with the user's OK each time.
 - **Alternatives:** a pause in memory only; resume also lifting the engine's halt; one command with a `close` flag; reusing the engine's halt for the user's pause, which would make resume lift both.
+- **Date:** 2026-10-22
+
+## D-51 The GUI shows the last 7 days' trades, read from the exchange, one row per order, in their own message
+
+- **Decision:**
+  - **What:** every order filled in the last 7 × 24 hours, newest first, in a panel on the right of the GUI's main screen, under a heading per local date (GitHub issue #29). A row is one order with its fills together: the first fill's time, symbol, side, total quantity, average price (to the finest tick a fill had), realized PnL, fees by asset, and its role.
+  - **Role:** from the client order ID (D-21): entry, exit, stop, kill switch, plus liquidation (`autoclose-…`) and ADL (`adl_autoclose`) from the exchange; anything else is "other". A stop fills through the order the exchange places when it triggers, so an order whose ID shows no role is looked up among the symbol's algo orders by `actualOrderId`, a week at a time back to the 90 days the exchange keeps orders.
+  - **Source:** the exchange only (D-06): `GET /fapi/v1/userTrades` per symbol for the fills, `GET /fapi/v1/allOrders` once per order for its client ID, `GET /fapi/v1/allAlgoOrders` for a stop's. The symbols read are the engine's own, plus other symbols traded in the window (one removed since, D-47), found at startup from the window's `COMMISSION` income records and later from fills on the user data stream. Roles are kept in memory, since they never change; nothing is written to disk.
+  - **When:** at startup, every 5 minutes, and after a stream reconnect for every symbol; for one symbol, 3 s after a fill on it arrives on the user data stream (`ORDER_TRADE_UPDATE` with execution type `TRADE`). A failed read logs a WARNING and keeps that symbol's last fills; nothing is shown until each of the engine's symbols has been read once.
+  - **Protocol:** a new engine → client message `trades` with the whole list and its totals, sent after `state` when a client connects and again whenever the list changes. The protocol version stays 1. Shape in `techContext.md`.
+  - **GUI:** a header button hides or shows the panel. The window opens 1400 px wide (at most the screen's work area) so the symbol table fits beside it; below 960 px the panel goes under the main column.
+- **Why:**
+  - The user asked (2026-10-22) to see trades in the GUI: at first today's, then up to 3 months, then settled on the last 7 days in a side panel, newest on top, since a month was too much.
+  - 7 days is one `userTrades` query per symbol (its limit), so a full read is one request per symbol, and the window needs no day boundary: neither the risk day (D-23) nor local midnight decides what is listed; only the headings use the local date.
+  - Rebuilt from the exchange rather than added up from stream events, as D-30 does for today's loss: a restart, including one the GUI makes (D-34), or a stream gap loses nothing, and no local record can drift (D-06). Income history alone lacks side, quantity, price, and order ID; the stream alone loses what happens while the engine is down.
+  - One row per order: a market close can fill in 18 trades (testnet, 2026-10-16), which would bury the list.
+  - Its own message rather than the state: the state goes out about once a second (D-33 note), and a week of the ETHUSDT engine exercise can hold hundreds of orders, while the list changes only when an order fills. Sending the whole list each time keeps D-33's reasoning: a client never rebuilds it from deltas.
+  - The engine sends the totals, so the GUI never adds amounts (D-33).
+- **Relation to D-04:** trade records in SQLite stay undecided. This list reads the exchange, so it can't show anything older than the exchange keeps (`userTrades`: 3 months), which is more than the 7 days shown.
+- **Limitations:** a stop's role relies on `actualOrderId`, from the docs; no engine stop has triggered on testnet yet (`binanceNotes.md`, To verify). A stop resting more than 90 days, or an algo order missing from a week's page of 1000, shows as other. An order whose client ID can't be read yet shows as other until a later read finds it.
+- **Alternatives:** today only (by the risk day or local midnight); up to 3 months with a day picker and a query command; the list inside `state`; a query command the GUI sends when the panel opens; one row per fill; accumulating `ORDER_TRADE_UPDATE` events; SQLite.
 - **Date:** 2026-10-22

@@ -95,6 +95,35 @@ export interface LogRecord {
   message: string
 }
 
+// What an order was for, from its client order ID (D-21): entry, exit (strategy exits and the
+// user's close), stop, kill switch; liquidation and ADL by the exchange; other for an order the
+// engine didn't place or whose role couldn't be found.
+export type TradeRole = 'entry' | 'exit' | 'stop' | 'kill' | 'liquidation' | 'adl' | 'other'
+
+// One order's fills together (D-51).
+export interface TradeRow {
+  time: string // the first fill
+  symbol: string
+  order_id: number
+  client_id: string | null // the ID that gave the role: the order's own, or its stop's
+  role: TradeRole
+  side: string // BUY, SELL
+  quantity: string
+  price: string // the average fill price
+  realized_pnl: string // in RecentTrades.asset
+  fees: Record<string, string> // by asset
+  fills: number
+}
+
+// The `trades` message (D-51): every order filled in the last `window_days` days, newest first.
+// Engines before 2026-10-22 never send it.
+export interface RecentTrades {
+  window_days: number
+  asset: string // the margin asset, which realized PnL is in
+  totals: { realized_pnl: string; fees: Record<string, string> }
+  trades: TradeRow[]
+}
+
 // What `set_symbol` accepts, sent with `welcome` (D-48). Engines before 2026-10-20 don't send
 // it. Parameter defaults are text, like parameter values everywhere.
 export type ParameterType = 'int' | 'decimal' | 'bool'
@@ -193,6 +222,7 @@ export interface EngineSnapshot {
   state: EngineState | null // the last state received; stale while disconnected
   logs: LogRecord[]
   catalog: StrategyCatalog | null // from the last welcome; null if that engine sent none
+  trades: RecentTrades | null // null until this connection's engine sends them
 }
 
 export interface EngineApi {
@@ -206,4 +236,5 @@ export interface EngineApi {
   onLogs(listener: (update: LogsUpdate) => void): () => void
   onLaunch(listener: (launch: LaunchState) => void): () => void
   onCatalog(listener: (catalog: StrategyCatalog | null) => void): () => void
+  onTrades(listener: (trades: RecentTrades | null) => void): () => void
 }

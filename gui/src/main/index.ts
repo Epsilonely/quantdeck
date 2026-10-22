@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, dialog, ipcMain, nativeTheme } from 'electron'
+import { app, shell, BrowserWindow, dialog, ipcMain, nativeTheme, screen } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -32,7 +32,8 @@ const engine = new EngineClient(CONNECTION_FILE, {
   },
   state: (state) => broadcast('engine:state', state),
   logs: (update) => broadcast('engine:logs', update),
-  catalog: (catalog) => broadcast('engine:catalog', catalog)
+  catalog: (catalog) => broadcast('engine:catalog', catalog),
+  trades: (trades) => broadcast('engine:trades', trades)
 })
 
 function snapshot(): EngineSnapshot {
@@ -40,9 +41,11 @@ function snapshot(): EngineSnapshot {
 }
 
 function createWindow(): void {
+  // Wide enough for the symbol table beside the trades panel (D-51), within the screen.
+  const area = screen.getPrimaryDisplay().workAreaSize
   const mainWindow = new BrowserWindow({
-    width: 1100,
-    height: 760,
+    width: Math.min(1400, area.width),
+    height: Math.min(800, area.height),
     show: false,
     autoHideMenuBar: true,
     title: 'QuantDeck',

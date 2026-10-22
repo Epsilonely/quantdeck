@@ -24,9 +24,13 @@ class FakeEngine:
         self.lift_error: Exception | None = None
         self.stopped = asyncio.Event()
         self.symbol_args: list[dict[str, Any]] = []
+        self.trade_list: dict[str, Any] | None = None  # replaced, never changed in place
 
     def snapshot(self) -> dict[str, Any]:
         return dict(self.state)
+
+    def trades(self) -> dict[str, Any] | None:
+        return self.trade_list
 
     async def emergency_close(self) -> bool:
         self.closes += 1
@@ -201,6 +205,38 @@ async def test_new_log_records_are_sent(served: Served, test_logger: logging.Log
         test_logger.warning("something happened")
         records = (await receive(ws, "logs"))["records"]
     assert [(r["level"], r["message"]) for r in records] == [("WARNING", "something happened")]
+
+
+# Recent trades (D-51)
+
+TRADES = {"window_days": 7, "asset": "USDT", "totals": {}, "trades": []}
+
+
+async def test_trades_follow_the_state_once_read(served: Served) -> None:
+    async with await hello(served.file) as ws:
+        await receive(ws, "state")
+        served.engine.state["mark"] = "60000"
+        await receive(ws, "state")  # no trades message before the engine has read them
+        served.engine.trade_list = TRADES
+        assert await receive(ws, "trades") == {"type": "trades", **TRADES}
+
+    async with await hello(served.file) as ws:
+        first = [json.loads(await ws.recv()) for _ in range(4)]
+    assert [m["type"] for m in first] == ["welcome", "logs", "state", "trades"]
+
+
+async def test_trades_are_sent_again_only_when_they_change(served: Served) -> None:
+    served.engine.trade_list = TRADES
+    async with await hello(served.file) as ws:
+        await receive(ws, "trades")
+        served.engine.trade_list = {**TRADES, "trades": [{"order_id": 1}]}
+        assert (await receive(ws, "trades"))["trades"] == [{"order_id": 1}]
+        served.engine.state["mark"] = "60000"
+        await receive(ws, "state")
+        await asyncio.sleep(0.05)  # several publish rounds with the same list
+        served.engine.state["mark"] = "60001"
+        # Only the state follows: the unchanged trades weren't sent again.
+        assert json.loads(await ws.recv())["type"] == "state"
 
 
 # Commands (D-33)

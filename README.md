@@ -67,10 +67,12 @@ sequenceDiagram
         G->>E: 엔진 시작 (창 없이 백그라운드)
     end
     G->>E: 접속 후 hello (connection.json의 토큰)
-    E-->>G: welcome → 최근 로그 → 전체 상태
+    E-->>G: welcome → 최근 로그 → 전체 상태 → 최근 7일 거래
     loop 실행 중
         X-->>E: 체결 · 포지션 이벤트, 마크 가격
         E-->>G: 바뀐 전체 상태 (약 1초마다), 새 로그
+        E->>X: 체결이 있으면 거래 내역 다시 조회
+        E-->>G: 바뀐 거래 목록
     end
     U->>G: 긴급 청산 클릭
     G->>U: 확인 창

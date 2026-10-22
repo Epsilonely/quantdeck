@@ -4,6 +4,7 @@ import LogView from './components/LogView'
 import SymbolEditor, { type EditTarget } from './components/SymbolEditor'
 import SymbolTable, { type RowCommand } from './components/SymbolTable'
 import ThemeSwitch from './components/ThemeSwitch'
+import TradeList from './components/TradeList'
 import {
   clock,
   dateTime,
@@ -49,7 +50,8 @@ function targetKey(target: EditTarget): string {
 }
 
 function App(): React.JSX.Element {
-  const { status, launch, state, logs, catalog } = useEngine()
+  const { status, launch, state, logs, catalog, trades } = useEngine()
+  const [showTrades, setShowTrades] = useState(true)
   const [busy, setBusy] = useState<CommandName | null>(null)
   const [busySymbol, setBusySymbol] = useState<string | null>(null) // the symbol `busy` names
   const [result, setResult] = useState<ShownResult | null>(null)
@@ -151,6 +153,14 @@ function App(): React.JSX.Element {
           {statusText}
         </span>
         <span className="spacer" />
+        <button
+          className="plain"
+          aria-pressed={showTrades}
+          title={showTrades ? '거래 기록을 숨깁니다' : '오른쪽에 최근 거래 기록을 보여 줍니다'}
+          onClick={() => setShowTrades((shown) => !shown)}
+        >
+          거래 기록
+        </button>
         <ThemeSwitch />
         {connected ? (
           <button disabled={busy !== null} onClick={() => run({ name: 'stop_engine' })}>
@@ -218,102 +228,108 @@ function App(): React.JSX.Element {
         </div>
       )}
 
-      {state ? (
-        <>
-          <section className="cards">
-            <div className="card">
-              <div className="label">오늘 손실 / 한도</div>
-              {state.daily_loss ? (
-                <>
-                  <div className="value">
-                    <span className={lossClass(state.daily_loss.loss)}>
-                      {state.daily_loss.loss}
-                    </span>{' '}
-                    / {state.daily_loss.limit} {state.daily_loss.asset}
-                  </div>
-                  {unrealized && withUnrealized && (
-                    <div
-                      className="sub"
-                      title={
-                        '열린 포지션의 미실현 손익 합계(마크 가격 기준, 청산 수수료 제외)와 그것까지 ' +
-                        '반영한 손실입니다. 일일 손실 한도와 킬스위치는 위의 실현 손실만 셉니다.'
-                      }
-                    >
-                      미실현 <span className={pnlClass(unrealized)}>{signed(unrealized)}</span> ·
-                      포함하면 <span className={lossClass(withUnrealized)}>{withUnrealized}</span>
-                    </div>
+      <div className="workspace">
+        <div className="main-column">
+          {state ? (
+            <>
+              <section className="cards">
+                <div className="card">
+                  <div className="label">오늘 손실 / 한도</div>
+                  {state.daily_loss ? (
+                    <>
+                      <div className="value">
+                        <span className={lossClass(state.daily_loss.loss)}>
+                          {state.daily_loss.loss}
+                        </span>{' '}
+                        / {state.daily_loss.limit} {state.daily_loss.asset}
+                      </div>
+                      {unrealized && withUnrealized && (
+                        <div
+                          className="sub"
+                          title={
+                            '열린 포지션의 미실현 손익 합계(마크 가격 기준, 청산 수수료 제외)와 그것까지 ' +
+                            '반영한 손실입니다. 일일 손실 한도와 킬스위치는 위의 실현 손실만 셉니다.'
+                          }
+                        >
+                          미실현 <span className={pnlClass(unrealized)}>{signed(unrealized)}</span>{' '}
+                          · 포함하면{' '}
+                          <span className={lossClass(withUnrealized)}>{withUnrealized}</span>
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div className="value muted">첫 확인 전</div>
                   )}
-                </>
-              ) : (
-                <div className="value muted">첫 확인 전</div>
-              )}
-            </div>
-            <div className="card">
-              <div className="label">기준 잔고 (매일 {riskDayStart()})</div>
-              <div className="value">
-                {state.daily_loss ? `${state.daily_loss.base} ${state.daily_loss.asset}` : '—'}
-              </div>
-            </div>
-            <div className="card">
-              <div className="label">지갑 잔고</div>
-              {Object.keys(state.balances).length === 0 ? (
-                <div className="value muted">—</div>
-              ) : (
-                Object.entries(state.balances).map(([asset, amount]) => (
-                  <div className="value" key={asset}>
-                    {amount} {asset}
+                </div>
+                <div className="card">
+                  <div className="label">기준 잔고 (매일 {riskDayStart()})</div>
+                  <div className="value">
+                    {state.daily_loss ? `${state.daily_loss.base} ${state.daily_loss.asset}` : '—'}
                   </div>
-                ))
-              )}
-            </div>
-          </section>
+                </div>
+                <div className="card">
+                  <div className="label">지갑 잔고</div>
+                  {Object.keys(state.balances).length === 0 ? (
+                    <div className="value muted">—</div>
+                  ) : (
+                    Object.entries(state.balances).map(([asset, amount]) => (
+                      <div className="value" key={asset}>
+                        {amount} {asset}
+                      </div>
+                    ))
+                  )}
+                </div>
+              </section>
 
-          <section>
-            <div className="section-head">
-              <h2>심볼</h2>
-              <button
-                className="small"
-                disabled={addBlocked !== null}
-                title={addBlocked ?? '거래할 코인을 추가합니다'}
-                onClick={() => openEditor({ mode: 'add' })}
-              >
-                코인 추가
-              </button>
-              {connected && !catalog && <span className="hint">{editBlocked}</span>}
-            </div>
-            <SymbolTable
-              symbols={state.symbols}
-              editing={editing?.mode === 'edit' ? editing.symbol : null}
-              editBlocked={editBlocked}
-              actionBlocked={actionBlocked}
-              busy={busyRow}
-              onEdit={(symbol) => openEditor({ mode: 'edit', symbol })}
-              onCommand={(name, symbol) => run({ name, args: { symbol } })}
-            />
-            {editing && catalog && (
-              <SymbolEditor
-                key={targetKey(editing)}
-                target={editing}
-                symbols={state.symbols}
-                catalog={catalog}
-                connected={connected}
-                busy={busy}
-                failure={editorFailure}
-                onApply={(args) => run({ name: 'set_symbol', args })}
-                onRemove={(symbol) => run({ name: 'remove_symbol', args: { symbol } })}
-                onClose={() => openEditor(null)}
-              />
-            )}
-          </section>
-        </>
-      ) : (
-        <p className="muted">엔진 상태를 아직 받지 못했습니다.</p>
-      )}
+              <section>
+                <div className="section-head">
+                  <h2>심볼</h2>
+                  <button
+                    className="small"
+                    disabled={addBlocked !== null}
+                    title={addBlocked ?? '거래할 코인을 추가합니다'}
+                    onClick={() => openEditor({ mode: 'add' })}
+                  >
+                    코인 추가
+                  </button>
+                  {connected && !catalog && <span className="hint">{editBlocked}</span>}
+                </div>
+                <SymbolTable
+                  symbols={state.symbols}
+                  editing={editing?.mode === 'edit' ? editing.symbol : null}
+                  editBlocked={editBlocked}
+                  actionBlocked={actionBlocked}
+                  busy={busyRow}
+                  onEdit={(symbol) => openEditor({ mode: 'edit', symbol })}
+                  onCommand={(name, symbol) => run({ name, args: { symbol } })}
+                />
+                {editing && catalog && (
+                  <SymbolEditor
+                    key={targetKey(editing)}
+                    target={editing}
+                    symbols={state.symbols}
+                    catalog={catalog}
+                    connected={connected}
+                    busy={busy}
+                    failure={editorFailure}
+                    onApply={(args) => run({ name: 'set_symbol', args })}
+                    onRemove={(symbol) => run({ name: 'remove_symbol', args: { symbol } })}
+                    onClose={() => openEditor(null)}
+                  />
+                )}
+              </section>
+            </>
+          ) : (
+            <p className="muted">엔진 상태를 아직 받지 못했습니다.</p>
+          )}
 
-      <section className="log-section">
-        <h2>엔진 로그</h2>
-        <LogView logs={logs} />
-      </section>
+          <section className="log-section">
+            <h2>엔진 로그</h2>
+            <LogView logs={logs} />
+          </section>
+        </div>
+        {showTrades && <TradeList trades={trades} connected={connected} />}
+      </div>
     </div>
   )
 }

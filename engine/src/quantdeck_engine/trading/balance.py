@@ -20,14 +20,19 @@ INCOME_PAGE_SIZE = 1000
 
 
 async def fetch_income(
-    client: BinanceRestClient, start_ms: int, end_ms: int
+    client: BinanceRestClient, start_ms: int, end_ms: int, income_type: str | None = None
 ) -> list[dict[str, Any]]:
-    """Every income record from `start_ms` to `end_ms` (both inclusive), oldest first."""
+    """Every income record from `start_ms` to `end_ms` (both inclusive), oldest first; only
+    `income_type`'s if given."""
     incomes: list[dict[str, Any]] = []
     page = 1
     while True:
         batch = await client.income(
-            start_time=start_ms, end_time=end_ms, page=page, limit=INCOME_PAGE_SIZE
+            start_time=start_ms,
+            end_time=end_ms,
+            page=page,
+            limit=INCOME_PAGE_SIZE,
+            income_type=income_type,
         )
         incomes.extend(batch)
         if len(batch) < INCOME_PAGE_SIZE:

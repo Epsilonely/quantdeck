@@ -17,6 +17,7 @@ Engine work is done in a git worktree while the forward test runs from the main 
 Merged work not yet seen against a real engine; most of it needs the engine restarted on the current code:
 
 - Per-symbol pause, close, and resume (#24): close the ETHUSDT exercise's position while BTCUSDT keeps trading, resume, and restart once while paused.
+- The recent trades panel (#29, D-51): the list against the account's real orders after a restart, each role (a stop fill's especially, since none has triggered yet), a fill showing within seconds, and the 1400 px window. Checked only with fakes and a made-up list on screen.
 - The unrealized PnL line on the today's loss card (#25).
 - The parameter help tips in the settings panel (#23), and how the panel shows an engine's refusal of a change.
 - The engine uptime in the connection tag (#14).
@@ -35,7 +36,7 @@ Roughly in the order they're needed:
 - **Strategy:** adding to an open position is out of scope for now (D-22). Take profit and trailing stops are deferred: the chosen strategy exits on its channel (D-36), and `TRAILING_STOP_MARKET` can't use `closePosition` (D-18).
 - **15m strategies:** the user wanted one, Donchian or not. The search found none worth forward-testing (D-44), and maker entries rescued none (D-45, D-46), so the engine gets no limit orders for now. The 15m holdout (2024 onward) has been used: a new 15m idea needs its own fixed grid and counts as one more test on the same history. The daily-open breakout was held back partly because one strategy traded per account; per-symbol strategies remove that reason, but its holdout edge still can't be told from zero.
 - **Engine operation:** running `run` without the GUI (a Windows service or scheduled task), and what restarts it after a crash (D-34).
-- **Storage:** what SQLite records, and whether logs go there (D-12; D-33 keeps recent logs in memory for now). Historical candles (D-38), the halt record (D-29), the forward test record (D-43), and the symbol settings (D-47) are settled.
+- **Storage:** what SQLite records, and whether logs go there (D-12; D-33 keeps recent logs in memory for now). Historical candles (D-38), the halt record (D-29), the forward test record (D-43), and the symbol settings (D-47) are settled. The GUI's last 7 days of trades read the exchange, not a local record (D-51).
 - **GUI confirmation dialogs (GitHub issue #7):** the user wants an in-app modal in place of the native confirmation boxes and is still weighing the two approaches in the issue. Since D-48 the main process writes every confirmation (eight commands) from the command it sends, so either approach changes only how it is shown; the React modal would also let a renderer bug send `set_symbol`, which can enter at once, or `close_symbol`, which closes a position.
 - **Later:** GUI `sandbox: false`, Discord bot stack, which alerts it sends, and whether its commands need a narrower permission than the GUI's (safety principle 9), mainnet prerequisites (Ed25519 per D-11, IP whitelist, go-live criteria, mainnet risk values — D-23 to D-25 and D-41 set testnet values only).
 

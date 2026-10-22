@@ -12,7 +12,8 @@ the kill switch and stopping the engine, they add, change, and remove symbols wh
 runs (D-47): one symbol at a time, only while that symbol is flat, saved to `symbols.json`
 before the engine acts on it, and without touching the other symbols. They also pause one
 symbol, close its position and pause it, or resume it (D-50); the pause is saved with the
-symbol, so a restart keeps it, and the other symbols keep trading.
+symbol, so a restart keeps it, and the other symbols keep trading. They also get the last 7
+days' trades, read from the exchange (D-51).
 
 Only one engine process runs at a time (D-31). Stop it with Ctrl+C or a client's
 `stop_engine` command (D-34).
@@ -30,7 +31,12 @@ from typing import Any
 from quantdeck_engine.binance.candle_feed import ClosedCandleFeed
 from quantdeck_engine.binance.rest import REQUEST_ERRORS, BinanceRestClient, UnknownSymbol
 from quantdeck_engine.binance.streams import mark_price_stream
-from quantdeck_engine.binance.user_stream import AccountUpdate, UserEvent, UserStreamConnected
+from quantdeck_engine.binance.user_stream import (
+    AccountUpdate,
+    OrderUpdate,
+    UserEvent,
+    UserStreamConnected,
+)
 from quantdeck_engine.config import (
     MAX_SYMBOLS,
     Settings,
@@ -68,6 +74,7 @@ from quantdeck_engine.trading.strategy_runner import (
     StrategyRunner,
     forward_record_path,
 )
+from quantdeck_engine.trading.trades import TradeHistory
 
 logger = logging.getLogger(__name__)
 
@@ -112,6 +119,7 @@ class Engine:
         self.checker = checker or RiskChecker(self.guard)
         self.state = AccountState(list(self.traders))
         self.mark_prices: dict[str, Decimal] = {}  # for display only (D-33)
+        self.history = TradeHistory(client, lambda: list(self.traders), self.asset)  # D-51
         self.started_at = time.time()  # clients show the engine's uptime from it
         self.stop_requested = asyncio.Event()
         self._tasks: asyncio.TaskGroup | None = None  # set while running
@@ -137,6 +145,7 @@ class Engine:
                 )
             )
             tasks.create_task(self.checker.run())
+            tasks.create_task(self.history.run())
             tasks.create_task(self._sync_time())
             self._follow_mark_prices()
             for runner in self.runners.values():
@@ -294,12 +303,21 @@ class Engine:
         """The state clients see (D-33)."""
         return engine_snapshot(self)
 
+    def trades(self) -> dict[str, Any] | None:
+        """The last 7 days' trades clients see (D-51); None until first read."""
+        return self.history.payload
+
     def on_event(self, event: UserEvent) -> None:
         # D-30: events sent while disconnected are lost, and funding changes today's loss.
         if isinstance(event, UserStreamConnected) or (
             isinstance(event, AccountUpdate) and event.reason == "FUNDING_FEE"
         ):
             self.checker.request()
+        # The trades list reads the exchange again, as the risk check does (D-51).
+        if isinstance(event, UserStreamConnected):
+            self.history.request()
+        elif isinstance(event, OrderUpdate) and event.execution_type == "TRADE":
+            self.history.request(event.symbol)
 
     async def on_change(self, change: StateChange) -> None:
         match change:

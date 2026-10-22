@@ -4,7 +4,7 @@ Binance USDⓈ-M Futures behavior the code can't tell you: quirks, limits, and g
 
 Move an item to **Verified** only after confirming it against the official docs or an actual testnet/mainnet response. Include the date and the source (doc URL or "testnet response"). Binance changes its API, so re-check old entries when something behaves unexpectedly.
 
-Reading the docs: developers.binance.com is a JS-rendered site, and plain page fetches often return the wrong section. Open pages in a browser, or search the index at `https://developers.binance.com/en/docs/llms.txt`, which lists a plain Markdown version of each page (the page URL plus `.md`). Pages under the old `/docs/derivatives/usds-margined-futures/...` paths moved to `/en/docs/products/derivatives-trading-usds-futures/...` (2026-10-18); old links no longer reach the page.
+Reading the docs: developers.binance.com is a JS-rendered site, and plain page fetches often return the wrong section. Open pages in a browser, or search the index at `https://developers.binance.com/en/docs/llms.txt`, which lists a plain Markdown version of each page (the page URL plus `.md`). Pages under the old `/docs/derivatives/usds-margined-futures/...` paths moved to `/en/docs/products/derivatives-trading-usds-futures/...` (2026-10-18); old links no longer reach the page. The REST reference pages (`/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/...`) aren't in that index and serve only their app shell to a plain fetch, but their "Download schema" link, `.../api/rest-api/1.0.0/schema.yaml`, is the whole USDⓈ-M REST API as OpenAPI YAML: parameters, weights, notes, and response fields. It came back empty to `curl` and whole to a `fetch` from a page on developers.binance.com (2026-10-22).
 
 ## Verified
 
@@ -68,7 +68,7 @@ Source: [General Info](https://developers.binance.com/en/docs/products/derivativ
 - `recvWindow` defaults to 5000 ms (max 60000). The server accepts a request only if `timestamp < serverTime + 1000` and `serverTime - timestamp <= recvWindow`.
 - The development PC's clock was 462 ms ahead of the testnet server on the first check — close to the 1000 ms future limit. The engine measures the offset with `GET /fapi/v1/time` and corrects signed timestamps.
 
-### REST endpoints in use (2026-10-02, extended 2026-10-10)
+### REST endpoints in use (2026-10-02, extended 2026-10-10 and 2026-10-22)
 
 Source: [Trade](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/trade), [Account](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/account), [Market Data](https://developers.binance.com/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/rest-api/market-data), testnet response
 
@@ -90,6 +90,9 @@ Source: [Trade](https://developers.binance.com/en/docs/catalog/core-trading-deri
 | `PUT /fapi/v1/listenKey` | 1 | USER_STREAM. Response `{"listenKey": ...}`; `-1125` if no key is active |
 | `DELETE /fapi/v1/allOpenOrders` | 1 | `symbol` required. Docs response `{"code": 200, "msg": "The operation of cancel all open order is done."}`. Succeeded on testnet with no open orders (2026-10-16) |
 | `DELETE /fapi/v1/algoOpenOrders` | 1 | `symbol` required. Cancels every open algo order on the symbol, stops included. Same docs response as above. Succeeded on testnet with no open orders (2026-10-16) |
+| `GET /fapi/v1/userTrades` | 5 | Docs only (OpenAPI schema, 2026-10-22). `symbol` required. `startTime` and `endTime` at most 7 days apart; neither sent → the last 7 days; `fromId` can't be sent with them. `limit` default 500, max 1000. Only the last 3 months (6 until the Change Log of 2026-08-26). Rows: `id`, `orderId`, `side`, `price`, `qty`, `quoteQty`, `realizedPnl`, `commission`, `commissionAsset`, `time`, `buyer`, `maker`, `positionSide`, and no client order ID |
+| `GET /fapi/v1/allOrders` | 5 | Docs only (2026-10-22). `symbol` optional since 2026-08-25 (Change Log); the engine sends it. With `orderId`, orders from that ID on; otherwise the most recent. Period under 7 days, the last 7 by default. Gone: cancelled or expired orders without fills after 3 days, any order after 90 days. Rows carry `clientOrderId`, `orderId`, `type`, `origType`, `status`, `executedQty`, `avgPrice`, `reduceOnly`, `closePosition`, `time`, `updateTime` |
+| `GET /fapi/v1/allAlgoOrders` | 5 | Docs only (2026-10-22). `symbol` required; `algoId` (from that ID on), `startTime`/`endTime` (under 7 days apart, the last 7 by default), `limit` max 1000. Kept like `allOrders`. Rows carry `clientAlgoId`, `algoStatus`, `actualOrderId` (a string; the order a triggered one placed), `triggerPrice`, `createTime`, `updateTime`, `triggerTime` |
 
 - Boolean request parameters (`reduceOnly`, `closePosition`, `priceProtect`) are the strings `true`/`false`; boolean response fields are JSON booleans. Prices and quantities in responses are strings; IDs and times are numbers.
 - Changing margin type and leverage with no position worked on testnet (2026-10-10). The margin type change also pushes `ACCOUNT_UPDATE` with `m: "MARGIN_TYPE_CHANGE"`; the leverage change pushes `ACCOUNT_CONFIG_UPDATE` `{"ac": {"s": "BTCUSDT", "l": 5}}`.
@@ -128,6 +131,7 @@ Source: [User Data Streams](https://developers.binance.com/en/docs/products/deri
 - Seen on testnet (2026-10-10): a market order produces `TRADE_LITE`, then `ORDER_TRADE_UPDATE` (`x`/`X` `NEW`), `ACCOUNT_UPDATE` (`m: "ORDER"`), and `ORDER_TRADE_UPDATE` (`TRADE`/`FILLED`). `n` and `N` were present even at zero commission (older docs said they could be left out; the parser tolerates both).
 - `ACCOUNT_UPDATE` `P` entries also carry `cr`, `iw` (isolated wallet), `ma` (margin asset), and `bep`. `mt` is lowercase (`isolated`), unlike REST's `ISOLATED`. Right after an entry, `iw` was exactly the initial margin (notional ÷ leverage) minus the opening commission.
 - `CONDITIONAL_ORDER_TRIGGER_REJECT` is deprecated since 2025-12-15 (Change Log); rejection reasons come in `ALGO_UPDATE` `rm`.
+- Orders the exchange places itself (docs, 2026-10-22): a liquidation's `ORDER_TRADE_UPDATE` has `c` `autoclose-XXX`, an ADL's `adl_autoclose`.
 
 ### Algo (conditional) orders (2026-10-03, testnet 2026-10-10)
 
@@ -163,6 +167,7 @@ Source: [Account — Income History](https://developers.binance.com/en/docs/cata
 
 - `GET /fapi/v1/income` (USER_DATA, weight 30): `startTime`/`endTime` in ms, both inclusive; `page`; `limit` default 100, max 1000. Without times it returns the last 7 days; only the last three months are kept. Results are oldest first.
 - Fields: `symbol`, `incomeType`, `income` (string), `asset`, `info`, `time`, `tranId`, `tradeId`.
+- `incomeType` and `symbol` filter the records (docs, 2026-10-22); without `incomeType` every type comes back.
 - The 23 `incomeType` values listed in the docs (2026-10-16): `TRANSFER`, `WELCOME_BONUS`, `REALIZED_PNL`, `FUNDING_FEE`, `COMMISSION`, `INSURANCE_CLEAR`, `REFERRAL_KICKBACK`, `COMMISSION_REBATE`, `API_REBATE`, `CONTEST_REWARD`, `CROSS_COLLATERAL_TRANSFER`, `OPTIONS_PREMIUM_FEE`, `OPTIONS_SETTLE_PROFIT`, `INTERNAL_TRANSFER`, `AUTO_EXCHANGE`, `DELIVERED_SETTELMENT` (sic), `COIN_SWAP_DEPOSIT`, `COIN_SWAP_WITHDRAW`, `POSITION_LIMIT_INCREASE_FEE`, `STRATEGY_UMFUTURES_TRANSFER`, `FEE_RETURN`, `BFUSD_REWARD`, `SPECIAL_FUNDING_FEE`. Which ones count toward today's loss is in D-24.
 - Testnet: one entry-and-close produced two `COMMISSION` records and one `REALIZED_PNL`, and the day's records summed exactly to the wallet balance change — the basis for rebuilding the day's base balance (D-23).
 - Record `time` is truncated to whole seconds (testnet 2026-10-16): a fill at …701.4 s was recorded as …701000. A `startTime` in the middle of a second leaves out that second's records.
@@ -240,7 +245,8 @@ Check each item while implementing the related feature:
 - [ ] Symbol filters: the error codes testnet actually returns for orders that violate them (docs list them under Orders, lookups, and unknown outcomes).
 - [ ] Signed requests: the error code returned when the timestamp is outside `recvWindow`.
 - [ ] Exchange-side stops: the error a `STOP_MARKET` gets when its trigger is already crossed (`-2021` or `-4142`), and whether a `closePosition` stop can be placed with no open position.
-- [ ] A stop that triggers: the `ALGO_UPDATE` sequence (`TRIGGERING` → `TRIGGERED` → `FINISHED`?) and the client order ID of the market order it creates (only `ai` = `orderId` links them in the docs).
+- [ ] A stop that triggers: the `ALGO_UPDATE` sequence (`TRIGGERING` → `TRIGGERED` → `FINISHED`?) and the client order ID of the market order it creates (only `ai` = `orderId` links them in the docs). The trades list (D-51) finds the stop through `allAlgoOrders`' `actualOrderId` matching the fill's `orderId`; check it does.
+- [ ] Trade history reads (D-51): whether `userTrades` with `startTime` returns the oldest fills first (the engine pages forward by time past 1000), whether `allOrders` with `orderId` alone reaches back only 7 days, and which time `allAlgoOrders`' `startTime`/`endTime` filter (creation or update).
 - [ ] `GET /fapi/v1/openOrders` with a non-empty result (the engine reads `clientOrderId`, `orderId`, `side`, `type`, `origQty`, `reduceOnly`).
 - [ ] Margin type and leverage: the errors when changing them with a position or open orders (docs: `-4047`, `-4048`, `-4161`).
 - [ ] Income history paging past 1000 records within one day.

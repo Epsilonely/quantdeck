@@ -12,6 +12,7 @@ import type {
   EngineState,
   LogRecord,
   LogsUpdate,
+  RecentTrades,
   StrategyCatalog
 } from '../shared/engine'
 
@@ -25,6 +26,7 @@ export interface EngineClientEvents {
   state(state: EngineState): void
   logs(update: LogsUpdate): void
   catalog(catalog: StrategyCatalog | null): void
+  trades(trades: RecentTrades | null): void
 }
 
 interface ConnectionInfo {
@@ -36,6 +38,7 @@ type EngineMessage =
   | { type: 'welcome'; protocol: number; catalog?: unknown }
   | { type: 'logs'; records: LogRecord[] }
   | { type: 'state'; state: EngineState }
+  | ({ type: 'trades' } & Record<string, unknown>)
   | { type: 'result'; id: unknown; ok: boolean; message: string }
 
 export class EngineClient {
@@ -48,6 +51,7 @@ export class EngineClient {
   private state: EngineState | null = null
   private logs: LogRecord[] = []
   private catalog: StrategyCatalog | null = null
+  private trades: RecentTrades | null = null
 
   constructor(
     private readonly connectionFile: string,
@@ -66,7 +70,13 @@ export class EngineClient {
   }
 
   snapshot(): Omit<EngineSnapshot, 'launch'> {
-    return { status: this.status, state: this.state, logs: [...this.logs], catalog: this.catalog }
+    return {
+      status: this.status,
+      state: this.state,
+      logs: [...this.logs],
+      catalog: this.catalog,
+      trades: this.trades
+    }
   }
 
   /** The command as it is, so the caller must have checked it (main/commands.ts). */
@@ -130,6 +140,9 @@ export class EngineClient {
           // Before the status, so a screen that opens on "connected" finds the catalog.
           this.catalog = parseCatalog(message.catalog)
           this.events.catalog(this.catalog)
+          // This engine sends its own trades after its state, or none if it predates them.
+          this.trades = null
+          this.events.trades(null)
           this.setStatus('connected', null)
           break
         case 'logs':
@@ -150,6 +163,14 @@ export class EngineClient {
           this.state = message.state
           this.events.state(message.state)
           break
+        case 'trades': {
+          const trades = parseTrades(message)
+          if (trades) {
+            this.trades = trades
+            this.events.trades(trades)
+          }
+          break
+        }
         case 'result':
           if (typeof message.id === 'number') {
             this.pending.get(message.id)?.({ ok: message.ok, message: message.message })
@@ -258,6 +279,37 @@ function parseCatalog(value: unknown): StrategyCatalog | null {
     )
   if (!valid) console.error('[engine] the catalog in welcome is malformed; ignored')
   return valid ? catalog : null
+}
+
+// Checked once here like the catalog, so a malformed list can't break the trades panel (D-51).
+// Only the shape is checked; amounts stay strings the renderer shows as they are.
+function parseTrades(message: Record<string, unknown>): RecentTrades | null {
+  const { window_days, asset, totals, trades } = message as unknown as RecentTrades
+  const isAmounts = (value: unknown): boolean =>
+    typeof value === 'object' &&
+    value !== null &&
+    Object.values(value).every((amount) => typeof amount === 'string')
+  const valid =
+    Number.isInteger(window_days) &&
+    typeof asset === 'string' &&
+    typeof totals?.realized_pnl === 'string' &&
+    isAmounts(totals.fees) &&
+    Array.isArray(trades) &&
+    trades.every(
+      (t) =>
+        ['time', 'symbol', 'role', 'side', 'quantity', 'price', 'realized_pnl'].every(
+          (key) => typeof t?.[key as keyof typeof t] === 'string'
+        ) &&
+        Number.isInteger(t.order_id) &&
+        (t.client_id === null || typeof t.client_id === 'string') &&
+        isAmounts(t.fees) &&
+        Number.isInteger(t.fills)
+    )
+  if (!valid) {
+    console.error('[engine] the trades message is malformed; ignored')
+    return null
+  }
+  return { window_days, asset, totals, trades }
 }
 
 function now(): string {

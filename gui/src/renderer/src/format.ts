@@ -27,6 +27,22 @@ export function shortDateTime(iso: string): string {
   return `${pad(time.getMonth() + 1)}-${pad(time.getDate())} ${pad(time.getHours())}:${pad(time.getMinutes())}`
 }
 
+/** The local date of `iso` as `2026-10-22`, for grouping by day */
+export function localDay(iso: string): string {
+  const time = new Date(iso)
+  if (Number.isNaN(time.getTime())) return iso
+  return `${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())}`
+}
+
+const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토']
+
+/** `2026-10-22T05:03:12+00:00` → `10월 22일 (목)` in local time */
+export function dayLabel(iso: string): string {
+  const time = new Date(iso)
+  if (Number.isNaN(time.getTime())) return iso
+  return `${time.getMonth() + 1}월 ${time.getDate()}일 (${WEEKDAYS[time.getDay()]})`
+}
+
 /** Time from `iso` to `now` (ms): `12m`, `2h 5m`, or `1d 4h` */
 export function elapsed(iso: string, now: number): string {
   const start = new Date(iso).getTime()

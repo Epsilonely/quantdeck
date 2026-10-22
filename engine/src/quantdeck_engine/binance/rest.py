@@ -185,19 +185,67 @@ class BinanceRestClient:
         return entry["brackets"]
 
     async def income(
-        self, *, start_time: int, end_time: int, page: int, limit: int = 1000
+        self,
+        *,
+        start_time: int,
+        end_time: int,
+        page: int,
+        limit: int = 1000,
+        income_type: str | None = None,
     ) -> list[dict[str, Any]]:
-        """Income records (realized PnL, commission, funding, transfers, ...), oldest first.
+        """Income records (realized PnL, commission, funding, transfers, ...), oldest first;
+        every type unless `income_type` names one.
 
         Weight 30. Only the last three months are kept.
         """
-        params = {
+        params: dict[str, str | int] = {
             "startTime": start_time,
             "endTime": end_time,
             "page": page,
             "limit": limit,
         }
+        if income_type is not None:
+            params["incomeType"] = income_type
         return await self._request("GET", "/fapi/v1/income", params, signed=True)
+
+    async def user_trades(
+        self,
+        symbol: str,
+        *,
+        start_time: int,
+        end_time: int,
+        limit: int = 1000,
+    ) -> list[dict[str, Any]]:
+        """The account's fills on one symbol: side, price, quantity, realized PnL, commission,
+        and the `orderId`, but no client order ID. Weight 5.
+
+        `endTime - startTime` may be at most 7 days, and only the last 3 months are kept.
+        """
+        params = {"symbol": symbol, "startTime": start_time, "endTime": end_time, "limit": limit}
+        return await self._request("GET", "/fapi/v1/userTrades", params, signed=True)
+
+    async def all_orders(
+        self, symbol: str, *, order_id: int, limit: int = 1000
+    ) -> list[dict[str, Any]]:
+        """The symbol's orders of any status from `order_id` on, with their `clientOrderId`.
+        Weight 5.
+
+        Orders older than 90 days, and cancelled or expired ones without fills older than 3
+        days, are gone.
+        """
+        params = {"symbol": symbol, "orderId": order_id, "limit": limit}
+        return await self._request("GET", "/fapi/v1/allOrders", params, signed=True)
+
+    async def all_algo_orders(
+        self, symbol: str, *, start_time: int, end_time: int, limit: int = 1000
+    ) -> list[dict[str, Any]]:
+        """The symbol's algo (conditional) orders of any status, stops included; `actualOrderId`
+        is the order a triggered one placed. Weight 5.
+
+        The period must be under 7 days. Kept as long as `all_orders` keeps orders.
+        """
+        params = {"symbol": symbol, "startTime": start_time, "endTime": end_time, "limit": limit}
+        return await self._request("GET", "/fapi/v1/allAlgoOrders", params, signed=True)
 
     async def open_orders(self, symbol: str) -> list[dict[str, Any]]:
         return await self._request("GET", "/fapi/v1/openOrders", {"symbol": symbol}, signed=True)

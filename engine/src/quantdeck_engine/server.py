@@ -5,8 +5,9 @@
 - A client's first message must be `{"type": "hello", "token": ...}`; anything else closes
   the connection. Connections with an `Origin` header (browsers) are refused at the handshake.
 - After the hello the client gets `welcome` (with the catalog of what `set_symbol` accepts,
-  D-48), the recent log records, and the whole state. The state is sent again whenever it
-  changes, and log records as they happen.
+  D-48), the recent log records, the whole state, and the last 7 days' trades (D-51) once
+  the engine has read them. The state and the trades are sent again whenever they change,
+  and log records as they happen.
 - Commands are `{"type": "command", "id": ..., "name": ..., "args": {...}}`; the reply is a
   `result` with the same `id`. Names: `emergency_close` (the kill switch, D-27),
   `lift_halt`, `stop_engine` (D-34), `set_symbol` and `remove_symbol` (D-47), and
@@ -56,6 +57,11 @@ FLUSH_TIMEOUT = 2.0  # seconds to wait for queued messages before the engine sto
 class EngineControl(Protocol):
     def snapshot(self) -> dict[str, Any]:
         """The whole state as JSON-ready values; amounts as strings (D-33)."""
+        ...
+
+    def trades(self) -> dict[str, Any] | None:
+        """The last 7 days' trades as JSON-ready values (D-51), or None until first read.
+        The same object until the list changes."""
         ...
 
     async def emergency_close(self) -> bool:
@@ -167,6 +173,8 @@ class ClientServer:
         )
         self._clients: set[_Client] = set()
         self._last_state: str | None = None
+        self._trades: tuple[object, str] | None = None  # the engine's trades and their message
+        self._last_trades: str | None = None
         self.port: int | None = None
         self.listening = asyncio.Event()
 
@@ -197,6 +205,8 @@ class ClientServer:
         client.outbox.put_nowait(self._welcome)
         client.outbox.put_nowait(_dumps({"type": "logs", "records": list(self._logs.records)}))
         client.outbox.put_nowait(self._state_message())
+        if (trades := self._trades_message()) is not None:
+            client.outbox.put_nowait(trades)
         writer = asyncio.create_task(self._write(client))
         logger.info("Client connected (%d connected)", len(self._clients))
         try:
@@ -329,10 +339,27 @@ class ClientServer:
                 if message != self._last_state:
                     self._last_state = message
                     self._post(message)
+            try:
+                trades = self._trades_message()
+            except Exception:
+                logger.exception("Could not build the trades for clients")
+            else:
+                if trades is not None and trades is not self._last_trades:
+                    self._last_trades = trades
+                    self._post(trades)
             await asyncio.sleep(self._publish_interval)
 
     def _state_message(self) -> str:
         return _dumps({"type": "state", "state": self._engine.snapshot()})
+
+    def _trades_message(self) -> str | None:
+        """Encoded once per list: the engine hands out the same object until it changes."""
+        trades = self._engine.trades()
+        if trades is None:
+            return None
+        if self._trades is None or self._trades[0] is not trades:
+            self._trades = (trades, _dumps({"type": "trades", **trades}))
+        return self._trades[1]
 
     def _post_log(self, entry: dict[str, str]) -> None:
         self._post(_dumps({"type": "logs", "records": [entry]}))
