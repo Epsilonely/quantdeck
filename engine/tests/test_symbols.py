@@ -13,8 +13,8 @@ from quantdeck_engine.symbols import (
     SymbolStore,
     catalog,
     load_symbols,
-    parse_remove_symbol,
     parse_set_symbol,
+    parse_symbol_arg,
 )
 
 D = Decimal
@@ -177,6 +177,35 @@ def test_broken_json_stops_the_engine(store: SymbolStore) -> None:
         store.load()
 
 
+# The user's pause (D-50)
+
+PAUSED_AT = "2026-10-22T03:00:00+00:00"
+
+
+def test_pauses_are_saved_in_the_symbol_entry(store: SymbolStore) -> None:
+    assert store.load_paused() == {}  # no file
+    store.save({"BTCUSDT": BTC, "ETHUSDT": ETH}, {"ETHUSDT": PAUSED_AT})
+    assert json.loads(store.path.read_text(encoding="utf-8"))["symbols"] == {
+        "BTCUSDT": entry(),
+        "ETHUSDT": {"leverage": 3, "strategy": None, "paused_at": PAUSED_AT},
+    }
+    # A pause isn't a setting: the settings load as before.
+    assert store.load() == {"BTCUSDT": BTC, "ETHUSDT": ETH}
+    assert store.load_paused() == {"ETHUSDT": PAUSED_AT}
+    # Saved without it, the symbol is no longer paused.
+    store.save({"BTCUSDT": BTC, "ETHUSDT": ETH})
+    assert store.load_paused() == {}
+
+
+@pytest.mark.parametrize("paused_at", ["", "yesterday", "2026-10-22T03:00:00", 1792000000, None])
+def test_invalid_pause_stops_the_engine(store: SymbolStore, paused_at: object) -> None:
+    write(store, {"version": 1, "symbols": {"BTCUSDT": entry(paused_at=paused_at)}})
+    with pytest.raises(ConfigError, match="paused_at must be an ISO 8601 time with a zone"):
+        store.load()
+    with pytest.raises(ConfigError, match="paused_at"):
+        store.load_paused()
+
+
 # Command arguments (D-47)
 
 
@@ -194,6 +223,8 @@ def test_set_symbol_arguments() -> None:
         ({"symbol": "BTCUSDT", "leverage": 20}, "leverage must be between 1 and 10"),
         ({"symbol": "BTCUSDT", "leverage": 2, "strategy": "donchian"}, "object or null"),
         ({"symbol": "BTCUSDT", "leverage": 2, "side": "long"}, "unknown key"),
+        # Only pause_symbol and resume_symbol change a pause (D-50).
+        ({"symbol": "BTCUSDT", "leverage": 2, "paused_at": "2026-10-22T03:00:00+00:00"}, "unknown"),
         (
             {
                 "symbol": "BTCUSDT",
@@ -217,12 +248,15 @@ def test_invalid_set_symbol_arguments(args: dict[str, Any], message: str) -> Non
         parse_set_symbol(args)
 
 
-def test_remove_symbol_arguments() -> None:
-    assert parse_remove_symbol({"symbol": "BTCUSDT"}) == "BTCUSDT"
-    with pytest.raises(ConfigError, match="unknown key"):
-        parse_remove_symbol({"symbol": "BTCUSDT", "close": True})
+@pytest.mark.parametrize(
+    "command", ["remove_symbol", "pause_symbol", "close_symbol", "resume_symbol"]
+)
+def test_symbol_only_arguments(command: str) -> None:
+    assert parse_symbol_arg({"symbol": "BTCUSDT"}, command) == "BTCUSDT"
+    with pytest.raises(ConfigError, match=f"{command}: unknown key"):
+        parse_symbol_arg({"symbol": "BTCUSDT", "close": True}, command)
     with pytest.raises(ConfigError, match="symbol names"):
-        parse_remove_symbol({})
+        parse_symbol_arg({}, command)
 
 
 # The catalog clients get with welcome (D-48)

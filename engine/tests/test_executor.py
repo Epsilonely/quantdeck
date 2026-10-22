@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -394,7 +395,9 @@ async def test_close_uses_reduce_only_and_cancels_the_stop() -> None:
     exchange = FakeExchange()
     trader = make_trader(exchange)
     await trader.open_position(Side.LONG, D(59400))
-    await trader.close_position()
+    closed = await trader.close_position()
+    assert closed is not None and (closed.side, closed.quantity) == (Side.LONG, D("0.083"))
+    assert await trader.close_position() is None  # nothing left to close
     close = exchange.calls(*ORDER)[-1]
     assert close["reduceOnly"] == "true"
     assert close["side"] == "SELL"
@@ -426,6 +429,45 @@ async def test_close_splits_orders_above_the_market_max_quantity() -> None:
     await trader.close_position()
     assert [c["quantity"] for c in exchange.calls(*ORDER)] == ["120", "120", "10"]
     assert exchange.position_amount == 0
+
+
+# The user's pause (D-50)
+
+
+async def test_paused_symbol_refuses_entries_but_still_closes() -> None:
+    exchange = FakeExchange()
+    trader = make_trader(exchange)
+    trader.pause("2026-10-22T03:00:00+00:00")
+    with pytest.raises(TradingHalted, match="BTCUSDT: paused by the user since 2026-10-22"):
+        await trader.open_position(Side.LONG, D(59400))
+    assert exchange.calls(*ORDER) == []
+    assert not trader.halted  # a pause isn't the engine's halt
+
+    open_long(exchange)
+    exchange.add_stop("SELL", "59400")
+    assert await trader.close_position() is not None
+    assert exchange.position_amount == 0 and exchange.algo_orders == []
+
+    trader.resume()
+    assert await trader.open_position(Side.LONG, D(59400)) is not None
+
+
+async def test_resume_leaves_the_engines_own_halt() -> None:
+    trader = make_trader(FakeExchange())
+    trader.halt("stop not confirmed")
+    trader.pause("2026-10-22T03:00:00+00:00")
+    trader.resume()
+    with pytest.raises(TradingHalted, match="stop not confirmed"):
+        await trader.open_position(Side.LONG, D(59400))
+
+
+async def test_idle_waits_for_an_action_in_progress() -> None:
+    trader = make_trader(FakeExchange())
+    async with trader._lock:  # as an entry in progress holds it
+        waiting = asyncio.create_task(trader.idle())
+        await asyncio.sleep(0.01)
+        assert not waiting.done()
+    await asyncio.wait_for(waiting, 1)
 
 
 async def test_on_position_closed_cancels_the_leftover_stop() -> None:

@@ -1,5 +1,5 @@
 // The commands the main process accepts from the renderer, and what it asks the user before
-// sending one (D-33, D-34, D-47, D-48). The renderer only asks: the main process checks the
+// sending one (D-33, D-34, D-47, D-48, D-50). The renderer only asks: the main process checks the
 // command's shape, builds the confirmation from the exact command it will send, and sends that
 // copy, so nothing the renderer does alone can send a command or show one thing and send
 // another. The engine checks every value again against its own bounds (safety principle 4).
@@ -46,7 +46,10 @@ export function parseCommand(value: unknown): EngineCommand | string {
       const args = keys.length === 2 ? parseSetSymbol(value.args) : null
       return args ? { name, args } : 'set_symbol의 인자 형식이 잘못되었습니다'
     }
-    case 'remove_symbol': {
+    case 'remove_symbol':
+    case 'pause_symbol':
+    case 'close_symbol':
+    case 'resume_symbol': {
       const args = value.args
       const valid =
         keys.length === 2 &&
@@ -56,7 +59,7 @@ export function parseCommand(value: unknown): EngineCommand | string {
         SYMBOL.test(args.symbol)
       return valid
         ? { name, args: { symbol: args.symbol as string } }
-        : 'remove_symbol의 인자 형식이 잘못되었습니다'
+        : `${name}의 인자 형식이 잘못되었습니다`
     }
   }
 }
@@ -128,6 +131,9 @@ export function confirmation(command: EngineCommand, state: EngineState | null):
           : []),
         '이 코인의 전략을 멈추고 감시 대상에서 빼며, 남은 주문을 취소합니다. 거래소의 격리 마진과 ' +
           '레버리지 설정은 그대로 남습니다.',
+        ...(current?.paused_at
+          ? ['이 코인의 일시정지도 함께 사라져, 다시 추가하면 바로 거래합니다 (D-50).']
+          : []),
         POSITION_REFUSED
       ]
       return {
@@ -136,7 +142,88 @@ export function confirmation(command: EngineCommand, state: EngineState | null):
         button: '코인 제거'
       }
     }
+    case 'pause_symbol':
+      return confirmPause(command.args.symbol, findSymbol(state, command.args.symbol))
+    case 'close_symbol':
+      return confirmClose(command.args.symbol, findSymbol(state, command.args.symbol))
+    case 'resume_symbol':
+      return confirmResume(command.args.symbol, findSymbol(state, command.args.symbol), state)
   }
+}
+
+const KEPT_UNTIL_RESUMED =
+  '엔진을 재시작해도 유지되며, 이 코인의 재개 버튼으로 풉니다. 코인을 엔진에서 빼면 함께 ' +
+  '사라집니다 (D-50).'
+
+function confirmPause(symbol: string, current: SymbolState | undefined): Confirmation {
+  const lines = [
+    `포지션: ${describePosition(current)}`,
+    '',
+    '이 코인만 새 진입을 멈춥니다. 열린 포지션과 거래소 손절 주문은 그대로 두고, 전략의 청산 ' +
+      '신호는 계속 따릅니다. 다른 코인은 계속 거래합니다.',
+    KEPT_UNTIL_RESUMED
+  ]
+  return {
+    message: `${symbol} 진입을 일시정지할까요?`,
+    detail: lines.join('\n'),
+    button: '일시정지'
+  }
+}
+
+function confirmClose(symbol: string, current: SymbolState | undefined): Confirmation {
+  const lines = [
+    `포지션: ${describePosition(current)}`,
+    '',
+    current?.position
+      ? '먼저 이 코인의 새 진입을 막고, 포지션 전부를 시장가 reduceOnly 주문으로 청산한 뒤 남은 ' +
+        '손절 주문을 취소합니다. 다른 코인은 계속 거래합니다.'
+      : '마지막으로 받은 상태에는 포지션이 없어 진입만 멈춥니다. 그사이 포지션이 생겼다면 시장가 ' +
+        'reduceOnly 주문으로 청산합니다. 다른 코인은 계속 거래합니다.',
+    '이 청산의 손익도 오늘 손실에 들어가고, 일일 손실 한도와 킬스위치는 그대로 동작합니다 (D-24).',
+    KEPT_UNTIL_RESUMED
+  ]
+  return {
+    message: `${symbol} 포지션을 청산하고 이 코인의 거래를 정지할까요?`,
+    detail: lines.join('\n'),
+    button: '청산·정지'
+  }
+}
+
+function confirmResume(
+  symbol: string,
+  current: SymbolState | undefined,
+  state: EngineState | null
+): Confirmation {
+  const lines = [
+    current?.paused_at
+      ? '사용자가 건 일시정지를 풉니다. 이 코인은 다음 마감 캔들의 진입 신호부터 다시 진입합니다.'
+      : '마지막으로 받은 상태에는 일시정지가 없습니다. 엔진은 아무것도 바꾸지 않습니다.'
+  ]
+  if (current?.halted) {
+    lines.push('', `엔진이 건 정지는 그대로 남아, 이 코인은 진입하지 않습니다: ${current.halted}`)
+  }
+  if (state?.halt.halted) {
+    lines.push('', '계좌 전체가 킬스위치로 정지되어 있어, 그 정지를 풀 때까지 진입하지 않습니다.')
+  }
+  return {
+    message: `${symbol} 거래를 재개할까요?`,
+    detail: lines.join('\n'),
+    button: '재개'
+  }
+}
+
+/** E.g. `LONG 0.083 · 진입가 60000 · 미실현 손익 8.3415`, from the last state received. */
+function describePosition(symbol: SymbolState | undefined): string {
+  const position = symbol?.position
+  if (!symbol) return '알 수 없음 (상태에 없는 코인)'
+  if (!position) return '없음'
+  const short = position.amount.startsWith('-')
+  const parts = [
+    `${short ? 'SHORT' : 'LONG'} ${position.amount.replace(/^-/, '')}`,
+    `진입가 ${position.entry_price}`
+  ]
+  if (position.unrealized_pnl !== null) parts.push(`미실현 손익 ${position.unrealized_pnl}`)
+  return parts.join(' · ')
 }
 
 function confirmSetSymbol(args: SetSymbolArgs, current: SymbolState | undefined): Confirmation {
@@ -175,6 +262,9 @@ function confirmSetSymbol(args: SetSymbolArgs, current: SymbolState | undefined)
     lines.push('레버리지만 바뀌고, 실행 중인 전략은 그대로 이어집니다.')
   } else {
     lines.push('바뀌는 것이 없습니다.')
+  }
+  if (current.paused_at) {
+    lines.push('이 코인은 일시정지 중이라 설정을 바꿔도 재개할 때까지 진입하지 않습니다 (D-50).')
   }
   lines.push(POSITION_REFUSED)
   return {

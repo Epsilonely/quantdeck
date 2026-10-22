@@ -60,9 +60,11 @@ def _symbol_snapshot(engine: "Engine", symbol: str) -> dict[str, Any]:
             else fixed_point(state.position_amount * (mark - state.entry_price)),
         }
     config = engine.symbols[symbol]
+    trader = engine.traders[symbol]
     return {
         "symbol": symbol,
-        "halted": engine.traders[symbol].halt_reason,
+        "halted": trader.halt_reason,  # the engine's own halt (D-16, D-19, D-20)
+        "paused_at": trader.paused_at,  # the user's pause (D-50)
         "leverage": config.leverage,
         "strategy": _strategy(config.strategy, engine.runners.get(symbol)),
         "mark_price": None if mark is None else fixed_point(mark),

@@ -12,9 +12,11 @@
   `flatten` (D-27).
 - A client's settings change holds the symbol's lock while it is flat (`flat`), so no
   entry runs under the old settings once the new ones are saved (D-47).
+- The user can pause a symbol (D-50): like a halt, it refuses entries only.
 
 Every decision that protects a position re-reads the exchange first (D-06). A symbol whose
-trading is halted still closes and protects positions; it only refuses new entries.
+trading is halted or paused still closes and protects positions; it only refuses new
+entries.
 """
 
 import asyncio
@@ -57,8 +59,8 @@ FINAL_ORDER_STATUSES = {"FILLED", "CANCELED", "EXPIRED", "EXPIRED_IN_MATCH", "RE
 
 
 class TradingHalted(Exception):
-    """Entries are refused: this symbol was stopped (D-16, D-19, D-20), or the account was
-    halted by the kill switch (D-27)."""
+    """Entries are refused: this symbol was stopped (D-16, D-19, D-20) or paused by the user
+    (D-50), or the account was halted by the kill switch (D-27)."""
 
 
 class OrderOutcomeUnclear(Exception):
@@ -123,7 +125,8 @@ class SymbolTrader:
         self._lock = asyncio.Lock()
         self._brackets: list[Bracket] = []
         self._recovering = False
-        self.halt_reason: str | None = None
+        self.halt_reason: str | None = None  # the engine's own halt (D-16, D-19, D-20)
+        self.paused_at: str | None = None  # the user's pause (D-50), ISO 8601 UTC
 
     @property
     def halted(self) -> bool:
@@ -133,6 +136,15 @@ class SymbolTrader:
         if self.halt_reason is None:
             self.halt_reason = reason
             logger.error("%s: trading halted: %s", self.symbol, reason)
+
+    def pause(self, since: str) -> None:
+        """The user's pause (D-50): refuse entries from now on. Exits, stops, and the kill
+        switch carry on. An entry already holding the lock finishes; `idle` waits for it."""
+        self.paused_at = since
+
+    def resume(self) -> None:
+        """Lift the user's pause. The engine's own halt, if any, stays."""
+        self.paused_at = None
 
     # Public actions. Each holds the lock, so they never interleave on one symbol.
 
@@ -165,6 +177,8 @@ class SymbolTrader:
         async with self._lock:
             if self.halted:
                 raise TradingHalted(f"{self.symbol}: {self.halt_reason}")
+            if self.paused_at is not None:
+                raise TradingHalted(f"{self.symbol}: paused by the user since {self.paused_at}")
             if not self._brackets:
                 await self._load_brackets()
             if await self.position() is not None:
@@ -260,16 +274,23 @@ class SymbolTrader:
             return None
         return plan
 
-    async def close_position(self, role: Role = Role.EXIT) -> None:
-        """Close the whole position with reduceOnly market orders, then cancel its stop."""
+    async def close_position(self, role: Role = Role.EXIT) -> ExchangePosition | None:
+        """Close the whole position with reduceOnly market orders, then cancel its stop.
+        Returns the position it closed, or None if there was none."""
         async with self._lock:
-            await self._close(role)
+            return await self._close(role)
 
     async def on_position_closed(self) -> None:
         """A user data event says the position closed: cancel its leftover stop (D-18)."""
         async with self._lock:
             if await self.position() is None:
                 await self._cancel_leftovers()
+
+    async def idle(self) -> None:
+        """Return once nothing holds this symbol's lock, so an entry that started before a
+        pause has finished (D-50)."""
+        async with self._lock:
+            pass
 
     # Settings changes (D-47). The methods after `flat` are called inside it.
 
@@ -475,10 +496,10 @@ class SymbolTrader:
 
     # Closing
 
-    async def _close(self, role: Role) -> None:
+    async def _close(self, role: Role) -> ExchangePosition | None:
         position = await self.position()
         if position is None:
-            return
+            return None
         side = position.side
         remaining = position.quantity
         while remaining > 0:
@@ -504,6 +525,7 @@ class SymbolTrader:
         logger.info("%s: closed %s position %s", self.symbol, side, position.quantity)
         if await self.position() is None:
             await self._cancel_leftovers()
+        return position
 
     # Unknown outcomes (D-20)
 

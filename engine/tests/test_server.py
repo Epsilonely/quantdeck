@@ -13,7 +13,7 @@ from websockets.exceptions import ConnectionClosed, InvalidStatus
 
 from quantdeck_engine.config import ConfigError
 from quantdeck_engine.server import PROTOCOL_VERSION, ClientServer, ConnectionFile, LogBuffer
-from quantdeck_engine.symbols import SymbolChangeRefused, catalog
+from quantdeck_engine.symbols import PauseNotSaved, SymbolChangeRefused, catalog
 from quantdeck_engine.trading.risk import LiftRefused
 
 
@@ -52,6 +52,18 @@ class FakeEngine:
     async def remove_symbol(self, args: Mapping[str, Any]) -> str:
         self.symbol_args.append(dict(args))
         raise SymbolChangeRefused(f"{args['symbol']} has an open LONG position")
+
+    async def pause_symbol(self, args: Mapping[str, Any]) -> str:
+        self.symbol_args.append(dict(args))
+        return f"{args['symbol']} paused"
+
+    async def close_symbol(self, args: Mapping[str, Any]) -> str:
+        self.symbol_args.append(dict(args))
+        raise PauseNotSaved(f"{args['symbol']} closed LONG 0.083, but the pause could not be saved")
+
+    async def resume_symbol(self, args: Mapping[str, Any]) -> str:
+        self.symbol_args.append(dict(args))
+        raise SymbolChangeRefused(f"{args['symbol']} is not one of the engine's symbols")
 
 
 @dataclass
@@ -259,6 +271,33 @@ async def test_refused_symbol_changes_report_why(served: Served) -> None:
     assert "leverage must be between 1 and 10" in out_of_bounds["message"]
     assert open_position["ok"] is False
     assert "open LONG position" in open_position["message"]
+
+
+async def test_pause_close_and_resume_pass_their_arguments(
+    served: Served, caplog: pytest.LogCaptureFixture
+) -> None:
+    # D-50
+    async with await hello(served.file) as ws:
+        paused = await command(ws, "pause_symbol", 8, {"symbol": "ETHUSDT"})
+        with caplog.at_level(logging.WARNING):
+            not_saved = await command(ws, "close_symbol", 9, {"symbol": "ETHUSDT"})
+            unknown = await command(ws, "resume_symbol", 10, {"symbol": "XRPUSDT"})
+    assert (paused["id"], paused["ok"], paused["message"]) == (8, True, "ETHUSDT paused")
+    # The close went through, but the result says the pause won't survive a restart.
+    assert (not_saved["ok"], not_saved["message"]) == (
+        False,
+        "ETHUSDT closed LONG 0.083, but the pause could not be saved",
+    )
+    assert (unknown["ok"], unknown["message"]) == (
+        False,
+        "XRPUSDT is not one of the engine's symbols",
+    )
+    assert "resume_symbol refused" in caplog.text
+    assert served.engine.symbol_args == [
+        {"symbol": "ETHUSDT"},
+        {"symbol": "ETHUSDT"},
+        {"symbol": "XRPUSDT"},
+    ]
 
 
 async def test_args_must_be_an_object(served: Served) -> None:

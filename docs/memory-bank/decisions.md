@@ -148,6 +148,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Decision:** Client order IDs and `clientAlgoId`s follow `qd_<role>_<symbol>_<ms timestamp>_<seq>`, with roles `e` entry, `x` exit (strategy exits, and closes after a failed stop), `s` stop, `k` kill switch — e.g. `qd_s_BTCUSDT_1759480000123_01` (29 of the 36 allowed characters). A retry reuses the original ID.
 - **Why:** After a restart the engine can tell what each open order is for from the exchange alone (D-06), logs read clearly, and reusing the ID on retry is what makes D-20's lookup possible. Random IDs would need a local record to recover each order's role.
 - **Date:** 2026-10-03
+- **Note (2026-10-22):** The user's close of one symbol (D-50) uses `x` too.
 
 ## D-22 Position size from a fixed risk amount
 
@@ -281,6 +282,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Note (2026-10-16):** A third command, `stop_engine`, was added with D-34.
 - **Note (2026-10-20):** Commands may carry an `args` object; `set_symbol` and `remove_symbol` came with D-47. Clients get each symbol's settings in the state.
 - **Note (2026-10-20):** `welcome` also carries the catalog of what `set_symbol` accepts (D-48).
+- **Note (2026-10-22):** Pausing entries came per symbol with D-50 (`pause_symbol`, `close_symbol`, `resume_symbol`); there is still no account-wide pause.
 - **Date:** 2026-10-16
 
 ## D-34 The GUI starts the engine when none is running and can stop it
@@ -500,6 +502,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Limitations:** A symbol halted by D-16, D-19, or D-20 stays halted through a settings change; removing and adding it again clears the halt. A strategy stopped by an error (D-43) restarts only with a new setting or an engine restart. Two checkouts can still put two engines on one account (`progress.md` Known issues).
 - **Alternatives:** Writing changes into `config.toml` (rewrites the user's file and puts risk values within a client's reach); SQLite (D-04, still open); changing a symbol with an open position; a new strategy that waits for the next closed candle.
 - **Date:** 2026-10-20
+- **Note (2026-10-22):** A symbol's entry may also carry the user's pause, `paused_at` (D-50).
 
 ## D-48 GUI symbol settings: the engine sends a strategy catalog, and the main process confirms each change with the copy it sends
 
@@ -512,7 +515,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - Confirmation in the main process: a strategy set on a symbol can enter at once (D-47), so a renderer bug must not send a change unconfirmed, nor show one setting and send another. Writing the dialog from the copy that is sent makes it say exactly what goes out; the character limits keep a value from adding lines that pass for dialog text.
   - A panel on the main screen keeps positions and the log in view while a coin is set up.
   - Whether a setting enters with limit orders depends on its values (`trend-pullback`'s defaults do), so the catalog doesn't say; the engine's refusal explains it (D-45).
-- **Relation to #7:** one function in the main process writes the confirmation of all five commands, so #7 changes only how it is shown. Confirming in the renderer (#7's option B) would now also let a renderer bug send `set_symbol`.
+- **Relation to #7:** one function in the main process writes the confirmation of every command (eight since D-50), so #7 changes only how it is shown. Confirming in the renderer (#7's option B) would now also let a renderer bug send `set_symbol`.
 - **Alternatives:** a strategy list hard-coded in the GUI; the catalog in the state; a separate tab or a modal form; confirming in the renderer.
 - **Date:** 2026-10-20
 
@@ -529,3 +532,22 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - Ligatures off: JetBrains Mono joins `->`, `>=`, and `!=` into single glyphs (→, ≥, ≠), so logs and values would no longer show the characters as sent (seen in the browser pane, 2026-10-21).
 - **Alternatives:** the system fonts (Segoe UI, Malgun Gothic, Cascadia Mono), used until now; the installed fonts by name; the IBM Plex family (Sans KR, Sans, Mono); Pretendard with tabular figures in the symbol table instead of the monospace font (not tried).
 - **Date:** 2026-10-21
+
+## D-50 The user pauses one symbol, or closes its position and pauses it; the pause is saved with the symbol
+
+- **Decision:**
+  - **Pause:** a per-symbol state the user sets, separate from the engine's own halt of a symbol (D-16, D-19, D-20) and from the account halt (D-27). Like them it refuses entries only: the position, its exchange-side stop, the strategy's exit signals, the daily loss limit, and the kill switch carry on. The other symbols keep trading.
+  - **Commands** (GitHub issue #24), each with `args` `{symbol}`: `pause_symbol` pauses; `close_symbol` pauses first, then closes the whole position with `reduceOnly` market orders (role `x`, D-21) and cancels the leftover stop (D-18); `resume_symbol` lifts the user's pause only, never the engine's halt. A pause or resume that is already in place answers `ok: true` and changes nothing; an unknown symbol is refused. They take turns with `set_symbol` and `remove_symbol`, one symbol command at a time, so their saves of `symbols.json` never race.
+  - **Saved:** as `paused_at` (ISO 8601 UTC) in the symbol's entry in `symbols.json` (D-47), so a restart, including one the GUI starts on its own (D-34), keeps it; the engine applies it before any strategy decides. It isn't a setting: `set_symbol` neither takes nor clears it, a settings change keeps it, and removing the symbol forgets it.
+  - **Failures:** a pause or resume that can't be saved changes nothing. For `close_symbol` the pause holds in memory and the close goes ahead (as D-29); the result then says `ok: false` with what was closed and that a restart would trade the symbol again.
+  - **GUI:** the status column of the symbol table shows the pause next to the engine's halt, with a pause or resume button, and a close-and-pause button while the symbol has a position. The confirmation is written in the main process from the command it sends and the last state (D-48). The account-wide emergency close stays in the header.
+- **Why:**
+  - The user asked (2026-10-21) to close one coin without halting the others: the emergency close of the ETHUSDT 1m engine exercise had also halted the BTCUSDT 4h forward test.
+  - Saved, as the user chose: an engine started after a pause would otherwise decide on its latest closed candle at once (D-43) and could enter on the symbol the user stopped.
+  - Pause without a close, as the user chose: it is the same state minus the close, and it is the GUI's entry pause that D-33 left open.
+  - Resume lifts the user's pause only, as the user chose: the engine halts a symbol for a missing stop, an unclear order outcome, or a leverage mismatch, which need a look before trading resumes; removing and re-adding the symbol still clears those (D-47).
+  - Pause before the close: no entry can start between the close and the pause. The pause also waits for an entry already holding the symbol's lock, so once `pause_symbol` answers, nothing enters.
+- **Discord bot (safety principle 9):** `pause_symbol` and `close_symbol` are stop and close actions; `resume_symbol` starts trading again, so it is not.
+- **Limitations:** a close that fails (a request error or an unclear outcome, D-20) leaves the pause in place; the stop still protects the position, and the user can press it again. The close isn't retried as the kill switch's is (D-27). `trial` ignores the pause; it runs only with the user's OK each time.
+- **Alternatives:** a pause in memory only; resume also lifting the engine's halt; one command with a `close` flag; reusing the engine's halt for the user's pause, which would make resume lift both.
+- **Date:** 2026-10-22

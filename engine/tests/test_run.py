@@ -21,10 +21,13 @@ from quantdeck_engine.run import Engine, RunFailed, run_engine, start_engine
 from quantdeck_engine.server import ClientServer, ConnectionFile, LogBuffer
 from quantdeck_engine.snapshot import fixed_point
 from quantdeck_engine.startup import StartupFailed
-from quantdeck_engine.symbols import SymbolChangeRefused, SymbolStore
+from quantdeck_engine.symbols import PauseNotSaved, SymbolChangeRefused, SymbolStore
 from quantdeck_engine.times import iso_utc
+from quantdeck_engine.trading.executor import TradingHalted
 from quantdeck_engine.trading.halt import HaltRecord, HaltStore
+from quantdeck_engine.trading.order_ids import Role, parse_client_id
 from quantdeck_engine.trading.risk import RiskChecker
+from quantdeck_engine.trading.rules import Side
 from quantdeck_engine.trading.sizing import DailyLoss
 from quantdeck_engine.trading.state import PositionClosed, resync
 from quantdeck_engine.trading.strategy_runner import Signal
@@ -52,6 +55,7 @@ async def start(
     symbol_store: SymbolStore,
     symbols: dict[str, SymbolConfig] = SYMBOLS,
     forward_dir: Path | None = None,
+    paused: dict[str, str] | None = None,
 ) -> Engine:
     return await start_engine(
         exchange.client(),
@@ -60,6 +64,7 @@ async def start(
         store,
         symbols,
         symbol_store,
+        paused=paused,
         forward_dir=forward_dir or symbol_store.path.parent.parent / "forward",
     )
 
@@ -402,7 +407,7 @@ DONCHIAN_ARGS = {
 
 
 class FailingStore(SymbolStore):
-    def save(self, symbols: object) -> None:
+    def save(self, symbols: object, paused: object = None) -> None:
         raise PermissionError("symbols.json is open in another program")
 
 
@@ -660,3 +665,173 @@ async def test_a_client_changes_symbols_over_the_connection(
     assert too_high["ok"] is False and "leverage must be between 1 and 10" in too_high["message"]
     assert (removed["ok"], removed["message"]) == (True, "ETHUSDT removed")
     assert list(engine.traders) == ["BTCUSDT"]
+
+
+# The user's pause and per-symbol close (D-50)
+
+ORDER = ("POST", "/fapi/v1/order")
+ETH = SymbolConfig("ETHUSDT", 3)
+
+
+async def test_pause_refuses_entries_and_survives_a_restart(
+    store: HaltStore, symbol_store: SymbolStore
+) -> None:
+    exchange = FakeExchange()
+    engine = await start(exchange, store, symbol_store)
+
+    assert await engine.pause_symbol({"symbol": "BTCUSDT"}) == (
+        "BTCUSDT paused: no new entries until resumed"
+    )
+
+    since = engine.traders["BTCUSDT"].paused_at
+    assert since is not None
+    assert engine.snapshot()["symbols"][0]["paused_at"] == since
+    assert symbol_store.load() == SYMBOLS  # the settings are unchanged
+    assert symbol_store.load_paused() == {"BTCUSDT": since}
+    with pytest.raises(TradingHalted, match="paused by the user"):
+        await engine.traders["BTCUSDT"].open_position(Side.LONG, D(59400))
+    assert exchange.calls(*ORDER) == []
+    assert not engine.guard.halted  # the account trades on
+    assert await engine.pause_symbol({"symbol": "BTCUSDT"}) == (
+        f"BTCUSDT already paused since {since}"
+    )
+
+    restarted = await start(exchange, store, symbol_store, paused=symbol_store.load_paused())
+    assert restarted.traders["BTCUSDT"].paused_at == since
+
+
+async def test_pause_keeps_the_position_and_its_stop(
+    store: HaltStore, symbol_store: SymbolStore
+) -> None:
+    exchange = FakeExchange()
+    open_long(exchange)
+    exchange.add_stop("SELL", "59400")
+    engine = await start(exchange, store, symbol_store)
+    await engine.pause_symbol({"symbol": "BTCUSDT"})
+    assert exchange.position_amount == D("0.083")
+    assert len(exchange.algo_orders) == 1
+    assert exchange.calls(*ORDER) == []
+
+
+async def test_resume_lifts_only_the_users_pause(
+    store: HaltStore, symbol_store: SymbolStore
+) -> None:
+    exchange = FakeExchange()
+    engine = await start(exchange, store, symbol_store)
+    assert await engine.resume_symbol({"symbol": "BTCUSDT"}) == "BTCUSDT not paused"
+
+    await engine.pause_symbol({"symbol": "BTCUSDT"})
+    assert await engine.resume_symbol({"symbol": "BTCUSDT"}) == (
+        "BTCUSDT resumed: new entries from its strategy's next signal"
+    )
+    assert engine.traders["BTCUSDT"].paused_at is None
+    assert symbol_store.load_paused() == {}
+
+    trader = engine.traders["BTCUSDT"]
+    trader.halt("stop not confirmed")
+    await engine.pause_symbol({"symbol": "BTCUSDT"})
+    await engine.emergency_close()
+    done = await engine.resume_symbol({"symbol": "BTCUSDT"})
+    assert "still halted by the engine: stop not confirmed" in done
+    assert "the kill switch still halts the account" in done
+    assert trader.halted and engine.guard.halted
+
+
+async def test_close_symbol_closes_with_reduce_only_and_pauses(
+    store: HaltStore, symbol_store: SymbolStore
+) -> None:
+    exchange = FakeExchange()
+    open_long(exchange)
+    exchange.add_stop("SELL", "59400")
+    engine = await start(exchange, store, symbol_store)
+
+    done = await engine.close_symbol({"symbol": "BTCUSDT"})
+
+    since = engine.traders["BTCUSDT"].paused_at
+    assert done == f"BTCUSDT closed LONG 0.083; paused since {since}"
+    (close,) = exchange.calls(*ORDER)
+    assert (close["side"], close["reduceOnly"], close["quantity"]) == ("SELL", "true", "0.083")
+    assert parse_client_id(close["newClientOrderId"]).role == Role.EXIT
+    assert exchange.position_amount == 0
+    assert exchange.algo_orders == []  # its stop is cancelled
+    assert symbol_store.load_paused() == {"BTCUSDT": since}
+    assert not engine.guard.halted
+
+    # Flat and already paused: nothing to close, and the pause keeps its time.
+    assert await engine.close_symbol({"symbol": "BTCUSDT"}) == (
+        f"BTCUSDT had no position; paused since {since}"
+    )
+    assert len(exchange.calls(*ORDER)) == 1
+
+
+async def test_close_symbol_leaves_other_symbols_trading(
+    store: HaltStore, symbol_store: SymbolStore
+) -> None:
+    exchange = FakeExchange(other_symbols={"ETHUSDT": 3})
+    open_long(exchange)
+    exchange.add_stop("SELL", "59400")
+    exchange.add_position("ETHUSDT", "1.5", "2500")
+    exchange.add_stop("SELL", "2400", "qd_s_ETHUSDT_1_00", symbol="ETHUSDT")
+    engine = await start(exchange, store, symbol_store, {**SYMBOLS, "ETHUSDT": ETH})
+
+    await engine.close_symbol({"symbol": "BTCUSDT"})
+
+    assert exchange.position_amount == 0
+    assert [p["positionAmt"] for p in exchange.other_positions] == ["1.5"]
+    assert [a["symbol"] for a in exchange.algo_orders] == ["ETHUSDT"]
+    assert engine.traders["ETHUSDT"].paused_at is None
+    assert symbol_store.load_paused() == {"BTCUSDT": engine.traders["BTCUSDT"].paused_at}
+
+
+async def test_settings_changes_keep_the_pause_and_removal_forgets_it(
+    store: HaltStore, symbol_store: SymbolStore
+) -> None:
+    exchange = FakeExchange()
+    engine = await start(exchange, store, symbol_store)
+    await engine.pause_symbol({"symbol": "BTCUSDT"})
+    since = engine.traders["BTCUSDT"].paused_at
+
+    await engine.set_symbol({"symbol": "BTCUSDT", "leverage": 3})
+    assert engine.traders["BTCUSDT"].paused_at == since
+    assert symbol_store.load_paused() == {"BTCUSDT": since}
+
+    await engine.remove_symbol({"symbol": "BTCUSDT"})
+    assert symbol_store.load_paused() == {}
+    await engine.set_symbol({"symbol": "BTCUSDT", "leverage": 3})
+    assert engine.traders["BTCUSDT"].paused_at is None
+
+
+async def test_unknown_symbols_are_refused(store: HaltStore, symbol_store: SymbolStore) -> None:
+    engine = await start(FakeExchange(), store, symbol_store)
+    for command in (engine.pause_symbol, engine.close_symbol, engine.resume_symbol):
+        with pytest.raises(SymbolChangeRefused, match="ETHUSDT is not one of the engine's"):
+            await command({"symbol": "ETHUSDT"})
+    assert symbol_store.load() is None
+
+
+async def test_failed_save_of_a_pause_changes_nothing(store: HaltStore, tmp_path: Path) -> None:
+    engine = await start(FakeExchange(), store, FailingStore(tmp_path / "symbols.json"))
+    trader = engine.traders["BTCUSDT"]
+    with pytest.raises(PermissionError):
+        await engine.pause_symbol({"symbol": "BTCUSDT"})
+    assert trader.paused_at is None
+
+    trader.pause("2026-10-22T03:00:00+00:00")
+    with pytest.raises(PermissionError):
+        await engine.resume_symbol({"symbol": "BTCUSDT"})
+    assert trader.paused_at == "2026-10-22T03:00:00+00:00"
+
+
+async def test_a_pause_that_cant_be_saved_never_blocks_the_close(
+    store: HaltStore, tmp_path: Path
+) -> None:
+    exchange = FakeExchange()
+    open_long(exchange)
+    exchange.add_stop("SELL", "59400")
+    engine = await start(exchange, store, FailingStore(tmp_path / "symbols.json"))
+
+    with pytest.raises(PauseNotSaved, match="closed LONG 0.083.*a restart would trade BTCUSDT"):
+        await engine.close_symbol({"symbol": "BTCUSDT"})
+
+    assert exchange.position_amount == 0
+    assert engine.traders["BTCUSDT"].paused_at is not None  # holds until a restart

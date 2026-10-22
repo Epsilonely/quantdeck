@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import type { CommandName, CommandResult, EngineCommand } from '../../shared/engine'
 import LogView from './components/LogView'
 import SymbolEditor, { type EditTarget } from './components/SymbolEditor'
-import SymbolTable from './components/SymbolTable'
+import SymbolTable, { type RowCommand } from './components/SymbolTable'
 import ThemeSwitch from './components/ThemeSwitch'
 import { clock, dateTime, elapsed, isNegative, isZero, riskDayStart } from './format'
 import { useEngine } from './useEngine'
@@ -14,13 +14,23 @@ const COMMAND_LABELS: Record<CommandName, string> = {
   lift_halt: '정지 해제',
   stop_engine: '엔진 정지',
   set_symbol: '심볼 설정',
-  remove_symbol: '코인 제거'
+  remove_symbol: '코인 제거',
+  pause_symbol: '일시정지',
+  close_symbol: '청산·정지',
+  resume_symbol: '재개'
+}
+
+const ROW_COMMANDS: readonly CommandName[] = ['pause_symbol', 'close_symbol', 'resume_symbol']
+
+function isRowCommand(name: CommandName): name is RowCommand {
+  return ROW_COMMANDS.includes(name)
 }
 
 interface ShownResult extends CommandResult {
   name: CommandName
 }
 
+// The commands of the settings panel, whose failures show in the panel (D-48).
 function isSymbolCommand(name: CommandName): boolean {
   return name === 'set_symbol' || name === 'remove_symbol'
 }
@@ -32,6 +42,7 @@ function targetKey(target: EditTarget): string {
 function App(): React.JSX.Element {
   const { status, launch, state, logs, catalog } = useEngine()
   const [busy, setBusy] = useState<CommandName | null>(null)
+  const [busySymbol, setBusySymbol] = useState<string | null>(null) // the symbol `busy` names
   const [result, setResult] = useState<ShownResult | null>(null)
   const [editing, setEditing] = useState<EditTarget | null>(null)
   const [now, setNow] = useState(() => Date.now())
@@ -46,6 +57,7 @@ function App(): React.JSX.Element {
   const run = async (command: EngineCommand): Promise<void> => {
     const { name } = command
     setBusy(name)
+    setBusySymbol('args' in command ? command.args.symbol : null)
     try {
       const reply = await window.api.engine.command(command)
       if (reply) setResult({ name, ...reply })
@@ -55,6 +67,7 @@ function App(): React.JSX.Element {
       setResult({ name, ok: false, message: String(e) })
     } finally {
       setBusy(null)
+      setBusySymbol(null)
     }
   }
 
@@ -75,6 +88,14 @@ function App(): React.JSX.Element {
   if (!addBlocked && catalog && state && state.symbols.length >= catalog.max_symbols) {
     addBlocked = `코인은 최대 ${catalog.max_symbols}개입니다`
   }
+  // A row's pause, close, and resume (D-50) need no catalog.
+  let actionBlocked: string | null = null
+  if (!connected) actionBlocked = '엔진에 연결되어 있지 않습니다'
+  else if (busy !== null) actionBlocked = '다른 명령을 보내는 중입니다'
+  const busyRow =
+    busy !== null && busySymbol !== null && isRowCommand(busy)
+      ? { name: busy, symbol: busySymbol }
+      : null
 
   let statusText: string
   let statusClass: string
@@ -237,7 +258,10 @@ function App(): React.JSX.Element {
               symbols={state.symbols}
               editing={editing?.mode === 'edit' ? editing.symbol : null}
               editBlocked={editBlocked}
+              actionBlocked={actionBlocked}
+              busy={busyRow}
               onEdit={(symbol) => openEditor({ mode: 'edit', symbol })}
+              onCommand={(name, symbol) => run({ name, args: { symbol } })}
             />
             {editing && catalog && (
               <SymbolEditor

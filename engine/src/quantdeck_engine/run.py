@@ -10,7 +10,9 @@ protected, and the kill switch fires when the daily loss limit is reached.
 Clients (the GUI) connect through the WebSocket server in `server.py` (D-32, D-33). Besides
 the kill switch and stopping the engine, they add, change, and remove symbols while it
 runs (D-47): one symbol at a time, only while that symbol is flat, saved to `symbols.json`
-before the engine acts on it, and without touching the other symbols.
+before the engine acts on it, and without touching the other symbols. They also pause one
+symbol, close its position and pause it, or resume it (D-50); the pause is saved with the
+symbol, so a restart keeps it, and the other symbols keep trading.
 
 Only one engine process runs at a time (D-31). Stop it with Ctrl+C or a client's
 `stop_engine` command (D-34).
@@ -39,15 +41,17 @@ from quantdeck_engine.config import (
 from quantdeck_engine.lock import InstanceLock
 from quantdeck_engine.paths import FORWARD_DIR
 from quantdeck_engine.server import ClientServer, LogBuffer
-from quantdeck_engine.snapshot import engine_snapshot
+from quantdeck_engine.snapshot import engine_snapshot, fixed_point
 from quantdeck_engine.startup import Account, build_account
 from quantdeck_engine.symbols import (
+    PauseNotSaved,
     SymbolChangeRefused,
     SymbolStore,
     load_symbols,
-    parse_remove_symbol,
     parse_set_symbol,
+    parse_symbol_arg,
 )
+from quantdeck_engine.times import iso_utc
 from quantdeck_engine.trading.executor import PositionOpen, SymbolTrader
 from quantdeck_engine.trading.halt import HaltStore
 from quantdeck_engine.trading.risk import RiskChecker
@@ -86,6 +90,7 @@ class Engine:
         *,
         testnet: bool,
         runners: Mapping[str, StrategyRunner] | None = None,
+        paused: Mapping[str, str] | None = None,
         forward_dir: Path = FORWARD_DIR,
         checker: RiskChecker | None = None,
         time_sync_interval: float = TIME_SYNC_INTERVAL,
@@ -113,6 +118,14 @@ class Engine:
         self._runner_tasks: dict[str, asyncio.Task[None]] = {}
         self._mark_task: asyncio.Task[None] | None = None
         self._changing = asyncio.Lock()  # one symbol change at a time
+        for symbol, since in (paused or {}).items():
+            # Before any strategy runs, so a startup decision can't enter (D-50).
+            self.traders[symbol].pause(since)
+            logger.warning(
+                "%s: paused by the user since %s: no new entries until resumed (D-50)",
+                symbol,
+                since,
+            )
 
     async def run(self) -> None:
         """Follow the account and run the strategies until cancelled."""
@@ -167,15 +180,13 @@ class Engine:
         return done
 
     async def remove_symbol(self, args: Mapping[str, Any]) -> str:
-        """Stop trading a flat symbol and forget it (D-47)."""
-        symbol = parse_remove_symbol(args)
+        """Stop trading a flat symbol and forget it (D-47), with its pause (D-50)."""
+        symbol = parse_symbol_arg(args, "remove_symbol")
         async with self._changing:
-            if symbol not in self.symbols:
-                raise SymbolChangeRefused(f"{symbol} is not one of the engine's symbols")
-            trader = self.traders[symbol]
+            trader = self._trader(symbol)
             try:
                 async with trader.flat():
-                    self._store.save({s: c for s, c in self.symbols.items() if s != symbol})
+                    self._save({s: c for s, c in self.symbols.items() if s != symbol})
                     await self._stop_runner(symbol)
                     del self.symbols[symbol]
                     del self.traders[symbol]
@@ -190,6 +201,94 @@ class Engine:
             self._follow_mark_prices()
         logger.info("%s removed (D-47)", symbol)
         return f"{symbol} removed"
+
+    async def pause_symbol(self, args: Mapping[str, Any]) -> str:
+        """The user's pause (D-50): no new entries on this symbol until resumed, kept across
+        restarts. Its position, stop, and exit signals carry on.
+
+        Returns once any entry that started before the pause has finished. Raises OSError if
+        the pause can't be saved, having changed nothing.
+        """
+        symbol = parse_symbol_arg(args, "pause_symbol")
+        async with self._changing:
+            trader = self._trader(symbol)
+            if trader.paused_at is not None:
+                return f"{symbol} already paused since {trader.paused_at}"
+            trader.pause(iso_utc(time.time()))
+            try:
+                self._save(self.symbols)
+            except OSError:
+                trader.resume()
+                raise
+            logger.warning(
+                "%s: paused by the user (D-50): no new entries; its position, stop, and exit "
+                "signals carry on",
+                symbol,
+            )
+            await trader.idle()
+        return f"{symbol} paused: no new entries until resumed"
+
+    async def close_symbol(self, args: Mapping[str, Any]) -> str:
+        """Pause the symbol (D-50), then close its position with reduceOnly market orders and
+        cancel its stop. The other symbols keep trading.
+
+        A pause that can't be saved still holds in this engine and never blocks the close (as
+        D-29); `PauseNotSaved` then reports it once the position is closed.
+        """
+        symbol = parse_symbol_arg(args, "close_symbol")
+        async with self._changing:
+            trader = self._trader(symbol)
+            unsaved: OSError | None = None
+            if trader.paused_at is None:
+                trader.pause(iso_utc(time.time()))
+                try:
+                    self._save(self.symbols)
+                except OSError as e:
+                    unsaved = e
+                    logger.error(
+                        "%s: the pause could not be saved to %s (%s); it holds until the "
+                        "engine restarts",
+                        symbol,
+                        self._store.path,
+                        e,
+                    )
+            logger.warning("%s: closing its position and pausing it, as the user asked", symbol)
+            position = await trader.close_position()
+        closed = (
+            "had no position"
+            if position is None
+            else f"closed {position.side} {fixed_point(position.quantity)}"
+        )
+        done = f"{symbol} {closed}; paused since {trader.paused_at}"
+        if unsaved is not None:
+            raise PauseNotSaved(
+                f"{done}, but the pause could not be saved, so a restart would trade "
+                f"{symbol} again: {unsaved}"
+            )
+        return done
+
+    async def resume_symbol(self, args: Mapping[str, Any]) -> str:
+        """Lift the user's pause (D-50). The engine's own halt of the symbol (D-16, D-19,
+        D-20) and the kill switch's halt (D-27) stay."""
+        symbol = parse_symbol_arg(args, "resume_symbol")
+        async with self._changing:
+            trader = self._trader(symbol)
+            since = trader.paused_at
+            if since is None:
+                return f"{symbol} not paused"
+            trader.resume()
+            try:
+                self._save(self.symbols)
+            except OSError:
+                trader.pause(since)
+                raise
+        logger.warning("%s: pause lifted by the user (paused since %s; D-50)", symbol, since)
+        done = f"{symbol} resumed: new entries from its strategy's next signal"
+        if trader.halted:
+            done += f"; still halted by the engine: {trader.halt_reason}"
+        if self.guard.halted:
+            done += "; the kill switch still halts the account"
+        return done
 
     def snapshot(self) -> dict[str, Any]:
         """The state clients see (D-33)."""
@@ -235,7 +334,7 @@ class Engine:
             runner = await warmed_up_runner(
                 self._client, self._ws_root, trader, config.strategy, self._forward_dir
             )
-        self._store.save({**self.symbols, symbol: config})
+        self._save({**self.symbols, symbol: config})
         self.symbols[symbol] = config
         self.traders[symbol] = trader
         self.guard.attach(list(self.traders.values()))
@@ -279,7 +378,8 @@ class Engine:
                 if new_leverage:
                     await trader.set_leverage(config.leverage)
                 try:
-                    self._store.save({**self.symbols, symbol: config})
+                    # A paused symbol stays paused (D-50).
+                    self._save({**self.symbols, symbol: config})
                 except OSError:
                     if new_leverage:
                         await self._restore_leverage(trader, current.leverage)
@@ -293,6 +393,21 @@ class Engine:
                         self._start(runner)
         except PositionOpen as e:
             raise _refused(e) from None
+
+    def _trader(self, symbol: str) -> SymbolTrader:
+        trader = self.traders.get(symbol)
+        if trader is None:
+            raise SymbolChangeRefused(f"{symbol} is not one of the engine's symbols")
+        return trader
+
+    def _save(self, symbols: Mapping[str, SymbolConfig]) -> None:
+        """Write `symbols` to symbols.json with the user's pauses of them (D-50)."""
+        paused = {
+            s: t.paused_at
+            for s, t in self.traders.items()
+            if s in symbols and t.paused_at is not None
+        }
+        self._store.save(symbols, paused)
 
     async def _restore_leverage(self, trader: SymbolTrader, leverage: int) -> None:
         try:
@@ -371,10 +486,11 @@ async def start_engine(
     symbols: Mapping[str, SymbolConfig],
     symbol_store: SymbolStore,
     *,
+    paused: Mapping[str, str] | None = None,
     forward_dir: Path = FORWARD_DIR,
 ) -> Engine:
     """Startup checks (D-05, D-16, D-19, D-26, D-27) and the strategies' warm-up (D-43);
-    returns the engine ready to run."""
+    returns the engine ready to run, with the user's pauses (D-50) in place."""
     account = await build_account(client, trading, store, symbols.values())
     for trader in account.traders:
         await trader.prepare()
@@ -395,6 +511,7 @@ async def start_engine(
         symbol_store,
         testnet=settings.testnet,
         runners=runners,
+        paused=paused,
         forward_dir=forward_dir,
     )
 
@@ -413,13 +530,15 @@ async def run_engine(settings: Settings, trading: TradingConfig) -> None:
             # Read under the lock: a running engine may be writing the file (D-47).
             symbol_store = SymbolStore()
             symbols = load_symbols(symbol_store, trading)
+            paused = symbol_store.load_paused()
             async with BinanceRestClient(settings) as client:
                 engine = await start_engine(
-                    client, settings, trading, HaltStore(), symbols, symbol_store
+                    client, settings, trading, HaltStore(), symbols, symbol_store, paused=paused
                 )
                 if engine.symbols:
                     running = "Engine running for " + "; ".join(
-                        f"{s} ({c.describe()})" for s, c in engine.symbols.items()
+                        f"{s} ({c.describe()}{', paused' if s in paused else ''})"
+                        for s, c in engine.symbols.items()
                     )
                 else:
                     running = "Engine running with no symbols; add them from the GUI (D-47)"

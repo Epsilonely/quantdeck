@@ -9,8 +9,9 @@
   changes, and log records as they happen.
 - Commands are `{"type": "command", "id": ..., "name": ..., "args": {...}}`; the reply is a
   `result` with the same `id`. Names: `emergency_close` (the kill switch, D-27),
-  `lift_halt`, `stop_engine` (D-34), and `set_symbol` and `remove_symbol` (D-47), the
-  only ones that take `args`.
+  `lift_halt`, `stop_engine` (D-34), `set_symbol` and `remove_symbol` (D-47), and
+  `pause_symbol`, `close_symbol`, and `resume_symbol` (D-50). Only the symbol commands
+  take `args`.
 
 Message shapes are recorded in `docs/memory-bank/techContext.md`.
 """
@@ -34,7 +35,7 @@ from websockets.exceptions import ConnectionClosed
 from quantdeck_engine.binance.rest import REQUEST_ERRORS
 from quantdeck_engine.config import ConfigError, Secret
 from quantdeck_engine.paths import CONNECTION_FILE, write_atomic
-from quantdeck_engine.symbols import SymbolChangeRefused, catalog
+from quantdeck_engine.symbols import PauseNotSaved, SymbolChangeRefused, catalog
 from quantdeck_engine.trading.executor import OrderOutcomeUnclear
 from quantdeck_engine.trading.risk import LiftRefused
 
@@ -42,6 +43,9 @@ logger = logging.getLogger(__name__)
 
 PROTOCOL_VERSION = 1
 HOST = "127.0.0.1"
+SYMBOL_COMMANDS = frozenset(
+    {"set_symbol", "remove_symbol", "pause_symbol", "close_symbol", "resume_symbol"}
+)
 AUTH_TIMEOUT = 5.0  # seconds for a client to send its hello
 PUBLISH_INTERVAL = 0.25  # seconds between checks for a changed state
 LOG_BACKLOG = 200  # records sent to a client when it connects
@@ -72,6 +76,18 @@ class EngineControl(Protocol):
 
     async def remove_symbol(self, args: Mapping[str, Any]) -> str:
         """Remove a flat symbol (D-47); returns what was done."""
+        ...
+
+    async def pause_symbol(self, args: Mapping[str, Any]) -> str:
+        """Stop a symbol's new entries until resumed (D-50); returns what was done."""
+        ...
+
+    async def close_symbol(self, args: Mapping[str, Any]) -> str:
+        """Pause a symbol and close its position (D-50); returns what was done."""
+        ...
+
+    async def resume_symbol(self, args: Mapping[str, Any]) -> str:
+        """Lift the user's pause of a symbol (D-50); returns what was done."""
         ...
 
 
@@ -248,6 +264,9 @@ class ClientServer:
             "stop_engine": lambda _: self._stop_engine(),
             "set_symbol": self._set_symbol,
             "remove_symbol": self._remove_symbol,
+            "pause_symbol": self._symbol_command("pause", self._engine.pause_symbol),
+            "close_symbol": self._symbol_command("close and pause", self._engine.close_symbol),
+            "resume_symbol": self._symbol_command("resume", self._engine.resume_symbol),
         }
         command = commands.get(name)
         if command is None:
@@ -255,8 +274,10 @@ class ClientServer:
         try:
             return await command(args)
         except (LiftRefused, SymbolChangeRefused, ConfigError) as e:
-            if name in ("set_symbol", "remove_symbol"):
+            if name in SYMBOL_COMMANDS:
                 logger.warning("%s refused: %s", name, e)
+            return False, str(e)
+        except PauseNotSaved as e:
             return False, str(e)
         except (*REQUEST_ERRORS, OrderOutcomeUnclear, OSError) as e:
             logger.error("Command %s failed: %s", name, e)
@@ -285,6 +306,15 @@ class ClientServer:
     async def _remove_symbol(self, args: dict[str, Any]) -> tuple[bool, str]:
         logger.info("Symbol removal requested by a client: %s", json.dumps(args))
         return True, await self._engine.remove_symbol(args)
+
+    def _symbol_command(
+        self, what: str, run: Callable[[dict[str, Any]], Awaitable[str]]
+    ) -> Callable[[dict[str, Any]], Awaitable[tuple[bool, str]]]:
+        async def command(args: dict[str, Any]) -> tuple[bool, str]:
+            logger.info("Symbol %s requested by a client: %s", what, json.dumps(args))
+            return True, await run(args)
+
+        return command
 
     # Broadcasting
 

@@ -62,7 +62,10 @@ export interface SymbolStrategy {
 
 export interface SymbolState {
   symbol: string
-  halted: string | null // this symbol's own halt (D-19, D-20)
+  halted: string | null // the engine's own halt of this symbol (D-16, D-19, D-20)
+  // The user's pause (D-50): when it began, or null. Engines before 2026-10-22 don't send it and
+  // can't pause a symbol.
+  paused_at?: string | null
   leverage?: number // engines before 2026-10-20 don't send it
   strategy: SymbolStrategy | null // null without a strategy: no entries
   mark_price: string | null
@@ -124,7 +127,8 @@ export interface SetSymbolArgs {
   strategy: StrategySetting | null // null: no strategy, no entries
 }
 
-export interface RemoveSymbolArgs {
+// The arguments of the commands that name a symbol and nothing else.
+export interface SymbolArgs {
   symbol: string
 }
 
@@ -133,16 +137,28 @@ export const COMMAND_NAMES = [
   'lift_halt',
   'stop_engine',
   'set_symbol',
-  'remove_symbol'
+  'remove_symbol',
+  'pause_symbol',
+  'close_symbol',
+  'resume_symbol'
 ] as const
 export type CommandName = (typeof COMMAND_NAMES)[number]
+
+// remove_symbol (D-47); pause, close and pause, and resume one symbol (D-50).
+export const SYMBOL_ONLY_COMMANDS = [
+  'remove_symbol',
+  'pause_symbol',
+  'close_symbol',
+  'resume_symbol'
+] as const
+export type SymbolOnlyCommand = (typeof SYMBOL_ONLY_COMMANDS)[number]
 
 export type EngineCommand =
   | { name: 'emergency_close' }
   | { name: 'lift_halt' }
   | { name: 'stop_engine' }
   | { name: 'set_symbol'; args: SetSymbolArgs }
-  | { name: 'remove_symbol'; args: RemoveSymbolArgs }
+  | { name: SymbolOnlyCommand; args: SymbolArgs }
 
 export interface CommandResult {
   ok: boolean

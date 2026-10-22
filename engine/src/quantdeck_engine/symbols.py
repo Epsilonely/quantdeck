@@ -6,6 +6,10 @@ as `config.toml` (D-28), and learn what they can set from the catalog sent with 
 (D-48). Risk values stay in the hand-edited `config.toml`, so no client or
 engine bug can rewrite them.
 
+The file also keeps the user's pause of a symbol (D-50) as `paused_at` in its entry, so a
+restart doesn't trade a symbol the user stopped. A pause isn't a setting: `set_symbol`
+neither takes nor clears it, and removing the symbol forgets it.
+
 The first `run` or `trial` without the file creates it from `config.toml`'s `[symbols]` and
 `[strategy]`; after that those tables are ignored. A file that can't be read or holds a
 value out of bounds stops the engine at startup, as `config.toml` does.
@@ -17,6 +21,7 @@ parameter never passes through a float.
 import json
 import logging
 from collections.abc import Mapping
+from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
 from typing import Any
@@ -58,6 +63,11 @@ class SymbolChangeRefused(Exception):
     """A client's symbol change can't be made now; nothing was changed."""
 
 
+class PauseNotSaved(Exception):
+    """`close_symbol` closed the position and the pause holds in the running engine, but the
+    file couldn't be written, so a restart would trade the symbol again (D-50)."""
+
+
 class SymbolStore:
     def __init__(self, path: Path = SYMBOLS_FILE) -> None:
         self.path = path
@@ -65,6 +75,32 @@ class SymbolStore:
     def load(self) -> dict[str, SymbolConfig] | None:
         """The symbols in the file, or None if there is no file. Raises `ConfigError` if it
         can't be read or a value is invalid."""
+        data = self._read()
+        return None if data is None else parse_symbols_file(data, self.path.name)
+
+    def load_paused(self) -> dict[str, str]:
+        """The symbols the user paused, each with when (ISO 8601 UTC); empty without a file.
+        Raises `ConfigError` as `load` does."""
+        data = self._read()
+        return {} if data is None else parse_paused(data, self.path.name)
+
+    def save(
+        self, symbols: Mapping[str, SymbolConfig], paused: Mapping[str, str] | None = None
+    ) -> None:
+        """Write the whole file atomically (D-29): every symbol's settings, and `paused_at`
+        for those in `paused`. Raises OSError if it can't be written, which on Windows
+        includes another program having it open (D-12)."""
+        paused = paused or {}
+        entries = {}
+        for symbol, config in symbols.items():
+            entries[symbol] = symbol_entry(config)
+            if symbol in paused:
+                entries[symbol]["paused_at"] = paused[symbol]
+        data = {"version": FILE_VERSION, "symbols": entries}
+        write_atomic(self.path, json.dumps(data, indent=2) + "\n")
+
+    def _read(self) -> Mapping[str, Any] | None:
+        """The file's JSON object, or None if there is no file."""
         try:
             text = self.path.read_text(encoding="utf-8")
         except FileNotFoundError:
@@ -75,16 +111,9 @@ class SymbolStore:
             data = json.loads(text)
         except ValueError as e:
             raise ConfigError(f"{self.path.name} is not valid JSON: {e}") from None
-        return parse_symbols_file(data, self.path.name)
-
-    def save(self, symbols: Mapping[str, SymbolConfig]) -> None:
-        """Write the whole file atomically (D-29). Raises OSError if it can't be written,
-        which on Windows includes another program having it open (D-12)."""
-        data = {
-            "version": FILE_VERSION,
-            "symbols": {symbol: symbol_entry(config) for symbol, config in symbols.items()},
-        }
-        write_atomic(self.path, json.dumps(data, indent=2) + "\n")
+        if not isinstance(data, Mapping):
+            raise ConfigError(f"{self.path.name} must hold a JSON object")
+        return data
 
 
 def load_symbols(
@@ -125,9 +154,31 @@ def parse_symbols_file(data: object, where: str) -> dict[str, SymbolConfig]:
         raise ConfigError(f"{where} lists {len(entries)} symbols; the most is {MAX_SYMBOLS}")
     symbols = {}
     for symbol, entry in entries.items():
+        if isinstance(entry, Mapping) and "paused_at" in entry:
+            _check_paused_at(entry["paused_at"], f"{where}: {symbol}")
+            entry = {key: value for key, value in entry.items() if key != "paused_at"}
         config = parse_symbol(symbol, entry, f"{where}: {symbol}")
         symbols[config.symbol] = config
     return symbols
+
+
+def parse_paused(data: Mapping[str, Any], where: str) -> dict[str, str]:
+    """The symbols the user paused (D-50): `paused_at` in a symbol's entry."""
+    parse_symbols_file(data, where)  # checks the whole file first
+    return {
+        symbol: entry["paused_at"]
+        for symbol, entry in data["symbols"].items()
+        if "paused_at" in entry
+    }
+
+
+def _check_paused_at(value: object, where: str) -> None:
+    try:
+        valid = isinstance(value, str) and datetime.fromisoformat(value).tzinfo is not None
+    except ValueError:
+        valid = False
+    if not valid:
+        raise ConfigError(f"{where} paused_at must be an ISO 8601 time with a zone, got {value!r}")
 
 
 def parse_symbol(symbol: object, entry: object, where: str) -> SymbolConfig:
@@ -188,10 +239,11 @@ def parse_set_symbol(args: Mapping[str, Any]) -> SymbolConfig:
     return parse_symbol(args.get("symbol"), entry, "set_symbol")
 
 
-def parse_remove_symbol(args: Mapping[str, Any]) -> str:
-    """`remove_symbol`'s arguments: `{"symbol"}`."""
-    reject_unknown(args, {"symbol"}, "remove_symbol")
-    return check_symbol_name(args.get("symbol"), "remove_symbol")
+def parse_symbol_arg(args: Mapping[str, Any], command: str) -> str:
+    """The arguments of `remove_symbol` (D-47) and of `pause_symbol`, `close_symbol`, and
+    `resume_symbol` (D-50): `{"symbol"}`."""
+    reject_unknown(args, {"symbol"}, command)
+    return check_symbol_name(args.get("symbol"), command)
 
 
 def catalog() -> dict[str, Any]:

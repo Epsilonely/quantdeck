@@ -1,5 +1,14 @@
 import type { StrategyAction, SymbolState, SymbolStrategy } from '../../../shared/engine'
-import { isNegative, pnlClass, shortDateTime } from '../format'
+import { dateTime, isNegative, pnlClass, shortDateTime } from '../format'
+
+// What a row's buttons send (D-50).
+export type RowCommand = 'pause_symbol' | 'close_symbol' | 'resume_symbol'
+
+const ROW_BUSY_LABELS: Record<RowCommand, string> = {
+  pause_symbol: '정지 중…',
+  close_symbol: '청산 중…',
+  resume_symbol: '재개 중…'
+}
 
 const ACTION_LABELS: Record<StrategyAction, string> = {
   enter_long: '롱 진입',
@@ -76,14 +85,102 @@ function LastSignal({ strategy }: { strategy: SymbolStrategy | null }): React.JS
   )
 }
 
+// The user's pause (D-50) and the engine's own halt (D-16, D-19, D-20), each in its own tag.
+function Status({ symbol }: { symbol: SymbolState }): React.JSX.Element {
+  const paused = symbol.paused_at
+  if (!paused && !symbol.halted) return <span className="tag ok">정상</span>
+  return (
+    <>
+      {paused && (
+        <div>
+          <span
+            className="tag warn"
+            title={`${dateTime(paused)}부터 새 진입을 멈췄습니다. 포지션과 손절, 청산 신호는 그대로입니다`}
+          >
+            일시정지 · {shortDateTime(paused)}
+          </span>
+        </div>
+      )}
+      {symbol.halted && (
+        <div>
+          <span className="tag danger" title={symbol.halted}>
+            정지: {symbol.halted}
+          </span>
+        </div>
+      )}
+    </>
+  )
+}
+
+interface ActionsProps {
+  symbol: SymbolState
+  blocked: string | null
+  busy: RowCommand | null // the command in progress for this symbol
+  onCommand(name: RowCommand): void
+}
+
+// Pause or resume the symbol, and close its position with a pause (D-50). The other symbols trade
+// on; the account-wide emergency close stays in the header.
+function Actions({ symbol, blocked, busy, onCommand }: ActionsProps): React.JSX.Element {
+  // Engines before 2026-10-22 send no paused_at and don't know these commands.
+  const reason =
+    symbol.paused_at === undefined
+      ? '이 엔진은 코인별 정지를 모릅니다. 엔진을 새 코드로 재시작하세요'
+      : blocked
+  const button = (
+    name: RowCommand,
+    label: string,
+    title: string,
+    className = 'small'
+  ): React.JSX.Element => (
+    <button
+      className={className}
+      disabled={reason !== null}
+      title={reason ?? title}
+      onClick={() => onCommand(name)}
+    >
+      {busy === name ? ROW_BUSY_LABELS[name] : label}
+    </button>
+  )
+  return (
+    <>
+      {symbol.paused_at
+        ? button('resume_symbol', '재개', '일시정지를 풀고 다음 진입 신호부터 다시 진입합니다')
+        : button(
+            'pause_symbol',
+            '일시정지',
+            '이 코인만 새 진입을 멈춥니다. 포지션과 손절, 청산 신호는 그대로입니다'
+          )}
+      {symbol.position &&
+        button(
+          'close_symbol',
+          '청산·정지',
+          '이 코인만 새 진입을 막고 포지션을 시장가 reduceOnly로 청산합니다',
+          'small danger-outline'
+        )}
+    </>
+  )
+}
+
 interface Props {
   symbols: SymbolState[]
   editing: string | null // the symbol open in the settings panel
   editBlocked: string | null // why settings can't be changed now
+  actionBlocked: string | null // why a row's pause, close, or resume can't be sent now
+  busy: { name: RowCommand; symbol: string } | null
   onEdit(symbol: string): void
+  onCommand(name: RowCommand, symbol: string): void
 }
 
-function SymbolTable({ symbols, editing, editBlocked, onEdit }: Props): React.JSX.Element {
+function SymbolTable({
+  symbols,
+  editing,
+  editBlocked,
+  actionBlocked,
+  busy,
+  onEdit,
+  onCommand
+}: Props): React.JSX.Element {
   if (symbols.length === 0) return <p className="muted">설정된 심볼이 없습니다.</p>
   return (
     <table className="symbols">
@@ -107,13 +204,13 @@ function SymbolTable({ symbols, editing, editBlocked, onEdit }: Props): React.JS
           <tr key={s.symbol} className={s.symbol === editing ? 'editing' : undefined}>
             <td className="strong">{s.symbol}</td>
             <td>
-              {s.halted ? (
-                <span className="tag danger" title={s.halted}>
-                  정지: {s.halted}
-                </span>
-              ) : (
-                <span className="tag ok">정상</span>
-              )}
+              <Status symbol={s} />
+              <Actions
+                symbol={s}
+                blocked={actionBlocked}
+                busy={busy?.symbol === s.symbol ? busy.name : null}
+                onCommand={(name) => onCommand(name, s.symbol)}
+              />
             </td>
             <td>
               <Setting symbol={s} />
