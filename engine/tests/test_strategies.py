@@ -1,3 +1,4 @@
+import random
 from decimal import Decimal
 
 import pytest
@@ -7,6 +8,7 @@ from quantdeck_engine.strategy.base import Enter, Exit, Position
 from quantdeck_engine.strategy.bollinger import BollingerReversion
 from quantdeck_engine.strategy.daily_breakout import DailyOpenBreakout
 from quantdeck_engine.strategy.donchian import DonchianBreakout
+from quantdeck_engine.strategy.donchian_atr_adx import DonchianAtrAdx, adx
 from quantdeck_engine.strategy.move_fade import MoveFade
 from quantdeck_engine.strategy.registry import StrategyError, make_strategy, parse_parameters
 from quantdeck_engine.strategy.trend_pullback import TrendPullback
@@ -458,3 +460,162 @@ def test_trend_pullback_rejects_bad_settings() -> None:
         TrendPullback(limit_atr=Decimal(-1))
     with pytest.raises(ValueError, match="stop_atr > 0"):
         TrendPullback(stop_atr=Decimal(0))
+
+
+def random_walk(n: int, seed: int) -> list[Kline]:
+    rng = random.Random(seed)
+    price = Decimal(100)
+    candles = []
+    for i in range(n):
+        close = price + Decimal(rng.randint(-100, 100)) / 100
+        high = max(price, close) + Decimal(rng.randint(0, 50)) / 100
+        low = min(price, close) - Decimal(rng.randint(0, 50)) / 100
+        candles.append(candle(i, str(high), str(low), str(close)))
+        price = close
+    return candles
+
+
+def test_donchian_atr_adx_without_stop_or_filter_acts_as_the_donchian_breakout() -> None:
+    plain = DonchianBreakout(entry_period=20, exit_period=10)
+    variant = DonchianAtrAdx(
+        entry_period=20, exit_period=10, stop_atr=Decimal(0), adx_min=Decimal(0)
+    )
+    assert variant.warmup == plain.warmup
+    position: Position | None = None
+    entries = exits = 0
+    for k in random_walk(3000, seed=7):
+        action = plain.on_candle(k, position)
+        assert variant.on_candle(k, position) == action
+        if isinstance(action, Enter):
+            position, entries = Position(action.side, Decimal(1), k.close), entries + 1
+        elif isinstance(action, Exit):
+            position, exits = None, exits + 1
+    assert entries > 20 and exits > 20
+
+
+def test_donchian_atr_adx_defaults_to_the_atr_stop_with_the_adx_filter() -> None:
+    strategy = DonchianAtrAdx()
+    assert (strategy.interval, strategy.entry_period, strategy.exit_period) == ("4h", 55, 20)
+    assert (strategy.stop_atr, strategy.adx_min) == (Decimal("1.5"), Decimal(20))
+    assert not strategy.limit_entries
+
+
+def test_donchian_atr_adx_warmup_covers_the_atr_and_the_adx() -> None:
+    no_adx = Decimal(0)
+    assert DonchianAtrAdx(entry_period=4, exit_period=2, atr_period=10, adx_min=no_adx).warmup == 11
+    assert DonchianAtrAdx(entry_period=55, exit_period=20, adx_min=no_adx).warmup == 56
+    assert DonchianAtrAdx(entry_period=55, exit_period=20).warmup == 11 * 14
+
+
+def atr_only() -> DonchianAtrAdx:
+    """A 2 ATR stop over the last 2 candles, without the ADX filter."""
+    return DonchianAtrAdx(
+        entry_period=4, exit_period=2, stop_atr=Decimal(2), atr_period=2, adx_min=Decimal(0)
+    )
+
+
+def test_donchian_atr_adx_puts_the_stop_atr_beyond_the_close() -> None:
+    strategy = atr_only()
+    for k in ranging(4):
+        assert strategy.on_candle(k, None) is None
+
+    action = strategy.on_candle(candle(4, "103", "100", "102"), None)
+
+    # True ranges of the last 2 candles: 101 - 99.03 and 103 - 100, so ATR 2.485.
+    assert action == Enter(Side.LONG, Decimal("97.03"))
+
+
+def test_donchian_atr_adx_short_stop_above_the_close() -> None:
+    strategy = atr_only()
+    for k in ranging(4):
+        strategy.on_candle(k, None)
+    assert strategy.on_candle(candle(4, "100.5", "99.5", "100"), None) is None
+
+    action = strategy.on_candle(candle(5, "99", "97", "98"), None)
+
+    # True ranges 100.5 - 99.5 and 100 - 97, so ATR 2.
+    assert action == Enter(Side.SHORT, Decimal("102"))
+
+
+def reference_adx(candles: list[Kline], period: int) -> Decimal:
+    """Wilder's ADX over the whole history, by the textbook steps with the true range."""
+    trs, pluses, minuses = [], [], []
+    for before, k in zip(candles, candles[1:], strict=False):
+        trs.append(max(k.high, before.close) - min(k.low, before.close))
+        up, down = k.high - before.high, before.low - k.low
+        pluses.append(up if up > down and up > 0 else Decimal(0))
+        minuses.append(down if down > up and down > 0 else Decimal(0))
+    tr, plus, minus = sum(trs[:period]), sum(pluses[:period]), sum(minuses[:period])
+    dxs = []
+    for i in range(period - 1, len(trs)):
+        if i >= period:
+            tr += trs[i] - tr / period
+            plus += pluses[i] - plus / period
+            minus += minuses[i] - minus / period
+        plus_di, minus_di = 100 * plus / tr, 100 * minus / tr
+        dxs.append(100 * abs(plus_di - minus_di) / (plus_di + minus_di))
+    value = sum(dxs[:period]) / period
+    for dx in dxs[period:]:
+        value = (value * (period - 1) + dx) / period
+    return value
+
+
+def test_adx_from_its_window_matches_the_whole_history() -> None:
+    candles = random_walk(600, seed=3)
+    for end in (200, 400, 600):
+        windowed = adx(candles[end - 11 * 14 : end], 14)
+        assert abs(windowed - reference_adx(candles[:end], 14)) < Decimal("0.01")
+
+
+def chop(n: int) -> list[Kline]:
+    """Candles that step up and down by the same amount, so ADX stays near 0."""
+    return [
+        candle(i, "101", "99.5", "100") if i % 2 == 0 else candle(i, "100.5", "99", "100")
+        for i in range(n)
+    ]
+
+
+def test_donchian_atr_adx_skips_a_breakout_while_adx_is_low() -> None:
+    breakout = candle(60, "103", "100", "102")
+    for adx_min, expected in ((Decimal(20), None), (Decimal(0), Enter(Side.LONG, Decimal(99)))):
+        strategy = DonchianAtrAdx(
+            entry_period=20, exit_period=10, stop_atr=Decimal(0), adx_period=5, adx_min=adx_min
+        )
+        for k in chop(60):
+            strategy.on_candle(k, None)
+        assert strategy.on_candle(breakout, None) == expected
+
+
+def test_donchian_atr_adx_enters_a_breakout_in_a_strong_trend() -> None:
+    strategy = DonchianAtrAdx(
+        entry_period=20, exit_period=10, stop_atr=Decimal(0), adx_period=5, adx_min=Decimal(25)
+    )
+    rising = [candle(i, str(100 + i), str(99 + i), str(Decimal("99.9") + i)) for i in range(60)]
+    actions = [strategy.on_candle(k, None) for k in rising]
+    assert actions[-1] == Enter(Side.LONG, Decimal(99 + 49))
+
+
+def test_donchian_atr_adx_exits_without_waiting_for_adx() -> None:
+    strategy = DonchianAtrAdx(entry_period=20, exit_period=10, adx_period=5, adx_min=Decimal(50))
+    for k in chop(60):
+        strategy.on_candle(k, LONG)
+    assert strategy.on_candle(candle(60, "99.5", "98", "98.5"), LONG) == Exit()
+
+
+def test_donchian_atr_adx_rejects_bad_settings() -> None:
+    with pytest.raises(ValueError, match="exit_period <= entry_period"):
+        DonchianAtrAdx(entry_period=5, exit_period=6)
+    with pytest.raises(ValueError, match="stop_atr >= 0"):
+        DonchianAtrAdx(stop_atr=Decimal(-1))
+    with pytest.raises(ValueError, match="atr_period >= 1"):
+        DonchianAtrAdx(atr_period=0)
+    with pytest.raises(ValueError, match="adx_min >= 0"):
+        DonchianAtrAdx(adx_min=Decimal(-1))
+    with pytest.raises(ValueError, match="adx_period >= 2"):
+        DonchianAtrAdx(adx_period=1)
+
+
+def test_registry_builds_the_donchian_variant() -> None:
+    strategy = make_strategy("donchian-atr-adx", "4h", {"stop_atr": 0, "adx_min": 20})
+    assert isinstance(strategy, DonchianAtrAdx)
+    assert (strategy.stop_atr, strategy.adx_min, strategy.warmup) == (0, 20, 154)

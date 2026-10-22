@@ -14,6 +14,7 @@ from quantdeck_engine.strategy.base import Strategy
 from quantdeck_engine.strategy.bollinger import BollingerReversion
 from quantdeck_engine.strategy.daily_breakout import DailyOpenBreakout
 from quantdeck_engine.strategy.donchian import DonchianBreakout
+from quantdeck_engine.strategy.donchian_atr_adx import DonchianAtrAdx
 from quantdeck_engine.strategy.move_fade import MoveFade
 from quantdeck_engine.strategy.trend_pullback import TrendPullback
 
@@ -23,6 +24,7 @@ STRATEGIES: dict[str, type[Strategy]] = {
     "daily-breakout": DailyOpenBreakout,
     "move-fade": MoveFade,
     "trend-pullback": TrendPullback,
+    "donchian-atr-adx": DonchianAtrAdx,
 }
 
 

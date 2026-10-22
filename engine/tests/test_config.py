@@ -334,4 +334,5 @@ def test_only_limit_settings_use_limit_entries() -> None:
         "daily-breakout": False,
         "move-fade": False,
         "trend-pullback": True,
+        "donchian-atr-adx": False,
     }

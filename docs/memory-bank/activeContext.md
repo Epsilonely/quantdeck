@@ -21,6 +21,7 @@ Merged work not yet seen against a real engine; most of it needs the engine rest
 - The unrealized PnL line on the today's loss card (#25).
 - The parameter help tips in the settings panel (#23), and how the panel shows an engine's refusal of a change.
 - The engine uptime in the connection tag (#14).
+- The `donchian-atr-adx` strategy (D-52) on a running engine: setting it from the panel, its 154-candle warm-up with the ADX filter on, and its decisions and record file. Tested in backtests and with unit tests only.
 - The symbol table's leverage, strategy, last candle, and last signal columns: never recorded as seen on screen.
 - Changing a running symbol's leverage, and the entry gate's count of every open position's stop: tested with fakes only.
 - How the GUI reports an engine's stop or failure since it starts the engine through a starter (D-34 note).
@@ -33,7 +34,7 @@ Exchange behavior not yet seen, such as a triggered stop, is under To verify in 
 Roughly in the order they're needed:
 
 - **Forward test:** what counts as passing (how many trades or weeks, how close to the backtest's signals), and the tool that replays the recorded candles through the backtest and compares the signals (D-36, D-38). An engine started with a BTCUSDT position opened under 5× refuses to trade the symbol until it is closed (D-16).
-- **Strategy:** adding to an open position is out of scope for now (D-22). Take profit and trailing stops are deferred: the chosen strategy exits on its channel (D-36), and `TRAILING_STOP_MARKET` can't use `closePosition` (D-18).
+- **Strategy:** adding to an open position is out of scope for now (D-22). Take profit and trailing stops are deferred: the chosen strategy exits on its channel (D-36), and `TRAILING_STOP_MARKET` can't use `closePosition` (D-18). The turtle-style ATR stop and ADX filter didn't beat the plain breakout consistently (D-52); they can be set on a symbol, and whether to forward-test them on one is the user's call.
 - **15m strategies:** the user wanted one, Donchian or not. The search found none worth forward-testing (D-44), and maker entries rescued none (D-45, D-46), so the engine gets no limit orders for now. The 15m holdout (2024 onward) has been used: a new 15m idea needs its own fixed grid and counts as one more test on the same history. The daily-open breakout was held back partly because one strategy traded per account; per-symbol strategies remove that reason, but its holdout edge still can't be told from zero.
 - **Engine operation:** running `run` without the GUI (a Windows service or scheduled task), and what restarts it after a crash (D-34).
 - **Storage:** what SQLite records, and whether logs go there (D-12; D-33 keeps recent logs in memory for now). Historical candles (D-38), the halt record (D-29), the forward test record (D-43), and the symbol settings (D-47) are settled. The GUI's last 7 days of trades read the exchange, not a local record (D-51).
