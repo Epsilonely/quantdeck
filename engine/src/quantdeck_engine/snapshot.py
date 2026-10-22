@@ -9,10 +9,14 @@ from typing import TYPE_CHECKING, Any
 
 from quantdeck_engine.config import StrategyConfig
 from quantdeck_engine.times import iso_utc
+from quantdeck_engine.trading.state import SymbolState
 from quantdeck_engine.trading.strategy_runner import StrategyRunner
 
 if TYPE_CHECKING:
     from quantdeck_engine.run import Engine
+
+
+CENT = Decimal("0.01")
 
 
 def fixed_point(amount: Decimal) -> str:
@@ -22,6 +26,7 @@ def fixed_point(amount: Decimal) -> str:
 
 def engine_snapshot(engine: "Engine") -> dict[str, Any]:
     daily = engine.checker.latest
+    unrealized = _unrealized_total(engine)
     return {
         "network": "testnet" if engine.testnet else "mainnet",
         "started_at": iso_utc(engine.started_at),
@@ -37,6 +42,13 @@ def engine_snapshot(engine: "Engine") -> dict[str, Any]:
             "base": fixed_point(daily.base),
             "loss": fixed_point(daily.loss),
             "limit": fixed_point(daily.limit),
+            # Display only: the limit and the kill switch count realized results (D-24 note).
+            "unrealized_pnl": None
+            if unrealized is None
+            else fixed_point(unrealized.quantize(CENT)),
+            "loss_with_unrealized": None
+            if unrealized is None
+            else fixed_point((daily.loss - unrealized).quantize(CENT)),
         },
         "balances": {
             asset: fixed_point(amount)
@@ -47,6 +59,26 @@ def engine_snapshot(engine: "Engine") -> dict[str, Any]:
     }
 
 
+def _unrealized(state: SymbolState, mark: Decimal) -> Decimal:
+    """A position's unrealized PnL at `mark`, before the fee to close it."""
+    return state.position_amount * (mark - state.entry_price)
+
+
+def _unrealized_total(engine: "Engine") -> Decimal | None:
+    """Every open position's unrealized PnL at the display-only mark prices (D-33), or None
+    when no position is open or a position's mark price hasn't arrived yet."""
+    open_positions = [(s, st) for s, st in engine.state.symbols.items() if st.position_amount]
+    if not open_positions:
+        return None
+    total = Decimal(0)
+    for symbol, state in open_positions:
+        mark = engine.mark_prices.get(symbol)
+        if mark is None:
+            return None
+        total += _unrealized(state, mark)
+    return total
+
+
 def _symbol_snapshot(engine: "Engine", symbol: str) -> dict[str, Any]:
     state = engine.state.symbols[symbol]
     mark = engine.mark_prices.get(symbol)
@@ -55,9 +87,7 @@ def _symbol_snapshot(engine: "Engine", symbol: str) -> dict[str, Any]:
         position = {
             "amount": fixed_point(state.position_amount),
             "entry_price": fixed_point(state.entry_price),
-            "unrealized_pnl": None
-            if mark is None
-            else fixed_point(state.position_amount * (mark - state.entry_price)),
+            "unrealized_pnl": None if mark is None else fixed_point(_unrealized(state, mark)),
         }
     config = engine.symbols[symbol]
     trader = engine.traders[symbol]

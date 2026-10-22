@@ -4,7 +4,16 @@ import LogView from './components/LogView'
 import SymbolEditor, { type EditTarget } from './components/SymbolEditor'
 import SymbolTable, { type RowCommand } from './components/SymbolTable'
 import ThemeSwitch from './components/ThemeSwitch'
-import { clock, dateTime, elapsed, isNegative, isZero, riskDayStart } from './format'
+import {
+  clock,
+  dateTime,
+  elapsed,
+  isNegative,
+  isZero,
+  pnlClass,
+  riskDayStart,
+  signed
+} from './format'
 import { useEngine } from './useEngine'
 
 const UPTIME_REFRESH_MS = 30_000
@@ -124,8 +133,10 @@ function App(): React.JSX.Element {
   }
 
   // Today's loss is positive when the day lost money (D-24).
-  const loss = state?.daily_loss?.loss
-  const lossClass = loss && !isZero(loss) && !isNegative(loss) ? 'loss' : ''
+  const lossClass = (loss: string | null | undefined): string =>
+    loss && !isZero(loss) && !isNegative(loss) ? 'loss' : ''
+  const unrealized = state?.daily_loss?.unrealized_pnl
+  const withUnrealized = state?.daily_loss?.loss_with_unrealized
 
   return (
     <div className="app">
@@ -213,10 +224,26 @@ function App(): React.JSX.Element {
             <div className="card">
               <div className="label">오늘 손실 / 한도</div>
               {state.daily_loss ? (
-                <div className="value">
-                  <span className={lossClass}>{state.daily_loss.loss}</span> /{' '}
-                  {state.daily_loss.limit} {state.daily_loss.asset}
-                </div>
+                <>
+                  <div className="value">
+                    <span className={lossClass(state.daily_loss.loss)}>
+                      {state.daily_loss.loss}
+                    </span>{' '}
+                    / {state.daily_loss.limit} {state.daily_loss.asset}
+                  </div>
+                  {unrealized && withUnrealized && (
+                    <div
+                      className="sub"
+                      title={
+                        '열린 포지션의 미실현 손익 합계(마크 가격 기준, 청산 수수료 제외)와 그것까지 ' +
+                        '반영한 손실입니다. 일일 손실 한도와 킬스위치는 위의 실현 손실만 셉니다.'
+                      }
+                    >
+                      미실현 <span className={pnlClass(unrealized)}>{signed(unrealized)}</span> ·
+                      포함하면 <span className={lossClass(withUnrealized)}>{withUnrealized}</span>
+                    </div>
+                  )}
+                </>
               ) : (
                 <div className="value muted">첫 확인 전</div>
               )}

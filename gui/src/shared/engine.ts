@@ -14,8 +14,13 @@ export interface HaltState {
 export interface DailyLoss {
   asset: string
   base: string
-  loss: string
+  loss: string // positive when the day lost money; the limit and the kill switch count it (D-24)
   limit: string
+  // Display only: the open positions' unrealized PnL, and the loss with it counted. Null without
+  // a position or before every position's mark price is in; engines before 2026-10-22 don't send
+  // them.
+  unrealized_pnl?: string | null
+  loss_with_unrealized?: string | null
 }
 
 export interface Position {

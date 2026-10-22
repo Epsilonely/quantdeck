@@ -76,7 +76,8 @@ After `hello` the first three messages are `welcome`, `logs`, `state`, in that o
 network      "testnet" | "mainnet"
 started_at   when this engine started; the GUI shows the engine's uptime from it
 halt         {halted: bool, reason: str | null, since: str | null}
-daily_loss   null until the first check, then {asset, base, loss, limit}
+daily_loss   null until the first check, then {asset, base, loss, limit,
+               unrealized_pnl: str | null, loss_with_unrealized: str | null}
 balances     {asset: wallet balance}, nonzero only
 symbols      [{symbol, halted: str | null (the engine's own halt of it, D-16/D-19/D-20),
                paused_at: str | null (the user's pause, D-50),
@@ -91,7 +92,7 @@ symbols      [{symbol, halted: str | null (the engine's own halt of it, D-16/D-1
                stops:  [{client_algo_id, side, type, trigger_price, close_position}]}]
 ```
 
-Strategy fields (D-43, D-47): `params` holds every parameter, as strings like amounts. `action` is `enter_long`, `enter_short`, or `exit`; `outcome` is text for the user, and `stopped` says why this symbol's strategy stopped. These fields, `leverage`, `paused_at` (2026-10-22), and `started_at` were added without changing the protocol version, so a client must accept them missing from an older engine; the GUI takes a missing `paused_at` to mean the engine can't pause a symbol. Engines before 2026-10-20 sent one top-level `strategy` instead of the per-symbol `name`, `interval`, and `params`.
+Strategy fields (D-43, D-47): `params` holds every parameter, as strings like amounts. `action` is `enter_long`, `enter_short`, or `exit`; `outcome` is text for the user, and `stopped` says why this symbol's strategy stopped. `unrealized_pnl` is every open position's unrealized PnL at the display-only mark prices, before closing fees, and `loss_with_unrealized` is `loss` minus it, both rounded to 0.01; they are null with no position open or before every position's mark price has arrived, and only the GUI uses them (D-24 note of 2026-10-22). These fields, `leverage`, `paused_at` (2026-10-22), the two unrealized fields (2026-10-22), and `started_at` were added without changing the protocol version, so a client must accept them missing from an older engine; the GUI takes a missing `paused_at` to mean the engine can't pause a symbol. Engines before 2026-10-20 sent one top-level `strategy` instead of the per-symbol `name`, `interval`, and `params`.
 
 **Catalog** (D-48). What `set_symbol` accepts, built from the strategy registry; an engine before 2026-10-20 sends none.
 

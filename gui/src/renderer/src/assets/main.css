@@ -357,6 +357,14 @@ button:focus-visible {
   font-size: 15px;
 }
 
+/* A smaller line under a value, such as the unrealized PnL under today's loss. */
+.card .sub {
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-variant-ligatures: none;
+  font-size: 12px;
+}
+
 table.symbols {
   width: 100%;
   border-collapse: collapse;

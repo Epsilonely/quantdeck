@@ -52,6 +52,11 @@ export function isZero(amount: string): boolean {
   return /^-?0*(\.0*)?$/.test(amount)
 }
 
+/** `30.5` → `+30.5`, so a gain reads as one; zero and losses as they are. */
+export function signed(amount: string): string {
+  return isZero(amount) || isNegative(amount) ? amount : `+${amount}`
+}
+
 /** CSS class for a profit-or-loss amount. */
 export function pnlClass(amount: string | null): string {
   if (amount === null || isZero(amount)) return ''

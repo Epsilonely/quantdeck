@@ -298,7 +298,39 @@ async def test_snapshot_of_a_protected_position(
         "base": "5000",
         "loss": "0",
         "limit": "150",
+        "unrealized_pnl": "8.34",
+        "loss_with_unrealized": "-8.34",
     }
+
+
+async def test_daily_loss_shows_the_unrealized_total_for_display_only(
+    store: HaltStore, symbol_store: SymbolStore
+) -> None:
+    flat = await start(FakeExchange(), store, symbol_store)
+    flat.checker.latest = DAILY
+    daily = flat.snapshot()["daily_loss"]
+    assert (daily["unrealized_pnl"], daily["loss_with_unrealized"]) == (None, None)
+
+    exchange = FakeExchange(other_symbols={"ETHUSDT": 3})
+    open_long(exchange)  # 0.083 at 60000
+    exchange.add_stop("SELL", "59400")
+    exchange.add_position("ETHUSDT", "-1.5", "2500")
+    exchange.add_stop("BUY", "2600", "qd_s_ETHUSDT_1_00", symbol="ETHUSDT")
+    symbols = {**SYMBOLS, "ETHUSDT": SymbolConfig("ETHUSDT", 3)}
+    engine = await start(exchange, store, symbol_store, symbols)
+    await resync(exchange.client(), engine.state)
+    engine.checker.latest = DailyLoss(base=D(5000), loss=D("12.5"), limit=D(150))
+
+    engine.mark_prices["BTCUSDT"] = D("60100.5")  # +8.3415
+    daily = engine.snapshot()["daily_loss"]
+    # A total missing one position would mislead: none until every mark price is in.
+    assert (daily["unrealized_pnl"], daily["loss_with_unrealized"]) == (None, None)
+
+    engine.mark_prices["ETHUSDT"] = D("2510")  # the short loses 15
+    daily = engine.snapshot()["daily_loss"]
+    assert daily["unrealized_pnl"] == "-6.66"  # -6.6585
+    assert daily["loss_with_unrealized"] == "19.16"  # 12.5 + 6.6585
+    assert daily["loss"] == "12.5"  # what the limit and the kill switch count (D-24)
 
 
 STEP = 4 * 60 * 60_000
