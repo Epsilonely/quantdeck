@@ -183,11 +183,13 @@ button.plain {
   background: transparent;
 }
 
-/* Small buttons keep the UI font inside the table's monospace cells. */
+/* Small buttons keep the UI font inside the table's monospace cells, and their label on one line:
+   in a narrow column, Hangul would otherwise wrap after every syllable. */
 button.small {
   font-family: var(--sans);
   font-size: 12px;
   padding: 1px 10px;
+  white-space: nowrap;
 }
 
 button.danger-outline {
