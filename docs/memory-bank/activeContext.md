@@ -22,7 +22,7 @@ Merged work not yet seen against a real engine; most of it needs the engine rest
 - The parameter help tips in the settings panel (#23), and how the panel shows an engine's refusal of a change.
 - The engine uptime in the connection tag (#14).
 - The `donchian-atr-adx` strategy (D-52) on a running engine: setting it from the panel, its 154-candle warm-up with the ADX filter on, and its decisions and record file. Tested in backtests and with unit tests only.
-- The symbol table's display on a running engine (#31): the mark price and a signal's stop on the tick, and each signal result's label. Checked only with a fake API.
+- The symbol table's display on a running engine (#31, #33): the mark price and a signal's stop on the tick, each signal result's label, the ROI under the unrealized PnL, and the warning when a strategy's next decision is overdue. Checked only with a fake API.
 - The entry gate's count of every open position's stop: tested with fakes only.
 - An entry trimmed by the available-balance cap filling on testnet (#32, D-25 note of 2026-10-26): ETHUSDT at 2× with its 1m stops would show it. Tested against Binance's documented cost formula only.
 - How the GUI reports an engine's stop or failure since it starts the engine through a starter (D-34 note).

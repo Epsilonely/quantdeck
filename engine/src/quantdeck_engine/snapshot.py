@@ -64,6 +64,13 @@ def _unrealized(state: SymbolState, mark: Decimal) -> Decimal:
     return state.position_amount * (mark - state.entry_price)
 
 
+def _roi_pct(state: SymbolState, unrealized: Decimal, leverage: int) -> Decimal:
+    """`unrealized` as a percent of the position's initial margin at entry, |amount| × entry
+    price ÷ leverage: the price move times the leverage."""
+    margin = abs(state.position_amount) * state.entry_price / leverage
+    return unrealized / margin * 100
+
+
 def _unrealized_total(engine: "Engine") -> Decimal | None:
     """Every open position's unrealized PnL at the display-only mark prices (D-33), or None
     when no position is open or a position's mark price hasn't arrived yet."""
@@ -82,16 +89,22 @@ def _unrealized_total(engine: "Engine") -> Decimal | None:
 def _symbol_snapshot(engine: "Engine", symbol: str) -> dict[str, Any]:
     state = engine.state.symbols[symbol]
     mark = engine.mark_prices.get(symbol)
+    config = engine.symbols[symbol]
     position = None
     if state.position_amount != 0:
+        unrealized = None if mark is None else _unrealized(state, mark)
         position = {
             "amount": fixed_point(state.position_amount),
             "entry_price": fixed_point(state.entry_price),
             "unrealized_pnl": None
-            if mark is None
-            else fixed_point(_unrealized(state, mark).quantize(CENT)),
+            if unrealized is None
+            else fixed_point(unrealized.quantize(CENT)),
+            # Display only, on the symbol's set leverage. A position found at startup under
+            # another leverage halts the symbol (D-16), and this is then off by their ratio.
+            "roi_pct": None
+            if unrealized is None
+            else fixed_point(_roi_pct(state, unrealized, config.leverage).quantize(CENT)),
         }
-    config = engine.symbols[symbol]
     trader = engine.traders[symbol]
     return {
         "symbol": symbol,

@@ -17,7 +17,8 @@ import {
 } from './format'
 import { useEngine } from './useEngine'
 
-const UPTIME_REFRESH_MS = 30_000
+// How often `now` moves on, for the engine's uptime and a strategy's overdue decision.
+const CLOCK_REFRESH_MS = 30_000
 
 const COMMAND_LABELS: Record<CommandName, string> = {
   emergency_close: '긴급 청산',
@@ -59,7 +60,7 @@ function App(): React.JSX.Element {
   const [now, setNow] = useState(() => Date.now())
 
   useEffect(() => {
-    const timer = setInterval(() => setNow(Date.now()), UPTIME_REFRESH_MS)
+    const timer = setInterval(() => setNow(Date.now()), CLOCK_REFRESH_MS)
     return () => clearInterval(timer)
   }, [])
 
@@ -300,6 +301,8 @@ function App(): React.JSX.Element {
                   editBlocked={editBlocked}
                   actionBlocked={actionBlocked}
                   busy={busyRow}
+                  now={now}
+                  connected={connected}
                   onEdit={(symbol) => openEditor({ mode: 'edit', symbol })}
                   onCommand={(name, symbol) => run({ name, args: { symbol } })}
                 />

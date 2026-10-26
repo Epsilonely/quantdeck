@@ -395,6 +395,11 @@ table.symbols .num {
   text-align: right;
 }
 
+/* A smaller line under a cell's value, such as the ROI under the unrealized PnL. */
+table.symbols .sub {
+  font-size: 12px;
+}
+
 table.symbols td button.small {
   display: block;
   margin-top: 4px;

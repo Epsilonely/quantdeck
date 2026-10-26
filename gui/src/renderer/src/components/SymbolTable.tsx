@@ -5,7 +5,7 @@ import type {
   SymbolState,
   SymbolStrategy
 } from '../../../shared/engine'
-import { dateTime, isNegative, pnlClass, shortDateTime } from '../format'
+import { dateTime, isNegative, pnlClass, shortDateTime, signed } from '../format'
 
 // What a row's buttons send (D-50).
 export type RowCommand = 'pause_symbol' | 'close_symbol' | 'resume_symbol'
@@ -78,18 +78,75 @@ function Setting({ symbol }: { symbol: SymbolState }): React.JSX.Element {
   )
 }
 
-function LastCandle({ strategy }: { strategy: SymbolStrategy | null }): React.JSX.Element {
-  const candle = strategy?.last_candle
-  if (!candle) return <span className="muted">{strategy ? '판단 전' : '—'}</span>
+const INTERVAL_UNIT_MS: Record<string, number> = {
+  m: 60_000,
+  h: 60 * 60_000,
+  d: 24 * 60 * 60_000,
+  w: 7 * 24 * 60 * 60_000,
+  M: 31 * 24 * 60 * 60_000 // the longest month, so a month is never called late too soon
+}
+
+// REST's copy of a candle the stream missed is used a minute after its close (D-42); a minute
+// more covers the position read and the order.
+const DECISION_GRACE_MS = 2 * 60_000
+
+/** A kline interval such as `4h` or `15m` in ms, or null for one this GUI can't read. */
+function intervalMs(interval: string | undefined): number | null {
+  const match = interval?.match(/^(\d+)([mhdwM])$/)
+  return match ? Number(match[1]) * INTERVAL_UNIT_MS[match[2]] : null
+}
+
+/** The close of the candle after `strategy`'s last one, if that is more than the grace ago. */
+function lateClose(strategy: SymbolStrategy, now: number): number | null {
+  const step = intervalMs(strategy.interval)
+  const open = strategy.last_candle && new Date(strategy.last_candle.open_time).getTime()
+  if (step === null || !open) return null
+  const nextClose = open + 2 * step
+  return now > nextClose + DECISION_GRACE_MS ? nextClose : null
+}
+
+// The candle the strategy last decided on, which shows it still decides when no signal comes,
+// and a warning once the next candle is overdue.
+function LastDecision({
+  strategy,
+  now,
+  connected
+}: {
+  strategy: SymbolStrategy
+  now: number
+  connected: boolean
+}): React.JSX.Element {
+  const candle = strategy.last_candle
+  if (!candle) return <div className="sub muted">판단 전</div>
+  // A stopped strategy says so already, and a disconnected engine's state is old anyway.
+  const late = connected && !strategy.stopped ? lateClose(strategy, now) : null
   return (
-    <>
-      {shortDateTime(candle.open_time)} · {candle.close}
-    </>
+    <div className="sub muted">
+      마지막 판단 {shortDateTime(candle.open_time)} 캔들
+      {late !== null && (
+        <div>
+          <span
+            className="tag warn"
+            title={`${shortDateTime(new Date(late).toISOString())}에 마감한 캔들을 2분이 지나도록 판단하지 않았습니다. 엔진 로그를 확인하세요`}
+          >
+            판단 늦음
+          </span>
+        </div>
+      )}
+    </div>
   )
 }
 
 // The last signal and its outcome, and whether this symbol's strategy stopped (D-43).
-function LastSignal({ strategy }: { strategy: SymbolStrategy | null }): React.JSX.Element {
+function LastSignal({
+  strategy,
+  now,
+  connected
+}: {
+  strategy: SymbolStrategy | null
+  now: number
+  connected: boolean
+}): React.JSX.Element {
   if (!strategy) return <span className="muted">—</span>
   const signal = strategy.last_signal
   return (
@@ -116,8 +173,49 @@ function LastSignal({ strategy }: { strategy: SymbolStrategy | null }): React.JS
           </div>
         </div>
       ) : (
-        !strategy.stopped && <span className="muted">아직 없음</span>
+        !strategy.stopped && <div className="muted">아직 없음</div>
       )}
+      <LastDecision strategy={strategy} now={now} connected={connected} />
+    </>
+  )
+}
+
+// The symbol's stops, and its open orders only when there are any: the engine places market
+// orders alone, so one that rests is a stop's order filling, or one the engine didn't place.
+function Stops({ symbol }: { symbol: SymbolState }): React.JSX.Element {
+  const { stops, orders, position } = symbol
+  const orderLines = orders.map(
+    (order) =>
+      `${order.side} ${order.type} ${order.quantity}${order.reduce_only ? ' reduceOnly' : ''} · ${order.client_id}`
+  )
+  return (
+    <>
+      {stops.map((stop) => (
+        <div key={stop.client_algo_id} title={stop.client_algo_id}>
+          {stop.side} {stop.type} @ {stop.trigger_price}
+          {stop.close_position ? ' (closePosition)' : ''}
+        </div>
+      ))}
+      {stops.length === 0 && position && (
+        <div>
+          <span className="tag danger">스톱 없음</span>
+        </div>
+      )}
+      {orders.length > 0 && (
+        <div>
+          <span
+            className="tag warn"
+            title={[
+              '엔진은 시장가 주문만 내서 미체결 주문이 보통 없습니다. 손절이 발동한 직후 잠깐 ' +
+                '보일 수 있고, 계속 남아 있으면 엔진이 걸지 않은 주문입니다.',
+              ...orderLines
+            ].join('\n')}
+          >
+            미체결 주문 {orders.length}건
+          </span>
+        </div>
+      )}
+      {stops.length === 0 && !position && orders.length === 0 && <span className="muted">—</span>}
     </>
   )
 }
@@ -205,6 +303,8 @@ interface Props {
   editBlocked: string | null // why settings can't be changed now
   actionBlocked: string | null // why a row's pause, close, or resume can't be sent now
   busy: { name: RowCommand; symbol: string } | null
+  now: number // ms, for telling an overdue decision
+  connected: boolean
   onEdit(symbol: string): void
   onCommand(name: RowCommand, symbol: string): void
 }
@@ -215,6 +315,8 @@ function SymbolTable({
   editBlocked,
   actionBlocked,
   busy,
+  now,
+  connected,
   onEdit,
   onCommand
 }: Props): React.JSX.Element {
@@ -231,8 +333,6 @@ function SymbolTable({
           <th className="num">진입가</th>
           <th className="num">미실현 손익</th>
           <th>스톱</th>
-          <th>주문</th>
-          <th>마지막 캔들</th>
           <th>전략 신호</th>
         </tr>
       </thead>
@@ -274,40 +374,20 @@ function SymbolTable({
             <td className="num">{s.position?.entry_price ?? '—'}</td>
             <td className={`num ${pnlClass(s.position?.unrealized_pnl ?? null)}`}>
               {s.position?.unrealized_pnl ?? '—'}
-            </td>
-            <td>
-              {s.stops.length === 0 ? (
-                s.position ? (
-                  <span className="tag danger">스톱 없음</span>
-                ) : (
-                  <span className="muted">—</span>
-                )
-              ) : (
-                s.stops.map((stop) => (
-                  <div key={stop.client_algo_id} title={stop.client_algo_id}>
-                    {stop.side} {stop.type} @ {stop.trigger_price}
-                    {stop.close_position ? ' (closePosition)' : ''}
-                  </div>
-                ))
+              {s.position?.roi_pct && (
+                <div
+                  className="sub"
+                  title={`진입 증거금(진입가 × 수량 ÷ 레버리지 ${s.leverage ?? '?'}x) 대비 수익률입니다. 가격 변동률 × 레버리지와 같고, 수수료와 펀딩은 빠져 있습니다`}
+                >
+                  {signed(s.position.roi_pct)}%
+                </div>
               )}
             </td>
             <td>
-              {s.orders.length === 0 ? (
-                <span className="muted">—</span>
-              ) : (
-                s.orders.map((order) => (
-                  <div key={order.client_id} title={order.client_id}>
-                    {order.side} {order.type} {order.quantity}
-                    {order.reduce_only ? ' (reduceOnly)' : ''}
-                  </div>
-                ))
-              )}
+              <Stops symbol={s} />
             </td>
             <td>
-              <LastCandle strategy={s.strategy ?? null} />
-            </td>
-            <td>
-              <LastSignal strategy={s.strategy ?? null} />
+              <LastSignal strategy={s.strategy ?? null} now={now} connected={connected} />
             </td>
           </tr>
         ))}

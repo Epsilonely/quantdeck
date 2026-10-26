@@ -27,6 +27,9 @@ export interface Position {
   amount: string // negative = short
   entry_price: string
   unrealized_pnl: string | null
+  // Display only: unrealized_pnl as a percent of the initial margin at entry (the price move
+  // times the leverage). Null with unrealized_pnl; engines before 2026-10-26 don't send it.
+  roi_pct?: string | null
 }
 
 export interface OpenOrder {

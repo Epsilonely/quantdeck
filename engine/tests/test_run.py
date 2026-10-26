@@ -312,6 +312,7 @@ async def test_snapshot_of_a_protected_position(
         "amount": "0.083",
         "entry_price": "60000",
         "unrealized_pnl": "8.35",  # 8.34508643, from the unrounded mark price
+        "roi_pct": "0.84",  # 8.34508643 on a margin of 0.083 × 60000 ÷ 5 = 996
     }
     assert symbol["orders"] == []
     assert [(s["side"], s["trigger_price"], s["close_position"]) for s in symbol["stops"]] == [
@@ -348,12 +349,19 @@ async def test_daily_loss_shows_the_unrealized_total_for_display_only(
     engine.checker.latest = DailyLoss(base=D(5000), loss=D("12.5"), limit=D(150))
 
     engine.mark_prices["BTCUSDT"] = D("60100.5")  # +8.3415
-    daily = engine.snapshot()["daily_loss"]
+    snapshot = engine.snapshot()
+    daily = snapshot["daily_loss"]
     # A total missing one position would mislead: none until every mark price is in.
     assert (daily["unrealized_pnl"], daily["loss_with_unrealized"]) == (None, None)
+    eth = next(s for s in snapshot["symbols"] if s["symbol"] == "ETHUSDT")
+    assert (eth["position"]["unrealized_pnl"], eth["position"]["roi_pct"]) == (None, None)
 
     engine.mark_prices["ETHUSDT"] = D("2510")  # the short loses 15
-    daily = engine.snapshot()["daily_loss"]
+    snapshot = engine.snapshot()
+    eth = next(s for s in snapshot["symbols"] if s["symbol"] == "ETHUSDT")
+    # On a margin of 1.5 × 2500 ÷ 3 = 1250: the 0.4% move against it, times 3.
+    assert (eth["position"]["unrealized_pnl"], eth["position"]["roi_pct"]) == ("-15.00", "-1.20")
+    daily = snapshot["daily_loss"]
     assert daily["unrealized_pnl"] == "-6.66"  # -6.6585
     assert daily["loss_with_unrealized"] == "19.16"  # 12.5 + 6.6585
     assert daily["loss"] == "12.5"  # what the limit and the kill switch count (D-24)
