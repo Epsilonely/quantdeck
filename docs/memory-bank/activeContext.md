@@ -22,7 +22,7 @@ Merged work not yet seen against a real engine; most of it needs the engine rest
 - The parameter help tips in the settings panel (#23), and how the panel shows an engine's refusal of a change.
 - The engine uptime in the connection tag (#14).
 - The `donchian-atr-adx` strategy (D-52) on a running engine: setting it from the panel, its 154-candle warm-up with the ADX filter on, and its decisions and record file. Tested in backtests and with unit tests only.
-- The symbol table's leverage, strategy, last candle, and last signal columns: never recorded as seen on screen.
+- The symbol table's display on a running engine (#31): the mark price and a signal's stop on the tick, and each signal result's label. Checked only with a fake API.
 - The entry gate's count of every open position's stop: tested with fakes only.
 - How the GUI reports an engine's stop or failure since it starts the engine through a starter (D-34 note).
 - The in-app confirmation (#7, D-53) in the GUI itself: in `npm run dev`, where the page comes from the dev server; with a real mouse and keyboard, including that clicks don't reach the main page under it; and in a packaged build. Checked only in a test harness with the real overlay over a fake API.

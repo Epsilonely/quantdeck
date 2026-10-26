@@ -87,7 +87,9 @@ def _symbol_snapshot(engine: "Engine", symbol: str) -> dict[str, Any]:
         position = {
             "amount": fixed_point(state.position_amount),
             "entry_price": fixed_point(state.entry_price),
-            "unrealized_pnl": None if mark is None else fixed_point(_unrealized(state, mark)),
+            "unrealized_pnl": None
+            if mark is None
+            else fixed_point(_unrealized(state, mark).quantize(CENT)),
         }
     config = engine.symbols[symbol]
     trader = engine.traders[symbol]
@@ -97,7 +99,9 @@ def _symbol_snapshot(engine: "Engine", symbol: str) -> dict[str, Any]:
         "paused_at": trader.paused_at,  # the user's pause (D-50)
         "leverage": config.leverage,
         "strategy": _strategy(config.strategy, engine.runners.get(symbol)),
-        "mark_price": None if mark is None else fixed_point(mark),
+        # The stream's mark price carries more digits than the symbol's prices; the
+        # unrealized PnL above uses it unrounded.
+        "mark_price": None if mark is None else fixed_point(trader.rules.nearest_price(mark)),
         "position": position,
         "orders": [
             {
@@ -144,6 +148,7 @@ def _strategy(
             "candle_open_time": iso_utc(signal.candle_open_time / 1000),
             "action": signal.action,
             "stop_price": None if signal.stop_price is None else fixed_point(signal.stop_price),
+            "result": str(signal.result),
             "outcome": signal.outcome,
         },
         "stopped": None if runner is None else runner.stopped,

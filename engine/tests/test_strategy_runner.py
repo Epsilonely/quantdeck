@@ -14,7 +14,12 @@ from quantdeck_engine.strategy.base import Action, Enter, Exit
 from quantdeck_engine.trading.executor import SymbolTrader, TradingHalted
 from quantdeck_engine.trading.position import Position
 from quantdeck_engine.trading.rules import Side
-from quantdeck_engine.trading.strategy_runner import ForwardRecord, Signal, StrategyRunner
+from quantdeck_engine.trading.strategy_runner import (
+    ForwardRecord,
+    Signal,
+    SignalResult,
+    StrategyRunner,
+)
 
 D = Decimal
 STEP = 4 * 60 * 60_000
@@ -130,7 +135,7 @@ async def test_an_exit_on_the_latest_warm_up_candle_is_carried_out() -> None:
     assert seen is not None and seen.side is Side.LONG and seen.quantity == D("0.083")
     assert exchange.position_amount == 0
     assert exchange.algo_orders == []
-    assert runner.last_signal == Signal(T0 + 2 * STEP, "exit", None, "closed")
+    assert runner.last_signal == Signal(T0 + 2 * STEP, "exit", None, SignalResult.CLOSED, "closed")
 
 
 # Entries and exits
@@ -145,8 +150,24 @@ async def test_an_entry_signal_opens_a_protected_position() -> None:
     assert exchange.position_amount == D("0.083")
     assert [a["triggerPrice"] for a in exchange.algo_orders] == ["59400"]
     assert runner.last_signal == Signal(
-        T0 + 3 * STEP, "enter_long", D(59400), "entered 0.083 at ~60000"
+        T0 + 3 * STEP, "enter_long", D(59400), SignalResult.ENTERED, "entered 0.083 at ~60000"
     )
+
+
+async def test_clients_see_the_stop_on_the_tick_and_the_record_keeps_the_strategys(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "BTCUSDT_4h.csv"
+    exchange = FakeExchange()  # tick 0.1
+    strategy = Scripted({3: Enter(Side.LONG, D("59400.0123"))})
+    trader = make_trader(exchange)
+    trader.pause("2026-10-26T05:01:46+00:00")  # so no order goes out
+
+    runner = await run(exchange, strategy, [3], trader=trader, record=ForwardRecord(path))
+
+    # Rounded toward the entry, as the trader places it
+    assert runner.last_signal is not None and runner.last_signal.stop_price == D("59400.1")
+    assert read_csv(path)[-1]["stop_price"] == "59400.0123"
 
 
 async def test_an_entry_signal_with_a_position_open_is_ignored() -> None:
@@ -158,6 +179,7 @@ async def test_an_entry_signal_with_a_position_open_is_ignored() -> None:
 
     assert exchange.calls(*ORDER) == []
     assert runner.last_signal is not None
+    assert runner.last_signal.result is SignalResult.IGNORED
     assert runner.last_signal.outcome == "ignored: a position is already open"
 
 
@@ -174,8 +196,24 @@ async def test_a_halted_engine_skips_entry_signals(halt: str) -> None:
 
     assert exchange.calls(*ORDER) == []
     assert runner.last_signal is not None
+    assert runner.last_signal.result is SignalResult.SKIPPED_HALTED
     assert runner.last_signal.outcome.startswith("skipped, halted: ")
     assert runner.stopped is None
+
+
+async def test_a_paused_symbol_skips_entry_signals_as_paused() -> None:
+    exchange = FakeExchange()
+    trader = make_trader(exchange)
+    trader.pause("2026-10-26T05:01:46+00:00")  # the user's pause (D-50)
+
+    runner = await run(exchange, Scripted({3: Enter(Side.LONG, D(59400))}), [3], trader=trader)
+
+    assert exchange.calls(*ORDER) == []
+    assert runner.last_signal is not None
+    assert runner.last_signal.result is SignalResult.SKIPPED_PAUSED
+    assert runner.last_signal.outcome == (
+        "skipped, halted: BTCUSDT: paused by the user since 2026-10-26T05:01:46+00:00"
+    )
 
 
 async def test_exits_still_run_while_halted() -> None:
@@ -206,7 +244,19 @@ async def test_a_failed_request_costs_only_its_candle(caplog: pytest.LogCaptureF
     assert exchange.position_amount == D("0.083")  # entered on the next candle
     assert runner.last_signal is not None
     assert runner.last_signal.candle_open_time == T0 + 4 * STEP
+    assert runner.last_signal.result is SignalResult.ENTERED
     assert runner.stopped is None
+
+
+async def test_a_failed_request_shows_as_failed() -> None:
+    exchange = FakeExchange()
+    exchange.fail("GET", "/fapi/v1/premiumIndex", Failure(httpx.ConnectError("down")))
+
+    runner = await run(exchange, Scripted({3: Enter(Side.LONG, D(59400))}), [3])
+
+    assert runner.last_signal is not None
+    assert runner.last_signal.result is SignalResult.FAILED
+    assert runner.last_signal.outcome == "failed: down"
 
 
 async def test_position_reads_are_retried_while_rest_fails() -> None:

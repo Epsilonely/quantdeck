@@ -21,6 +21,7 @@ from quantdeck_engine.trading.balance import BaseBalance, base_from_income
 from quantdeck_engine.trading.executor import (
     STOP_ATTEMPTS,
     OrderOutcomeUnclear,
+    SymbolPaused,
     TradingHalted,
 )
 from quantdeck_engine.trading.order_ids import Role, parse_client_id
@@ -438,7 +439,7 @@ async def test_paused_symbol_refuses_entries_but_still_closes() -> None:
     exchange = FakeExchange()
     trader = make_trader(exchange)
     trader.pause("2026-10-22T03:00:00+00:00")
-    with pytest.raises(TradingHalted, match="BTCUSDT: paused by the user since 2026-10-22"):
+    with pytest.raises(SymbolPaused, match="BTCUSDT: paused by the user since 2026-10-22"):
         await trader.open_position(Side.LONG, D(59400))
     assert exchange.calls(*ORDER) == []
     assert not trader.halted  # a pause isn't the engine's halt

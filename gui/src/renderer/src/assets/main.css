@@ -377,6 +377,8 @@ table.symbols td {
   padding: 6px 8px;
   border-bottom: 1px solid var(--border);
   vertical-align: top;
+  /* Narrow columns otherwise break Korean words between syllables ("포지/션"). */
+  word-break: keep-all;
 }
 
 table.symbols th {

@@ -85,7 +85,8 @@ symbols      [{symbol, halted: str | null (the engine's own halt of it, D-16/D-1
                leverage: int,
                strategy: null | {name, interval, params: {name: str},
                                  last_candle: null | {open_time, close},
-                                 last_signal: null | {candle_open_time, action, stop_price: str | null, outcome},
+                                 last_signal: null | {candle_open_time, action, stop_price: str | null,
+                                                      result, outcome},
                                  stopped: str | null},
                mark_price: str | null,
                position: null | {amount (negative = short), entry_price, unrealized_pnl: str | null},
@@ -93,7 +94,7 @@ symbols      [{symbol, halted: str | null (the engine's own halt of it, D-16/D-1
                stops:  [{client_algo_id, side, type, trigger_price, close_position}]}]
 ```
 
-Strategy fields (D-43, D-47): `params` holds every parameter, as strings like amounts. `action` is `enter_long`, `enter_short`, or `exit`; `outcome` is text for the user, and `stopped` says why this symbol's strategy stopped. `unrealized_pnl` is every open position's unrealized PnL at the display-only mark prices, before closing fees, and `loss_with_unrealized` is `loss` minus it, both rounded to 0.01; they are null with no position open or before every position's mark price has arrived, since a partial total would mislead, and only the GUI uses them (D-24 note of 2026-10-22). Fields are added without changing the protocol version (the strategy fields, `leverage`, `paused_at`, the unrealized fields, and `started_at` all were), so a client must accept any of them missing from an older engine; the GUI takes a missing `paused_at` to mean the engine can't pause a symbol.
+Strategy fields (D-43, D-47): `params` holds every parameter, as strings like amounts. `action` is `enter_long`, `enter_short`, or `exit`. `stop_price` is an entry's stop as the trader places it, rounded to the tick toward the entry; the forward record keeps the strategy's own. `result` says what came of the signal: `entered`, `closed`, `skipped_paused` (the user's pause), `skipped_halted` (the engine's halt of the symbol, or the kill switch), `ignored`, `not_entered`, or `failed`; only the first two carried the signal out, and the GUI colors only those. `outcome` is the engine's text for the same, as in the forward record, and `stopped` says why this symbol's strategy stopped. `unrealized_pnl` is every open position's unrealized PnL at the display-only mark prices, before closing fees, and `loss_with_unrealized` is `loss` minus it, both rounded to 0.01; they are null with no position open or before every position's mark price has arrived, since a partial total would mislead, and only the GUI uses them (D-24 note of 2026-10-22). A symbol's `mark_price` is rounded to its tick, since the stream sends more digits, and its position's `unrealized_pnl` to 0.01; both are computed from the unrounded mark price. Fields are added without changing the protocol version (the strategy fields, `leverage`, `paused_at`, the unrealized fields, `started_at`, and `result` all were), so a client must accept any of them missing from an older engine; the GUI takes a missing `paused_at` to mean the engine can't pause a symbol, and shows a signal without `result` as it did before.
 
 **Catalog** (D-48). What `set_symbol` accepts, built from the strategy registry. Like the state's added fields, `catalog` and `description` may be missing from an older engine; the GUI then turns the settings off or shows no `?`.
 

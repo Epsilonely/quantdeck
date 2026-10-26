@@ -5,7 +5,7 @@ Filter values differ per symbol and per network, so they are always read at runt
 """
 
 from dataclasses import dataclass
-from decimal import ROUND_CEILING, ROUND_FLOOR, Decimal
+from decimal import ROUND_CEILING, ROUND_FLOOR, ROUND_HALF_EVEN, Decimal
 from enum import StrEnum
 from typing import Any
 
@@ -72,6 +72,11 @@ class SymbolRules:
 
     def ceil_price(self, price: Decimal) -> Decimal:
         return _to_multiple(price, self.tick_size, ROUND_CEILING)
+
+    def nearest_price(self, price: Decimal) -> Decimal:
+        """For display only, such as the mark price; orders round with `floor_price` or
+        `ceil_price` in a chosen direction."""
+        return _to_multiple(price, self.tick_size, ROUND_HALF_EVEN)
 
 
 def _to_multiple(value: Decimal, step: Decimal, rounding: str) -> Decimal:

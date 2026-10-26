@@ -1,4 +1,10 @@
-import type { StrategyAction, SymbolState, SymbolStrategy } from '../../../shared/engine'
+import type {
+  SignalResult,
+  StrategyAction,
+  StrategySignal,
+  SymbolState,
+  SymbolStrategy
+} from '../../../shared/engine'
 import { dateTime, isNegative, pnlClass, shortDateTime } from '../format'
 
 // What a row's buttons send (D-50).
@@ -20,6 +26,31 @@ const ACTION_CLASSES: Record<StrategyAction, string> = {
   enter_long: 'profit',
   enter_short: 'loss',
   exit: ''
+}
+
+const RESULT_LABELS: Record<SignalResult, string> = {
+  entered: '진입함',
+  closed: '청산함',
+  skipped_paused: '건너뜀 · 일시정지 중',
+  skipped_halted: '건너뜀 · 거래 정지 중',
+  ignored: '무시함',
+  not_entered: '진입 안 함 · 로그 참고',
+  failed: '요청 실패 · 로그 참고'
+}
+
+function resultLabel(signal: StrategySignal): string {
+  // Engines before 2026-10-26 send only the text.
+  if (!signal.result) return signal.outcome
+  if (signal.result === 'ignored') {
+    return signal.action === 'exit' ? '무시함 · 포지션 없음' : '무시함 · 이미 포지션 있음'
+  }
+  // A result this GUI doesn't know yet, from a newer engine, shows as the engine's text.
+  return RESULT_LABELS[signal.result] ?? signal.outcome
+}
+
+// Whether the signal was carried out. Without a result, as from an older engine, assume it was.
+function carriedOut(signal: StrategySignal): boolean {
+  return !signal.result || signal.result === 'entered' || signal.result === 'closed'
 }
 
 // The symbol's leverage and strategy setting (D-47), with every parameter below it.
@@ -71,11 +102,17 @@ function LastSignal({ strategy }: { strategy: SymbolStrategy | null }): React.JS
         </div>
       )}
       {signal ? (
+        // Only a signal that was carried out gets its color, so a skipped one doesn't read as an
+        // entry. The engine's own text stays in the tooltip.
         <div title={signal.outcome}>
-          <span className={ACTION_CLASSES[signal.action]}>{ACTION_LABELS[signal.action]}</span>
-          {signal.stop_price && <> · 스톱 {signal.stop_price}</>}
+          <span className={carriedOut(signal) ? undefined : 'muted'}>
+            <span className={carriedOut(signal) ? ACTION_CLASSES[signal.action] : undefined}>
+              {ACTION_LABELS[signal.action]}
+            </span>
+            {signal.stop_price && <> · 스톱 {signal.stop_price}</>}
+          </span>
           <div className="muted">
-            {shortDateTime(signal.candle_open_time)} 캔들 · {signal.outcome}
+            {shortDateTime(signal.candle_open_time)} 캔들 · {resultLabel(signal)}
           </div>
         </div>
       ) : (

@@ -63,6 +63,10 @@ class TradingHalted(Exception):
     (D-50), or the account was halted by the kill switch (D-27)."""
 
 
+class SymbolPaused(TradingHalted):
+    """Entries are refused because the user paused this symbol (D-50)."""
+
+
 class OrderOutcomeUnclear(Exception):
     """An order's outcome stayed unknown after a lookup and one resend (D-20)."""
 
@@ -132,6 +136,10 @@ class SymbolTrader:
     def halted(self) -> bool:
         return self.halt_reason is not None
 
+    @property
+    def rules(self) -> SymbolRules:
+        return self._rules
+
     def halt(self, reason: str) -> None:
         if self.halt_reason is None:
             self.halt_reason = reason
@@ -178,7 +186,7 @@ class SymbolTrader:
             if self.halted:
                 raise TradingHalted(f"{self.symbol}: {self.halt_reason}")
             if self.paused_at is not None:
-                raise TradingHalted(f"{self.symbol}: paused by the user since {self.paused_at}")
+                raise SymbolPaused(f"{self.symbol}: paused by the user since {self.paused_at}")
             if not self._brackets:
                 await self._load_brackets()
             if await self.position() is not None:

@@ -47,11 +47,22 @@ export interface Stop {
 
 export type StrategyAction = 'enter_long' | 'enter_short' | 'exit'
 
+// What came of a signal. Only `entered` and `closed` carried it out.
+export type SignalResult =
+  | 'entered'
+  | 'closed'
+  | 'skipped_paused' // the user paused the symbol (D-50)
+  | 'skipped_halted' // the engine halted the symbol or the account
+  | 'ignored' // an exit with no position, or an entry with one open
+  | 'not_entered' // sized out, not filled, or closed for want of a stop; the log says which
+  | 'failed' // a request error or an unclear order outcome
+
 export interface StrategySignal {
   candle_open_time: string
   action: StrategyAction
-  stop_price: string | null // an entry's stop
-  outcome: string
+  stop_price: string | null // an entry's stop, on the tick as the engine places it
+  result?: SignalResult // engines before 2026-10-26 don't send it
+  outcome: string // the engine's text, as in its forward test record
 }
 
 // A symbol's strategy (D-47) and what it last did (D-43). Engines before 2026-10-20 had one

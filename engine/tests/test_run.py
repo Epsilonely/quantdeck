@@ -35,7 +35,7 @@ from quantdeck_engine.trading.risk import RiskChecker
 from quantdeck_engine.trading.rules import Side
 from quantdeck_engine.trading.sizing import DailyLoss
 from quantdeck_engine.trading.state import PositionClosed, resync
-from quantdeck_engine.trading.strategy_runner import Signal
+from quantdeck_engine.trading.strategy_runner import Signal, SignalResult
 
 D = Decimal
 
@@ -293,7 +293,7 @@ async def test_snapshot_of_a_protected_position(
     exchange.add_stop("SELL", "59400")
     engine = await start(exchange, store, symbol_store)
     await resync(exchange.client(), engine.state)
-    engine.mark_prices["BTCUSDT"] = D("60100.5")
+    engine.mark_prices["BTCUSDT"] = D("60100.54321")  # finer than the tick, as the stream sends
 
     snapshot = engine.snapshot()
     json.dumps(snapshot)  # JSON-ready as it is
@@ -307,11 +307,11 @@ async def test_snapshot_of_a_protected_position(
     assert symbol["symbol"] == "BTCUSDT" and symbol["halted"] is None
     assert symbol["leverage"] == 5
     assert symbol["strategy"] is None
-    assert symbol["mark_price"] == "60100.5"
+    assert symbol["mark_price"] == "60100.5"  # on the 0.1 tick
     assert symbol["position"] == {
         "amount": "0.083",
         "entry_price": "60000",
-        "unrealized_pnl": "8.3415",
+        "unrealized_pnl": "8.35",  # 8.34508643, from the unrounded mark price
     }
     assert symbol["orders"] == []
     assert [(s["side"], s["trigger_price"], s["close_position"]) for s in symbol["stops"]] == [
@@ -324,8 +324,8 @@ async def test_snapshot_of_a_protected_position(
         "base": "5000",
         "loss": "0",
         "limit": "150",
-        "unrealized_pnl": "8.34",
-        "loss_with_unrealized": "-8.34",
+        "unrealized_pnl": "8.35",
+        "loss_with_unrealized": "-8.35",
     }
 
 
@@ -404,7 +404,9 @@ async def test_strategy_warms_up_at_startup_and_shows_in_the_snapshot(
 
     last = kline_from_row(exchange.klines[-2], "BTCUSDT", "4h")
     runner.last_candle = last
-    runner.last_signal = Signal(last.open_time, "enter_long", D(59900), "entered 0.083 at ~60000")
+    runner.last_signal = Signal(
+        last.open_time, "enter_long", D(59900), SignalResult.ENTERED, "entered 0.083 at ~60000"
+    )
     runner.stopped = "RuntimeError: a bug"
     shown = engine.snapshot()["symbols"][0]["strategy"]
     json.dumps(shown)
@@ -415,6 +417,7 @@ async def test_strategy_warms_up_at_startup_and_shows_in_the_snapshot(
             "candle_open_time": "2026-10-14T12:00:00+00:00",
             "action": "enter_long",
             "stop_price": "59900",
+            "result": "entered",
             "outcome": "entered 0.083 at ~60000",
         },
         "stopped": "RuntimeError: a bug",

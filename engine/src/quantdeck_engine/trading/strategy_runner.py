@@ -26,6 +26,7 @@ from collections.abc import AsyncGenerator, Awaitable, Callable
 from contextlib import aclosing
 from dataclasses import dataclass
 from decimal import Decimal
+from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
@@ -34,8 +35,14 @@ from quantdeck_engine.binance.streams import Kline
 from quantdeck_engine.config import StrategyConfig
 from quantdeck_engine.strategy.base import Action, Enter, Exit, Strategy
 from quantdeck_engine.times import iso_utc, utc_text
-from quantdeck_engine.trading.executor import OrderOutcomeUnclear, SymbolTrader, TradingHalted
+from quantdeck_engine.trading.executor import (
+    OrderOutcomeUnclear,
+    SymbolPaused,
+    SymbolTrader,
+    TradingHalted,
+)
 from quantdeck_engine.trading.position import Position
+from quantdeck_engine.trading.sizing import round_stop
 
 logger = logging.getLogger(__name__)
 
@@ -67,14 +74,27 @@ def forward_record_path(directory: Path, symbol: str, strategy: StrategyConfig) 
     return directory / f"{symbol}_{strategy.interval}_{strategy.name}{params}.csv"
 
 
+class SignalResult(StrEnum):
+    """What came of a strategy action, for clients to show without reading `outcome`."""
+
+    ENTERED = "entered"
+    CLOSED = "closed"
+    SKIPPED_PAUSED = "skipped_paused"  # the user paused the symbol (D-50)
+    SKIPPED_HALTED = "skipped_halted"  # the engine halted the symbol or the account
+    IGNORED = "ignored"  # an exit with no position, or an entry with one open
+    NOT_ENTERED = "not_entered"  # sized out, not filled, or closed for want of a stop
+    FAILED = "failed"  # a request error or an unclear order outcome (D-20)
+
+
 @dataclass(frozen=True)
 class Signal:
     """A strategy action and what came of it."""
 
     candle_open_time: int  # ms
     action: str  # see `action_name`
-    stop_price: Decimal | None  # an entry's stop, as the strategy gave it
-    outcome: str
+    stop_price: Decimal | None  # an entry's stop as the trader places it, on the tick
+    result: SignalResult
+    outcome: str  # text for the user, as in the record
 
 
 class ForwardRecord:
@@ -220,11 +240,16 @@ class StrategyRunner:
         )
         outcome = ""
         if action is not None:
-            outcome = await self._carry_out(action, position)
+            result, outcome = await self._carry_out(action, position)
             self.last_signal = Signal(
                 candle_open_time=candle.open_time,
                 action=action_name(action),
-                stop_price=action.stop_price if isinstance(action, Enter) else None,
+                # The record keeps the strategy's own stop for the replay (D-36); clients see
+                # the one the trader places.
+                stop_price=round_stop(action.side, action.stop_price, self._trader.rules)
+                if isinstance(action, Enter)
+                else None,
+                result=result,
                 outcome=outcome,
             )
         if self._record is not None:
@@ -250,24 +275,36 @@ class StrategyRunner:
                 )
                 await self._sleep(self._retry_delay)
 
-    async def _carry_out(self, action: Action, position: Position | None) -> str:
-        """Carry out the action; returns its outcome for clients and the record."""
+    async def _carry_out(
+        self, action: Action, position: Position | None
+    ) -> tuple[SignalResult, str]:
+        """Carry out the action; returns what came of it, with its outcome for clients and
+        the record."""
         try:
             if isinstance(action, Exit):
                 if position is None:
-                    return "ignored: no position"
+                    return SignalResult.IGNORED, "ignored: no position"
                 await self._trader.close_position()
-                return "closed"
+                return SignalResult.CLOSED, "closed"
             if position is not None:
-                return "ignored: a position is already open"  # one entry per position (D-22)
+                # One entry per position (D-22)
+                return SignalResult.IGNORED, "ignored: a position is already open"
             try:
                 plan = await self._trader.open_position(action.side, action.stop_price)
             except TradingHalted as e:
                 logger.warning("%s: entry signal skipped, trading is halted: %s", self.symbol, e)
-                return f"skipped, halted: {e}"
+                result = (
+                    SignalResult.SKIPPED_PAUSED
+                    if isinstance(e, SymbolPaused)
+                    else SignalResult.SKIPPED_HALTED
+                )
+                return result, f"skipped, halted: {e}"
             if plan is None:
-                return "not entered; see the log"
-            return f"entered {_text(plan.quantity)} at ~{_text(plan.reference_price)}"
+                return SignalResult.NOT_ENTERED, "not entered; see the log"
+            return (
+                SignalResult.ENTERED,
+                f"entered {_text(plan.quantity)} at ~{_text(plan.reference_price)}",
+            )
         except (*REQUEST_ERRORS, OrderOutcomeUnclear) as e:
             logger.error(
                 "%s: %s failed: %s; the strategy goes on with the next candle",
@@ -275,7 +312,7 @@ class StrategyRunner:
                 action_name(action),
                 e,
             )
-            return f"failed: {e}"
+            return SignalResult.FAILED, f"failed: {e}"
 
 
 def _describe(action: Action) -> str:
