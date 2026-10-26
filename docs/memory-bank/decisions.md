@@ -185,12 +185,13 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 ## D-25 Position cap 2× the base, leverage 5× capped at 10×, stop within half the liquidation distance
 
 - **Decision:**
-  - An entry's notional is capped at a configured multiple of the base (testnet: 2×) and at the available balance × leverage, so its initial margin fits. A trimmed entry risks less than the risk amount.
+  - An entry's notional is capped at a configured multiple of the base (testnet: 2×) and at the available balance × leverage, so its initial margin fits (replaced by the note of 2026-10-26, which leaves room for Binance's full opening cost). A trimmed entry risks less than the risk amount.
   - Leverage per symbol comes from configuration (D-16); testnet starts at 5×. A code constant caps it at 10× (D-28).
   - Before every entry, the stop must sit no farther from the entry price than half the distance to the estimated liquidation price; otherwise the entry is skipped with a WARNING.
 - **Why:** D-22 sizing grows as the stop tightens: 1% risk with a 0.25% stop is a notional of 4× the base. With isolated margin and an exchange-side stop, leverage doesn't change the planned loss (quantity × stop distance). It sets two other things: the liquidation distance (about 1/leverage) and the margin, which is what a failed stop can lose. At 5×, liquidation sits about 20% away, leaving room for stops up to about 10%, and a full 2× position ties up about 40% of the base. Keeping the stop within half the liquidation distance leaves room for maintenance margin, fees, and mark/last price divergence.
 - **Revisit:** The leverage, once the first strategy's typical stop distance is known.
 - **Note (2026-10-19):** Revisited with the first strategy: testnet leverage is now 2× (D-41). Its stops are often wider than 5× allows, and the reasoning above (leverage sets the liquidation distance and the margin, not the planned loss) is unchanged.
+- **Note (2026-10-26, GitHub issue #32):** The available-balance cap is now the available balance ÷ the cost of opening one unit of notional, (1 + 0.3%) ÷ leverage + 0.3% + the 0.05% taker fee, not the available balance × leverage. Binance's margin check prices a market order at the last price + 0.15% and adds a long's open loss (`binanceNotes.md`, Cost to open a position), so an entry at the old cap was always refused with `-2019`: at 2× with nothing else open that cap equals the position cap, and two ETHUSDT entries were refused that day. The 0.3% doubles Binance's 0.15% for the last price sitting above the mark price that sizing uses and for the move before the order arrives; the fee is counted because the FAQ doesn't say it isn't. The cap shrinks by about 1% at 2×, 2% at 5×, and 4% at 10×. The backtest sizes with the same code (D-37), so it now trims the same entries.
 - **Date:** 2026-10-10
 
 ## D-26 Emergency stop where the loss equals one risk amount

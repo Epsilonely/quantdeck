@@ -12,8 +12,10 @@ from quantdeck_engine.trading.order_ids import (
 from quantdeck_engine.trading.position import ExchangePosition
 from quantdeck_engine.trading.rules import Side, SymbolRules
 from quantdeck_engine.trading.sizing import (
+    TAKER_FEE_RATE,
     Bracket,
     DailyLoss,
+    EntryPlan,
     EntryRejected,
     daily_limit,
     emergency_stop_price,
@@ -170,9 +172,39 @@ def test_position_cap_trims_a_tight_stop() -> None:
 
 
 def test_available_margin_trims() -> None:
-    p = plan(available_balance=D(800))  # 800 x 5 = 4000 notional
+    p = plan(available_balance=D(800))  # 800 / 0.2041 = 3919.6 notional, not 800 x 5
     assert p.trimmed_by == "available margin"
-    assert p.quantity == D("0.066")
+    assert p.quantity == D("0.065")
+
+
+def open_cost(p: EntryPlan, leverage: int, last_price: Decimal) -> Decimal:
+    """Binance's cost to open a market order (binanceNotes.md), with the taker fee."""
+    assumed = last_price * D("1.0015")
+    margin = p.quantity * assumed / leverage
+    open_loss = p.quantity * max(D(0), (assumed - p.reference_price) * p.side.sign)
+    return margin + open_loss + p.quantity * last_price * TAKER_FEE_RATE
+
+
+def test_at_2x_the_available_margin_now_trims_before_the_position_cap() -> None:
+    # As on 2026-10-26: 2x, nothing else open, a stop 0.1% away. The position cap (2x the base)
+    # equalled available x leverage, and Binance refused the entry with -2019.
+    p = plan(stop_price=D(59940), leverage=2)
+    assert p.trimmed_by == "available margin"
+    assert p.quantity == D("0.165")  # not the position cap's 0.166
+    assert open_cost(p, 2, last_price=D(60000)) <= D(5000)
+
+
+@pytest.mark.parametrize("side", [Side.LONG, Side.SHORT])
+@pytest.mark.parametrize("leverage", [1, 2, 5, 10])
+def test_an_entry_at_the_available_margin_cap_fits_binances_opening_cost(
+    side: Side, leverage: int
+) -> None:
+    stop = D(59940) if side is Side.LONG else D(60060)  # 0.1% away
+    # A position cap high enough that the available margin trims at every leverage
+    p = plan(side=side, stop_price=stop, leverage=leverage, max_notional_multiple=D(20))
+    assert p.trimmed_by == "available margin"
+    # Covered while the last price sits up to 0.15% above the mark price that sizing uses.
+    assert open_cost(p, leverage, last_price=D(60090)) <= D(5000)
 
 
 def test_too_small_after_trimming_is_rejected() -> None:

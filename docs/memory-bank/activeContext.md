@@ -24,15 +24,12 @@ Merged work not yet seen against a real engine; most of it needs the engine rest
 - The `donchian-atr-adx` strategy (D-52) on a running engine: setting it from the panel, its 154-candle warm-up with the ADX filter on, and its decisions and record file. Tested in backtests and with unit tests only.
 - The symbol table's display on a running engine (#31): the mark price and a signal's stop on the tick, and each signal result's label. Checked only with a fake API.
 - The entry gate's count of every open position's stop: tested with fakes only.
+- An entry trimmed by the available-balance cap filling on testnet (#32, D-25 note of 2026-10-26): ETHUSDT at 2× with its 1m stops would show it. Tested against Binance's documented cost formula only.
 - How the GUI reports an engine's stop or failure since it starts the engine through a starter (D-34 note).
 - The in-app confirmation (#7, D-53) in the GUI itself: in `npm run dev`, where the page comes from the dev server; with a real mouse and keyboard, including that clicks don't reach the main page under it; and in a packaged build. Checked only in a test harness with the real overlay over a fake API.
 - Switching the Windows app mode while the GUI runs (D-35).
 
 Exchange behavior not yet seen is under To verify in `binanceNotes.md`.
-
-## Known problems
-
-- Entry sizing leaves Binance's margin check no room: an entry trimmed to the available balance × leverage is refused with `-2019`, and nothing opens. At 2× with no other position that cap equals the position cap, so ETHUSDT's entries at 2× were all refused on 2026-10-26. The BTCUSDT forward test runs at 2× but hits a cap only with a stop under about 0.5–1% away, rare for its 4h channel. No issue filed yet.
 
 ## Open questions
 

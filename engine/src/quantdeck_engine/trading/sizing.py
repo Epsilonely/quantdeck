@@ -13,6 +13,12 @@ from quantdeck_engine.trading.rules import Side, SymbolRules
 
 # D-25: the stop must sit within this fraction of the distance to the liquidation price.
 MAX_STOP_TO_LIQUIDATION = Decimal("0.5")
+# The regular-tier taker fee (binanceNotes.md, Fees). Testnet charged 0.04%.
+TAKER_FEE_RATE = Decimal("0.0005")
+# Binance's margin check prices a market order at the last price + 0.15% (binanceNotes.md,
+# Cost to open a position). Doubled: sizing uses the mark price, which the last price can sit
+# above, and the price can move before the order arrives.
+OPEN_PRICE_MARKUP = Decimal("0.003")
 
 
 class EntryRejected(Exception):
@@ -50,6 +56,13 @@ class EntryPlan:
     risk: Decimal  # quantity x stop distance; at most the requested risk amount
     liquidation_price: Decimal  # estimated
     trimmed_by: str | None  # the cap that reduced the quantity, if any
+
+
+def opening_cost_per_notional(leverage: int) -> Decimal:
+    """What opening a market order takes from the available balance, per unit of notional at
+    the mark price (D-25 note): the initial margin and, for a long, the open loss, both at
+    Binance's assumed price, and the taker fee in case the check counts it."""
+    return (1 + OPEN_PRICE_MARKUP) / leverage + OPEN_PRICE_MARKUP + TAKER_FEE_RATE
 
 
 def round_stop(side: Side, stop_price: Decimal, rules: SymbolRules) -> Decimal:
@@ -134,7 +147,11 @@ def size_entry(
     quantity = risk_amount / distance
     caps = {
         "position cap": base_balance * max_notional_multiple / reference_price,
-        "available margin": available_balance * leverage / reference_price,
+        # Not available x leverage: that leaves nothing for what Binance asks beyond the margin,
+        # and it refuses the order with -2019.
+        "available margin": available_balance
+        / opening_cost_per_notional(leverage)
+        / reference_price,
         "leverage bracket": max_notional_at(brackets, leverage) / reference_price,
         "max quantity": rules.max_qty,
     }

@@ -161,7 +161,7 @@ Source: [Trade](https://developers.binance.com/en/docs/catalog/core-trading-deri
 - `GET /fapi/v1/order` (weight 1) takes `symbol` plus `orderId` or `origClientOrderId`; a missing order is `-2013` "Order does not exist.". It and `GET /fapi/v1/algoOrder` don't find an order cancelled or expired without fills more than 3 days ago, or any order older than 90 days.
 - Unknown outcome (look the order up before resending): HTTP 503 "Unknown error, please check your request or try again later.", other 5xx, HTTP 408, `-1006`, `-1007`. Definite failure: HTTP 503 "Service Unavailable.", `-1001`, `-1008` (reduceOnly and closePosition orders are exempt from `-1008` throttling).
 - Order rejections (docs): `-2019` margin insufficient, `-2022` ReduceOnly rejected, `-2027` exceeds the maximum position at current leverage, `-4164` below min notional, `-1111` precision, `-4004`/`-4005` quantity below min/above max, `-4023` quantity not a step multiple, `-4014` price not a tick multiple, `-4116` duplicated client order ID.
-- `-2019` on testnet (2026-10-26): a market entry sized to exactly the available balance × leverage (2×, no other position open) was refused, so the margin check needs room beyond notional ÷ leverage: the opening commission at least; whether it also prices the order away from the mark is unchecked.
+- `-2019` on testnet (2026-10-26): two market entries sized to exactly the available balance × leverage (2×, no other position open) were refused. The margin check prices a market order above the last price (Cost to open a position, below); at that price the initial margin alone exceeded the available balance in both.
 
 ### Income history (2026-10-10)
 
@@ -175,6 +175,15 @@ Source: [Account — Income History](https://developers.binance.com/en/docs/cata
 - Record `time` is truncated to whole seconds (testnet 2026-10-16): a fill at …701.4 s was recorded as …701000. A `startTime` in the middle of a second leaves out that second's records.
 - One record pair per trade, not per order (testnet 2026-10-16): a market close that filled in 18 trades produced 18 `REALIZED_PNL` and 18 `COMMISSION` records, each with its `tradeId`. A busy day reaches the 1000-record page sooner than the order count suggests.
 - Testnet market-order commission was 0.04% of notional (2026-10-16).
+
+### Cost to open a position (2026-10-26)
+
+Source: Binance FAQ "How to Calculate Cost Required to Open a Position in Perpetual Futures Contracts" (updated 2026-07-08), testnet response. Docs only, apart from the two `-2019` refusals above.
+
+- Cost = initial margin + open loss, checked against the available balance.
+- Initial margin = assumed price × quantity ÷ leverage. A market order's assumed price is the last price × (1 + 0.15%), long or short.
+- Open loss = quantity × |min(0, direction × (mark price − assumed price))|, direction 1 for a long and −1 for a short. A long's assumed price sits above the mark, so it has an open loss of about 0.15% of notional; a short's usually has none.
+- The FAQ's worked example is inconsistent (its short cost uses the last price, "after an update of the assuming price logic"), and it doesn't say whether the commission is counted. Sizing allows for both (D-25 note of 2026-10-26).
 
 ### Liquidation price (2026-10-10)
 

@@ -29,7 +29,12 @@ from quantdeck_engine.trading.executor import (
 from quantdeck_engine.trading.halt import HaltRecord, HaltStore
 from quantdeck_engine.trading.position import ExchangePosition
 from quantdeck_engine.trading.rules import Side
-from quantdeck_engine.trading.sizing import DailyLoss, EntryRejected, daily_limit
+from quantdeck_engine.trading.sizing import (
+    TAKER_FEE_RATE,
+    DailyLoss,
+    EntryRejected,
+    daily_limit,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -74,9 +79,8 @@ CHECK_INTERVAL = 60.0  # seconds; D-30: "about once a minute"
 # Income records appeared 1.1 s after a fill on testnet (D-30), so a check run the moment a
 # position closes would usually miss its loss.
 CHECK_DELAY = 3.0  # seconds
-# The fee for closing a position its stop closes, counted in its risk at the entry gate
-# (D-24): the regular-tier taker fee (binanceNotes.md, Fees). Testnet charged 0.04%.
-CLOSE_FEE_RATE = Decimal("0.0005")
+# The fee for closing a position its stop closes, counted in its risk at the entry gate (D-24)
+CLOSE_FEE_RATE = TAKER_FEE_RATE
 
 
 class LiftRefused(Exception):
