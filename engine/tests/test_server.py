@@ -239,6 +239,26 @@ async def test_trades_are_sent_again_only_when_they_change(served: Served) -> No
         assert json.loads(await ws.recv())["type"] == "state"
 
 
+async def test_a_list_sent_on_connect_is_not_sent_again_by_the_next_round(tmp_path: Path) -> None:
+    engine = FakeEngine()
+    file = ConnectionFile(tmp_path / "connection.json")
+    server = ClientServer(engine, LogBuffer(), connection_file=file, publish_interval=0.2)
+    task = asyncio.create_task(server.run())
+    await asyncio.wait_for(server.listening.wait(), 2)
+    # Read after the first publish round, which saw no list; the next round is the first to
+    # see it, after the client below got it on connect.
+    engine.trade_list = TRADES
+    async with await hello(file) as ws:
+        first = [json.loads(await ws.recv()) for _ in range(4)]
+        assert first[-1]["type"] == "trades"
+        await asyncio.sleep(0.3)
+        engine.state["mark"] = "60000"
+        assert json.loads(await asyncio.wait_for(ws.recv(), 2))["type"] == "state"
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task
+
+
 # Commands (D-33)
 
 

@@ -149,6 +149,10 @@ class LogBuffer(logging.Handler):
 class _Client:
     conn: ServerConnection
     outbox: asyncio.Queue[str] = field(default_factory=lambda: asyncio.Queue(OUTBOX_LIMIT))
+    # The last state and trades queued for this client. Kept per client: one that connects
+    # before a publish round has seen a change gets it on connect, and not again from that round.
+    state: str | None = None
+    trades: str | None = None
 
 
 class ClientServer:
@@ -172,9 +176,7 @@ class ClientServer:
             {"type": "welcome", "protocol": PROTOCOL_VERSION, "catalog": catalog()}
         )
         self._clients: set[_Client] = set()
-        self._last_state: str | None = None
         self._trades: tuple[object, str] | None = None  # the engine's trades and their message
-        self._last_trades: str | None = None
         self.port: int | None = None
         self.listening = asyncio.Event()
 
@@ -204,9 +206,11 @@ class ClientServer:
         self._clients.add(client)
         client.outbox.put_nowait(self._welcome)
         client.outbox.put_nowait(_dumps({"type": "logs", "records": list(self._logs.records)}))
-        client.outbox.put_nowait(self._state_message())
-        if (trades := self._trades_message()) is not None:
-            client.outbox.put_nowait(trades)
+        client.state = self._state_message()
+        client.outbox.put_nowait(client.state)
+        client.trades = self._trades_message()
+        if client.trades is not None:
+            client.outbox.put_nowait(client.trades)
         writer = asyncio.create_task(self._write(client))
         logger.info("Client connected (%d connected)", len(self._clients))
         try:
@@ -331,22 +335,24 @@ class ClientServer:
     async def _publish_forever(self) -> None:
         while True:
             try:
-                message = self._state_message()
+                state = self._state_message()
             except Exception:
                 # A display bug must never stop the engine.
                 logger.exception("Could not build the state for clients")
             else:
-                if message != self._last_state:
-                    self._last_state = message
-                    self._post(message)
+                for client in list(self._clients):
+                    if client.state != state:
+                        client.state = state
+                        _offer(client, state)
             try:
                 trades = self._trades_message()
             except Exception:
                 logger.exception("Could not build the trades for clients")
             else:
-                if trades is not None and trades is not self._last_trades:
-                    self._last_trades = trades
-                    self._post(trades)
+                for client in list(self._clients):
+                    if trades is not None and client.trades is not trades:
+                        client.trades = trades
+                        _offer(client, trades)
             await asyncio.sleep(self._publish_interval)
 
     def _state_message(self) -> str:
