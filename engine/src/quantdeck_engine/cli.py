@@ -62,7 +62,7 @@ def main() -> None:
     trial.add_argument("--symbol", help="a symbol from symbols.json (default: the first)")
     trial.add_argument("--side", choices=["long", "short"], default="long")
     trial.add_argument("--stop-percent", type=Decimal, default=Decimal(1))
-    commands.add_parser("lift-halt", help="lift the kill switch's halt (D-27)")
+    commands.add_parser("lift-halt", help="lift the kill switch's halt")
     yesterday = datetime.now(UTC).date() - timedelta(days=1)
     backtest = commands.add_parser(
         "backtest", help="run a strategy over mainnet history (places no orders)"
@@ -225,5 +225,5 @@ def lift_halt(store: HaltStore) -> None:
     )
     print(
         "Halt lifted. Restart the engine to trade again. On the same UTC day the entry gate "
-        "still blocks entries while today's loss is at the limit (D-27)."
+        "still blocks entries while today's loss is at the limit."
     )

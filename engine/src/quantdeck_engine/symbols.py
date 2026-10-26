@@ -126,7 +126,7 @@ def load_symbols(
         if trading.initial_symbols is not None:
             logger.warning(
                 "config.toml [symbols] and [strategy] are ignored: the symbols are in %s now "
-                "and change from the GUI (D-47). Delete those tables from config.toml.",
+                "and change from the GUI. Delete those tables from config.toml.",
                 store.path,
             )
         return symbols
@@ -134,7 +134,7 @@ def load_symbols(
     if create:
         store.save(symbols)
         logger.info(
-            "Created %s from config.toml [symbols] and [strategy] (D-47): %s",
+            "Created %s from config.toml [symbols] and [strategy]: %s",
             store.path,
             ", ".join(symbols) or "no symbols",
         )

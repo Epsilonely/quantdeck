@@ -356,7 +356,7 @@ def _rejection(error: EntryRejected, *, at_limit: bool) -> str:
     if "below the minimum" in text:
         return "below the minimum order size"
     if "liquidation" in text:
-        return "stop too far for the leverage (D-25)"
+        return "stop too far for the leverage"
     if "losing side" in text:
         return "stop beyond the limit price" if at_limit else "stop already crossed at the open"
     if "No risk amount" in text:

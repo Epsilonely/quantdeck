@@ -194,7 +194,7 @@ async def _steps(
     await client.cancel_algo_order(stops[0]["clientAlgoId"])
     await asyncio.sleep(EVENT_WAIT_SECONDS)
 
-    print("4. Startup check again: expect an ERROR and an emergency stop (D-19, D-26)")
+    print("4. Startup check again: expect an ERROR and an emergency stop")
     await trader.prepare()
     await asyncio.sleep(EVENT_WAIT_SECONDS)
     stops = await trader.open_stops(side)
@@ -221,7 +221,7 @@ async def _kill_switch_steps(
     symbol = trader.symbol
     mark = await client.mark_price(symbol)
     stop = mark * (1 - side.sign * stop_percent / 100)
-    print(f"6. Entering {side} again (mark {mark}), then firing the kill switch by hand (D-27)")
+    print(f"6. Entering {side} again (mark {mark}), then firing the kill switch by hand")
     if await trader.open_position(side, stop) is None:
         raise TrialFailed("the second entry was skipped or closed; see the log")
     await asyncio.sleep(EVENT_WAIT_SECONDS)
@@ -251,7 +251,7 @@ async def _kill_switch_steps(
         raise TrialFailed("the halt record is still there after lifting")
     print("   halted after the restart; the trial's halt record is lifted")
 
-    print("8. Today's loss from income history (D-24, D-30)")
+    print("8. Today's loss from income history")
     daily = await guard.daily_loss()
     print(f"   {daily.describe(base.asset)}")
     print("Trial passed: flat, no open orders, kill switch and halt record work.")

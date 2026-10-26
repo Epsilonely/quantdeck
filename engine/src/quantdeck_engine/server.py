@@ -185,7 +185,7 @@ class ClientServer:
             self.port = server.sockets[0].getsockname()[1]
             self._file.write(self.port, self._token)
             self._logs.listener = lambda entry: _call_soon(loop, self._post_log, entry)
-            logger.info("Client server listening on %s:%d (D-32)", HOST, self.port)
+            logger.info("Client server listening on %s:%d", HOST, self.port)
             self.listening.set()
             try:
                 await self._publish_forever()
@@ -232,7 +232,7 @@ class ClientServer:
         except (TimeoutError, ValueError, AttributeError, ConnectionClosed):
             accepted = False
         if not accepted:
-            logger.warning("Client refused: no hello with the right token (D-32)")
+            logger.warning("Client refused: no hello with the right token")
             await conn.close(code=1008, reason="unauthorized")
         return accepted
 
@@ -294,7 +294,7 @@ class ClientServer:
             return False, f"{name} failed: {e}"
 
     async def _emergency_close(self) -> tuple[bool, str]:
-        logger.warning("Emergency close requested by a client (D-33)")
+        logger.warning("Emergency close requested by a client")
         if await self._engine.emergency_close():
             return True, "every symbol is flat with no open orders; trading is halted"
         return False, "the kill switch could not flatten every symbol; see the log"
@@ -305,7 +305,7 @@ class ClientServer:
         return True, "not halted"
 
     async def _stop_engine(self) -> tuple[bool, str]:
-        logger.warning("Engine stop requested by a client (D-34)")
+        logger.warning("Engine stop requested by a client")
         await self._engine.stop()
         return True, "engine stopping; exchange-side stops keep protecting open positions"
 

@@ -318,7 +318,7 @@ def strategy_config(
     if strategy.limit_entries:
         raise ConfigError(
             f"{where} {config.describe()} enters with limit orders, which the engine can't "
-            "place yet; run it with `quantdeck-engine backtest` only (D-45)"
+            "place yet; run it with `quantdeck-engine backtest` only"
         )
     return config
 

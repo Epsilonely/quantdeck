@@ -39,7 +39,7 @@ async def run_check(settings: Settings, symbol: str, interval: str, count: int) 
 
         config = await client.account_config()
         if config["dualSidePosition"]:
-            print("Position mode: HEDGE (QuantDeck expects one-way mode, D-05)")
+            print("Position mode: HEDGE (QuantDeck expects one-way mode)")
         else:
             print("Position mode: one-way")
 

@@ -195,7 +195,7 @@ class StrategyRunner:
             logger.critical(
                 "%s: the strategy stopped on an unexpected error; the engine keeps running "
                 "and exchange-side stops still protect positions, but nothing enters or exits "
-                "on signals until the engine restarts (D-43)",
+                "on signals until the engine restarts",
                 self.symbol,
                 exc_info=True,
             )
@@ -207,8 +207,7 @@ class StrategyRunner:
             # The config check refuses such a strategy at startup; this is the backstop. It
             # stops this symbol's strategy, never the engine (D-43).
             raise UnsupportedAction(
-                f"limit entry at {_text(action.limit_price)}: the engine places market "
-                "entries only (D-45)"
+                f"limit entry at {_text(action.limit_price)}: the engine places market entries only"
             )
         self.last_candle = candle
         logger.info(
@@ -271,7 +270,7 @@ class StrategyRunner:
             return f"entered {_text(plan.quantity)} at ~{_text(plan.reference_price)}"
         except (*REQUEST_ERRORS, OrderOutcomeUnclear) as e:
             logger.error(
-                "%s: %s failed: %s; the strategy goes on with the next candle (D-43)",
+                "%s: %s failed: %s; the strategy goes on with the next candle",
                 self.symbol,
                 action_name(action),
                 e,

@@ -172,7 +172,7 @@ async def test_prepare_halts_on_mismatched_settings_but_still_protects() -> None
     open_long(exchange)
     trader = make_trader(exchange)
     await trader.prepare()
-    assert trader.halted and "D-16" in trader.halt_reason
+    assert trader.halted and "position open under" in trader.halt_reason
     assert exchange.leverage == 20  # never changed under an open position
     assert len(exchange.calls(*ALGO)) == 1
 

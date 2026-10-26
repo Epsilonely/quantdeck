@@ -50,7 +50,7 @@ async def build_account(
     """
     await client.sync_time()
     if (await client.account_config())["dualSidePosition"]:
-        raise StartupFailed("the account is in hedge mode; QuantDeck needs one-way mode (D-05)")
+        raise StartupFailed("the account is in hedge mode; QuantDeck needs one-way mode")
     configs = list(symbols)
     rules = {
         config.symbol: SymbolRules.from_exchange_info(await client.symbol_info(config.symbol))
@@ -60,7 +60,7 @@ async def build_account(
         if r.margin_asset != MARGIN_ASSET:
             raise StartupFailed(
                 f"{r.symbol} is margined in {r.margin_asset}; the daily loss limit covers "
-                f"{MARGIN_ASSET} only (D-23)"
+                f"{MARGIN_ASSET} only"
             )
     base = BaseBalance(client, MARGIN_ASSET)
     guard = RiskGuard(client, trading, base, store)

@@ -148,7 +148,7 @@ class RiskGuard:
         self.halted_at = record.halted_at or None
         logger.error(
             "Starting halted: the kill switch fired at %s (%s). "
-            "Lift it with `quantdeck-engine lift-halt` (D-27).",
+            "Lift it with `quantdeck-engine lift-halt`.",
             record.halted_at or "an unknown time",
             record.reason,
         )
@@ -208,7 +208,7 @@ class RiskGuard:
         if at_risk > 0:
             logger.info(
                 "Open positions would lose %.2f %s if every stop fired; %.2f %s left under "
-                "the daily loss limit (D-24)",
+                "the daily loss limit",
                 at_risk,
                 self._base.asset,
                 max(room, Decimal(0)),
@@ -217,7 +217,7 @@ class RiskGuard:
         if room <= 0:
             raise EntryRejected(
                 f"{daily.describe(self._base.asset)}, and open positions would lose "
-                f"{at_risk:.2f} {self._base.asset} at their stops: no room left (D-24)"
+                f"{at_risk:.2f} {self._base.asset} at their stops: no room left"
             )
         return min(per_trade, room)
 
@@ -243,7 +243,7 @@ class RiskGuard:
             if not triggers:
                 raise EntryRejected(
                     f"the {symbol} {side} position has no exchange-side stop, so its risk is "
-                    "unknown (D-19)"
+                    "unknown"
                 )
             # A long's highest stop fires first as the price falls; a short's lowest.
             first = max(triggers) if side is Side.LONG else min(triggers)
@@ -264,7 +264,7 @@ class RiskGuard:
                 )
             logger.error(
                 "KILL SWITCH: %s. Closing every position and cancelling every order; "
-                "trading stays halted until `quantdeck-engine lift-halt` (D-27).",
+                "trading stays halted until `quantdeck-engine lift-halt`.",
                 reason,
             )
             self._record()
@@ -290,7 +290,7 @@ class RiskGuard:
             if daily.reached:
                 raise LiftRefused(
                     f"{daily.describe(self._base.asset)}: the limit is still reached, so the "
-                    "halt can be lifted from the next UTC day (D-27)"
+                    "halt can be lifted from the next UTC day"
                 )
             self._store.clear()
             logger.warning(
@@ -355,7 +355,7 @@ class RiskGuard:
         return False
 
     def _limit_reason(self, daily: DailyLoss) -> str:
-        return f"{daily.describe(self._base.asset)}: the daily loss limit is reached (D-24)"
+        return f"{daily.describe(self._base.asset)}: the daily loss limit is reached"
 
     def _warn_unknown(self, incomes: Iterable[dict[str, Any]]) -> None:
         types = {i["incomeType"] for i in incomes}
@@ -364,8 +364,7 @@ class RiskGuard:
         ):
             self._unknown_types.add(income_type)
             logger.warning(
-                "Income type %s is unknown and not counted toward today's loss; "
-                "check the docs (D-24)",
+                "Income type %s is unknown and not counted toward today's loss; check the docs",
                 income_type,
             )
 

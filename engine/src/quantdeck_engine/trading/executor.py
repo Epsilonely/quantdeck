@@ -164,7 +164,7 @@ class SymbolTrader:
             ):
                 self.halt(
                     f"position open under {current['marginType']} {current['leverage']}x; "
-                    f"configured {MARGIN_TYPE} {self._config.leverage}x (D-16)"
+                    f"configured {MARGIN_TYPE} {self._config.leverage}x"
                 )
             await self._ensure_stop(position)
 
@@ -195,8 +195,7 @@ class SymbolTrader:
             risk = await self._gate.entry_risk(per_trade)
             if risk < per_trade:
                 logger.info(
-                    "%s: entry risk capped at %s %s by the room left under the daily loss "
-                    "limit (D-24)",
+                    "%s: entry risk capped at %s %s by the room left under the daily loss limit",
                     self.symbol,
                     risk.quantize(Decimal("0.01")),
                     self._base.asset,
@@ -415,7 +414,7 @@ class SymbolTrader:
             side, position.entry_price, position.quantity, risk, self._rules
         )
         logger.error(
-            "%s: %s position %s has no exchange-side stop; placing an emergency stop at %s (D-26)",
+            "%s: %s position %s has no exchange-side stop; placing an emergency stop at %s",
             self.symbol,
             side,
             position.quantity,
@@ -443,7 +442,7 @@ class SymbolTrader:
                 return True
             except StopNotPlaced as e:
                 problem = str(e)
-        logger.error("%s: %s; closing the position (D-19)", self.symbol, problem)
+        logger.error("%s: %s; closing the position", self.symbol, problem)
         self.halt(problem)
         try:
             await self._close(Role.EXIT)
@@ -535,7 +534,7 @@ class SymbolTrader:
         client_id: str,
         what: str,
     ) -> dict[str, Any]:
-        reason = f"{what} {client_id} outcome still unknown after a resend (D-20)"
+        reason = f"{what} {client_id} outcome still unknown after a resend"
         for attempt in (1, 2):
             try:
                 return await send()
@@ -543,7 +542,7 @@ class SymbolTrader:
                 if not outcome_unknown(e):
                     raise
                 logger.warning(
-                    "%s: %s %s outcome unknown (%s); looking it up (D-20)",
+                    "%s: %s %s outcome unknown (%s); looking it up",
                     self.symbol,
                     what,
                     client_id,

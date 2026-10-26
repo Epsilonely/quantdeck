@@ -85,14 +85,13 @@ const FIXED: Record<'emergency_close' | 'lift_halt' | 'stop_engine', Confirmatio
     message: '긴급 청산을 실행할까요?',
     detail:
       '킬스위치를 발동합니다. 모든 포지션을 시장가 reduceOnly 주문으로 청산하고, 모든 주문을 취소한 뒤, ' +
-      '직접 정지를 해제할 때까지 거래를 멈춥니다 (D-27).',
+      '직접 정지를 해제할 때까지 거래를 멈춥니다.',
     button: '긴급 청산',
     danger: true
   },
   lift_halt: {
     message: '거래 정지를 해제할까요?',
-    detail:
-      '킬스위치의 정지를 해제합니다. 오늘 손실이 아직 한도에 있으면 엔진이 거부합니다 (D-33).',
+    detail: '킬스위치의 정지를 해제합니다. 오늘 손실이 아직 한도에 있으면 엔진이 거부합니다.',
     button: '정지 해제',
     danger: false
   },
@@ -101,7 +100,7 @@ const FIXED: Record<'emergency_close' | 'lift_halt' | 'stop_engine', Confirmatio
     detail:
       '엔진 프로세스를 종료합니다. 정지된 동안에는 일일 손실 확인과 킬스위치가 동작하지 않고, ' +
       '열린 포지션은 거래소에 걸린 손절 주문만 지킵니다. 진행 중인 킬스위치가 있으면 끝난 뒤에 ' +
-      '정지합니다 (D-34).',
+      '정지합니다.',
     button: '엔진 정지',
     danger: false
   }
@@ -109,7 +108,7 @@ const FIXED: Record<'emergency_close' | 'lift_halt' | 'stop_engine', Confirmatio
 
 const DECIDES_AT_ONCE =
   '새 전략은 붙자마자 최근 마감 캔들로 판단합니다. 그 캔들에 진입 신호가 있으면 다음 봉을 ' +
-  '기다리지 않고 현재가로 진입하고, 거래소에 손절을 겁니다 (D-47).'
+  '기다리지 않고 현재가로 진입하고, 거래소에 손절을 겁니다.'
 const POSITION_REFUSED = '포지션이 열려 있으면 엔진이 거부하고 아무것도 바꾸지 않습니다.'
 
 /** What to ask before sending `command`, described against the last state received. */
@@ -130,7 +129,7 @@ export function confirmation(command: EngineCommand, state: EngineState | null):
         '이 코인의 전략을 멈추고 감시 대상에서 빼며, 남은 주문을 취소합니다. 거래소의 격리 마진과 ' +
           '레버리지 설정은 그대로 남습니다.',
         ...(current?.paused_at
-          ? ['이 코인의 일시정지도 함께 사라져, 다시 추가하면 바로 거래합니다 (D-50).']
+          ? ['이 코인의 일시정지도 함께 사라져, 다시 추가하면 바로 거래합니다.']
           : []),
         POSITION_REFUSED
       ]
@@ -152,7 +151,7 @@ export function confirmation(command: EngineCommand, state: EngineState | null):
 
 const KEPT_UNTIL_RESUMED =
   '엔진을 재시작해도 유지되며, 이 코인의 재개 버튼으로 풉니다. 코인을 엔진에서 빼면 함께 ' +
-  '사라집니다 (D-50).'
+  '사라집니다.'
 
 function confirmPause(symbol: string, current: SymbolState | undefined): Confirmation {
   const lines = [
@@ -179,7 +178,7 @@ function confirmClose(symbol: string, current: SymbolState | undefined): Confirm
         '손절 주문을 취소합니다. 다른 코인은 계속 거래합니다.'
       : '마지막으로 받은 상태에는 포지션이 없어 진입만 멈춥니다. 그사이 포지션이 생겼다면 시장가 ' +
         'reduceOnly 주문으로 청산합니다. 다른 코인은 계속 거래합니다.',
-    '이 청산의 손익도 오늘 손실에 들어가고, 일일 손실 한도와 킬스위치는 그대로 동작합니다 (D-24).',
+    '이 청산의 손익도 오늘 손실에 들어가고, 일일 손실 한도와 킬스위치는 그대로 동작합니다.',
     KEPT_UNTIL_RESUMED
   ]
   return {
@@ -267,7 +266,7 @@ function confirmSetSymbol(args: SetSymbolArgs, current: SymbolState | undefined)
     lines.push('바뀌는 것이 없습니다.')
   }
   if (current.paused_at) {
-    lines.push('이 코인은 일시정지 중이라 설정을 바꿔도 재개할 때까지 진입하지 않습니다 (D-50).')
+    lines.push('이 코인은 일시정지 중이라 설정을 바꿔도 재개할 때까지 진입하지 않습니다.')
   }
   lines.push(POSITION_REFUSED)
   return {

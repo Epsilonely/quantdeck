@@ -205,7 +205,7 @@ def test_an_entry_the_sizing_rejects_is_skipped_and_counted() -> None:
     _, simulator = simulate({0: Enter(Side.LONG, Decimal(40))}, candles)
 
     assert simulator._result.trades == []
-    assert simulator._result.skipped == {"stop too far for the leverage (D-25)": 1}
+    assert simulator._result.skipped == {"stop too far for the leverage": 1}
 
 
 def test_report_numbers() -> None:

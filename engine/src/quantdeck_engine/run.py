@@ -130,7 +130,7 @@ class Engine:
             # Before any strategy runs, so a startup decision can't enter (D-50).
             self.traders[symbol].pause(since)
             logger.warning(
-                "%s: paused by the user since %s: no new entries until resumed (D-50)",
+                "%s: paused by the user since %s: no new entries until resumed",
                 symbol,
                 since,
             )
@@ -155,7 +155,7 @@ class Engine:
 
     async def emergency_close(self) -> bool:
         """The kill switch, fired by the user (D-27)."""
-        return await self.guard.trip("emergency close requested by the user (D-33)")
+        return await self.guard.trip("emergency close requested by the user")
 
     async def lift_halt(self) -> bool:
         return await self.guard.lift()
@@ -185,7 +185,7 @@ class Engine:
             else:
                 await self._change(current, config)
                 done = f"{config.symbol} changed: {config.describe()}"
-        logger.info("%s (D-47)", done)
+        logger.info("%s", done)
         return done
 
     async def remove_symbol(self, args: Mapping[str, Any]) -> str:
@@ -208,7 +208,7 @@ class Engine:
             except PositionOpen as e:
                 raise _refused(e) from None
             self._follow_mark_prices()
-        logger.info("%s removed (D-47)", symbol)
+        logger.info("%s removed", symbol)
         return f"{symbol} removed"
 
     async def pause_symbol(self, args: Mapping[str, Any]) -> str:
@@ -230,7 +230,7 @@ class Engine:
                 trader.resume()
                 raise
             logger.warning(
-                "%s: paused by the user (D-50): no new entries; its position, stop, and exit "
+                "%s: paused by the user: no new entries; its position, stop, and exit "
                 "signals carry on",
                 symbol,
             )
@@ -291,7 +291,7 @@ class Engine:
             except OSError:
                 trader.pause(since)
                 raise
-        logger.warning("%s: pause lifted by the user (paused since %s; D-50)", symbol, since)
+        logger.warning("%s: pause lifted by the user (paused since %s)", symbol, since)
         done = f"{symbol} resumed: new entries from its strategy's next signal"
         if trader.halted:
             done += f"; still halted by the engine: {trader.halt_reason}"
@@ -376,7 +376,7 @@ class Engine:
         if rules.margin_asset != self.asset:
             raise SymbolChangeRefused(
                 f"{symbol} is margined in {rules.margin_asset}; the daily loss limit covers "
-                f"{self.asset} only (D-23)"
+                f"{self.asset} only"
             )
         return rules
 
@@ -559,9 +559,9 @@ async def run_engine(settings: Settings, trading: TradingConfig) -> None:
                         for s, c in engine.symbols.items()
                     )
                 else:
-                    running = "Engine running with no symbols; add them from the GUI (D-47)"
+                    running = "Engine running with no symbols; add them from the GUI"
                 if engine.guard.halted:
-                    logger.warning("%s; halted: no new orders (D-27)", running)
+                    logger.warning("%s; halted: no new orders", running)
                 else:
                     logger.info("%s", running)
                 server = ClientServer(engine, logs)
@@ -575,7 +575,7 @@ async def run_engine(settings: Settings, trading: TradingConfig) -> None:
                     await server.flush()
                     for task in running_tasks:
                         task.cancel()
-                logger.info("Engine stopped by a client (D-34)")
+                logger.info("Engine stopped by a client")
     finally:
         root.removeHandler(logs)
 
