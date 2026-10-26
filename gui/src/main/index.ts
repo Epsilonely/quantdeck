@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, dialog, ipcMain, nativeTheme, screen } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, nativeTheme, screen } from 'electron'
 import { join } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import icon from '../../resources/icon.png?asset'
@@ -6,6 +6,7 @@ import { EngineClient } from './engine-client'
 import { EngineLauncher } from './engine-launcher'
 import { isThemeSource, loadTheme, setTheme, themeBackground } from './theme'
 import { confirmation, parseCommand } from './commands'
+import { ConfirmOverlay } from './confirm-overlay'
 import type { CommandResult, EngineSnapshot } from '../shared/engine'
 
 // engine/ in this checkout, for the connection file (D-32) and starting the engine (D-34). When
@@ -40,6 +41,15 @@ function snapshot(): EngineSnapshot {
   return { ...engine.snapshot(), launch: launcher.state }
 }
 
+// Each window's confirmation page (D-53).
+const overlays = new WeakMap<BrowserWindow, ConfirmOverlay>()
+
+// Why a command wasn't sent when the user was never asked about it.
+const NOT_ASKED = {
+  busy: '다른 확인 창이 열려 있어 명령을 보내지 않았습니다',
+  unavailable: '확인 창을 띄우지 못했거나 확인 창이 비정상 종료되어 명령을 보내지 않았습니다'
+}
+
 function createWindow(): void {
   // Wide enough for the symbol table beside the trades panel (D-51), within the screen.
   const area = screen.getPrimaryDisplay().workAreaSize
@@ -56,6 +66,8 @@ function createWindow(): void {
       sandbox: false
     }
   })
+
+  overlays.set(mainWindow, new ConfirmOverlay(mainWindow))
 
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
@@ -96,21 +108,14 @@ app.whenReady().then(() => {
     const window = BrowserWindow.fromWebContents(event.sender)
     const command = parseCommand(value)
     if (typeof command === 'string') return { ok: false, message: command }
-    if (!window) return { ok: false, message: '명령을 보낸 창을 찾을 수 없습니다' }
-    // Confirmed here rather than in the renderer, with the copy that is sent, so nothing the
-    // renderer does alone can send a command, or show one setting and send another.
-    const ask = confirmation(command, engine.snapshot().state)
-    const { response } = await dialog.showMessageBox(window, {
-      type: 'warning',
-      title: 'QuantDeck',
-      message: ask.message,
-      detail: ask.detail,
-      buttons: [ask.button, '취소'],
-      defaultId: 1,
-      cancelId: 1,
-      noLink: true
-    })
-    if (response !== 0) return null
+    const overlay = window && overlays.get(window)
+    if (!overlay) return { ok: false, message: '명령을 보낸 창을 찾을 수 없습니다' }
+    // Confirmed on a page the main process owns rather than in the renderer, with the copy that is
+    // sent, so nothing the renderer does alone can send a command, or show one setting and send
+    // another.
+    const answer = await overlay.ask(confirmation(command, engine.snapshot().state))
+    if (answer === 'cancelled') return null
+    if (answer !== 'confirmed') return { ok: false, message: NOT_ASKED[answer] }
     return engine.command(command)
   })
 

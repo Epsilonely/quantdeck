@@ -396,6 +396,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Relation to #7:** one function in the main process writes the confirmation of every command (eight since D-50), so #7 changes only how it is shown. Confirming in the renderer (#7's option B) would now also let a renderer bug send `set_symbol`.
 - **Alternatives:** a strategy list hard-coded in the GUI; the catalog in the state; a separate tab or a modal form; confirming in the renderer.
 - **Date:** 2026-10-20
+- **Note (2026-10-26):** The native dialog gave way to a page the main process lays over the window (D-53); the main process still writes every confirmation from the command it sends.
 
 ## D-49 GUI fonts: Pretendard and JetBrains Mono, bundled with the app
 
@@ -450,3 +451,20 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Limitations:** a stop's role relies on `actualOrderId`, from the docs; no engine stop has triggered on testnet yet (`binanceNotes.md`, To verify). A stop resting more than 90 days, or an algo order missing from a week's page of 1000, shows as other. An order whose client ID can't be read yet shows as other until a later read finds it.
 - **Alternatives:** today only (by the risk day or local midnight); up to 3 months with a day picker and a query command; the list inside `state`; a query command the GUI sends when the panel opens; one row per fill; accumulating `ORDER_TRADE_UPDATE` events; SQLite.
 - **Date:** 2026-10-22
+
+## D-53 Confirmations show on a page of their own, which the main process lays over the main window
+
+- **Decision:**
+  - **Page:** every command's confirmation (D-48) shows on a separate page, laid over the main window's whole content area as a `WebContentsView`, in place of the native message box (GitHub issue #7). It dims the window behind it and shows the question, the detail, and two buttons: the command's and 취소. The confirm button is red for the two commands that close positions, `emergency_close` and `close_symbol`.
+  - **Who confirms:** the main process still writes the confirmation from the command it will send (D-48), and sends the command only on that page's answer, which arrives on the view's own IPC with the id of the request it answers. The page runs sandboxed, with a preload of its own that can only receive a request and answer it; the main window's preload has no confirmation call.
+  - **Lifetime:** the page loads with the window and stays hidden between confirmations. One at a time: a command sent while one is open is refused without asking. A page that can't be shown, crashes, or reloads while open sends nothing, and the renderer gets a failed result saying so; a window closed meanwhile counts as cancelled.
+  - **Input, as the native box had it:** 취소 has the focus, Enter presses the focused button, Esc cancels, and a click outside the card does nothing. Tab and the arrow keys move between the two buttons only. Clicks in the first 400 ms after it shows are ignored, and so are a held key's repeats.
+  - **Look:** main.css's colors in both themes (D-35); a 150 ms fade and a 200 ms rise, off under `prefers-reduced-motion`.
+- **Why:**
+  - The user wanted a modal that matches the app instead of a native box, and chose this way among #7's options (2026-10-26). #7's option B, a React modal in the main page, would let a renderer bug send any of the eight commands without the user's answer, `set_symbol` and `close_symbol` included. On a page of its own, the main page's code can't press its button, change what it shows, or draw over it, which keeps D-48's guarantee.
+  - A view inside the window rather than #7's separate transparent window: it moves and resizes with the window, needs no window placement or focus handling of its own, and avoids transparent windows on Windows.
+  - Loaded in advance, so it shows at once instead of after a page load.
+  - The click guard and the repeat filter: the page shows a few tens of milliseconds after the click or key press that asked, so a double click's second click, or an Enter held down, would otherwise land on it. Focus on 취소 already makes a stray Enter cancel.
+  - A reload loses the request the page was showing, and a page that can't answer would leave an empty view over the whole window, taking every click.
+- **Alternatives:** #7's option A as written (a frameless transparent window over the main one); option B (a React modal in the main page); keeping the native box.
+- **Date:** 2026-10-26

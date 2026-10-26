@@ -1,6 +1,6 @@
 # Active Context
 
-_Last updated: 2026-10-22_
+_Last updated: 2026-10-26_
 
 ## Current focus
 
@@ -25,6 +25,7 @@ Merged work not yet seen against a real engine; most of it needs the engine rest
 - The symbol table's leverage, strategy, last candle, and last signal columns: never recorded as seen on screen.
 - Changing a running symbol's leverage, and the entry gate's count of every open position's stop: tested with fakes only.
 - How the GUI reports an engine's stop or failure since it starts the engine through a starter (D-34 note).
+- The in-app confirmation (#7, D-53) in the GUI itself: in `npm run dev`, where the page comes from the dev server; with a real mouse and keyboard, including that clicks don't reach the main page under it; and in a packaged build. Checked only in a test harness with the real overlay over a fake API.
 - Switching the Windows app mode while the GUI runs (D-35).
 
 Exchange behavior not yet seen, such as a triggered stop, is under To verify in `binanceNotes.md`.
@@ -38,7 +39,6 @@ Roughly in the order they're needed:
 - **15m strategies:** the user wanted one, Donchian or not. The search found none worth forward-testing (D-44), and maker entries rescued none (D-45, D-46), so the engine gets no limit orders for now. The 15m holdout (2024 onward) has been used: a new 15m idea needs its own fixed grid and counts as one more test on the same history. The daily-open breakout was held back partly because one strategy traded per account; per-symbol strategies remove that reason, but its holdout edge still can't be told from zero.
 - **Engine operation:** running `run` without the GUI (a Windows service or scheduled task), and what restarts it after a crash (D-34).
 - **Storage:** what SQLite records, and whether logs go there (D-12; D-33 keeps recent logs in memory for now). Historical candles (D-38), the halt record (D-29), the forward test record (D-43), and the symbol settings (D-47) are settled. The GUI's last 7 days of trades read the exchange, not a local record (D-51).
-- **GUI confirmation dialogs (GitHub issue #7):** the user wants an in-app modal in place of the native confirmation boxes and is still weighing the two approaches in the issue. Since D-48 the main process writes every confirmation (eight commands) from the command it sends, so either approach changes only how it is shown; the React modal would also let a renderer bug send `set_symbol`, which can enter at once, or `close_symbol`, which closes a position.
 - **Later:** GUI `sandbox: false`, Discord bot stack, which alerts it sends, and whether its commands need a narrower permission than the GUI's (safety principle 9), mainnet prerequisites (Ed25519 per D-11, IP whitelist, go-live criteria, mainnet risk values — D-23 to D-25 and D-41 set testnet values only).
 
 ## Next steps

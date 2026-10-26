@@ -1,0 +1,97 @@
+/* The confirmation page (D-53), laid over the whole main window. It takes main.css's colors and
+   buttons; its own background stays transparent so the window shows through the backdrop. A
+   build can load main.css after this file, so overrides of its rules need a class. */
+.confirm-page {
+  background: transparent;
+}
+
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 0.5);
+  animation: confirm-fade 150ms ease both;
+}
+
+.confirm-card {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  width: min(520px, 100%);
+  max-height: 100%;
+  padding: 20px 22px 18px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px rgb(0 0 0 / 0.35);
+  animation: confirm-rise 200ms cubic-bezier(0.3, 0, 0, 1) both;
+}
+
+/* Not main.css's section heading: this is the question itself. */
+.confirm-message {
+  font-size: 16px;
+  color: var(--text);
+  text-transform: none;
+  letter-spacing: normal;
+  margin-bottom: 0;
+}
+
+/* The detail's lines come from the main process; Hangul breaks between words, and a long
+   parameter list still wraps. A long detail scrolls inside the card. */
+.confirm-detail {
+  white-space: pre-line;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  overflow-y: auto;
+}
+
+.confirm-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.confirm-buttons button {
+  min-width: 84px;
+}
+
+/* --bg as the text color keeps it above 4.5:1 on --info in both themes. */
+button.primary {
+  background: var(--info);
+  border-color: var(--info);
+  color: var(--bg);
+  font-weight: 600;
+}
+
+@media (prefers-color-scheme: light) {
+  .confirm-backdrop {
+    background: rgb(20 24 31 / 0.35);
+  }
+
+  .confirm-card {
+    box-shadow: 0 12px 32px rgb(0 0 0 / 0.18);
+  }
+}
+
+@keyframes confirm-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes confirm-rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirm-backdrop,
+  .confirm-card {
+    animation: none;
+  }
+}

@@ -4,6 +4,7 @@
 // copy, so nothing the renderer does alone can send a command or show one thing and send
 // another. The engine checks every value again against its own bounds (safety principle 4).
 
+import type { Confirmation } from '../shared/confirm'
 import {
   COMMAND_NAMES,
   type CommandName,
@@ -13,12 +14,6 @@ import {
   type StrategySetting,
   type SymbolState
 } from '../shared/engine'
-
-export interface Confirmation {
-  message: string
-  detail: string
-  button: string
-}
 
 // Shapes only; the engine checks the values. Text that goes into the confirmation is limited to
 // characters that can't break its lines or pass for other text.
@@ -91,13 +86,15 @@ const FIXED: Record<'emergency_close' | 'lift_halt' | 'stop_engine', Confirmatio
     detail:
       '킬스위치를 발동합니다. 모든 포지션을 시장가 reduceOnly 주문으로 청산하고, 모든 주문을 취소한 뒤, ' +
       '직접 정지를 해제할 때까지 거래를 멈춥니다 (D-27).',
-    button: '긴급 청산'
+    button: '긴급 청산',
+    danger: true
   },
   lift_halt: {
     message: '거래 정지를 해제할까요?',
     detail:
       '킬스위치의 정지를 해제합니다. 오늘 손실이 아직 한도에 있으면 엔진이 거부합니다 (D-33).',
-    button: '정지 해제'
+    button: '정지 해제',
+    danger: false
   },
   stop_engine: {
     message: '엔진을 정지할까요?',
@@ -105,7 +102,8 @@ const FIXED: Record<'emergency_close' | 'lift_halt' | 'stop_engine', Confirmatio
       '엔진 프로세스를 종료합니다. 정지된 동안에는 일일 손실 확인과 킬스위치가 동작하지 않고, ' +
       '열린 포지션은 거래소에 걸린 손절 주문만 지킵니다. 진행 중인 킬스위치가 있으면 끝난 뒤에 ' +
       '정지합니다 (D-34).',
-    button: '엔진 정지'
+    button: '엔진 정지',
+    danger: false
   }
 }
 
@@ -139,7 +137,8 @@ export function confirmation(command: EngineCommand, state: EngineState | null):
       return {
         message: `${command.args.symbol} 코인을 엔진에서 뺄까요?`,
         detail: lines.join('\n'),
-        button: '코인 제거'
+        button: '코인 제거',
+        danger: false
       }
     }
     case 'pause_symbol':
@@ -166,7 +165,8 @@ function confirmPause(symbol: string, current: SymbolState | undefined): Confirm
   return {
     message: `${symbol} 진입을 일시정지할까요?`,
     detail: lines.join('\n'),
-    button: '일시정지'
+    button: '일시정지',
+    danger: false
   }
 }
 
@@ -185,7 +185,8 @@ function confirmClose(symbol: string, current: SymbolState | undefined): Confirm
   return {
     message: `${symbol} 포지션을 청산하고 이 코인의 거래를 정지할까요?`,
     detail: lines.join('\n'),
-    button: '청산·정지'
+    button: '청산·정지',
+    danger: true
   }
 }
 
@@ -208,7 +209,8 @@ function confirmResume(
   return {
     message: `${symbol} 거래를 재개할까요?`,
     detail: lines.join('\n'),
-    button: '재개'
+    button: '재개',
+    danger: false
   }
 }
 
@@ -239,7 +241,8 @@ function confirmSetSymbol(args: SetSymbolArgs, current: SymbolState | undefined)
     return {
       message: `${args.symbol} 코인을 추가할까요?`,
       detail: lines.join('\n'),
-      button: '추가'
+      button: '추가',
+      danger: false
     }
   }
   const before = currentStrategy(current)
@@ -270,7 +273,8 @@ function confirmSetSymbol(args: SetSymbolArgs, current: SymbolState | undefined)
   return {
     message: `${args.symbol} 설정을 바꿀까요?`,
     detail: lines.join('\n'),
-    button: '변경'
+    button: '변경',
+    danger: false
   }
 }
 
