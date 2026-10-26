@@ -148,6 +148,7 @@ Source: [Trade — New Algo Order](https://developers.binance.com/en/docs/catalo
 - Statuses: `NEW` (waiting), `CANCELED`, `TRIGGERING` (sent to the matching engine), `TRIGGERED` (placed there), `FINISHED` (that order filled or was cancelled), `REJECTED`, `EXPIRED` (cancelled by the system).
 - Testnet (2026-10-10): a `STOP_MARKET` with `closePosition=true` and `MARK_PRICE` was accepted and reported `f: "GTE_GTC"`, `q: "0"`, `R: true` (reduceOnly, though not sent). `ALGO_UPDATE` went `NEW` on placement, `CANCELED` on cancel, and `EXPIRED` about 60 ms after the position was closed by a reduceOnly market order: Binance removes a `closePosition` stop itself once its position is gone.
 - Testnet (2026-10-21): seen again when the kill switch closed a strategy's ETHUSDT position. `GET /fapi/v1/algoOrder?clientAlgoId=...` (signed) afterwards returned `algoStatus` `EXPIRED`, with `updateTime` at the close's fill, before the kill switch's bulk cancels ran, and `triggerTime` 0 and `actualOrderId` `""` for a stop that never triggered. The response also carries `algoId`, `algoType`, `orderType`, `side`, `triggerPrice`, `closePosition`, `workingType`, `priceProtect`, `createTime`, and `quantity`, among others.
+- Testnet (2026-10-26): the first engine stops to trigger, five on ETHUSDT. Afterwards `allAlgoOrders` showed each as `FINISHED`, with `triggerTime` and `actualOrderId` set. The order a stop placed (`allOrders`) is a `MARKET` order whose `clientOrderId` is the stop's `clientAlgoId`, with `reduceOnly` and `closePosition` true and `workingType` `MARK_PRICE`. Its fill was within ±0.09% of the trigger, on either side, since the mark price triggers and the last price fills.
 - Docs: no margin check before a conditional order triggers (Change Log); `-2021` "Order would immediately trigger." and `-4142` "REJECT: take profit or stop order will be triggered immediately" are the crossed-trigger errors.
 
 ### Orders, lookups, and unknown outcomes (2026-10-03, testnet 2026-10-10)
@@ -160,6 +161,7 @@ Source: [Trade](https://developers.binance.com/en/docs/catalog/core-trading-deri
 - `GET /fapi/v1/order` (weight 1) takes `symbol` plus `orderId` or `origClientOrderId`; a missing order is `-2013` "Order does not exist.". It and `GET /fapi/v1/algoOrder` don't find an order cancelled or expired without fills more than 3 days ago, or any order older than 90 days.
 - Unknown outcome (look the order up before resending): HTTP 503 "Unknown error, please check your request or try again later.", other 5xx, HTTP 408, `-1006`, `-1007`. Definite failure: HTTP 503 "Service Unavailable.", `-1001`, `-1008` (reduceOnly and closePosition orders are exempt from `-1008` throttling).
 - Order rejections (docs): `-2019` margin insufficient, `-2022` ReduceOnly rejected, `-2027` exceeds the maximum position at current leverage, `-4164` below min notional, `-1111` precision, `-4004`/`-4005` quantity below min/above max, `-4023` quantity not a step multiple, `-4014` price not a tick multiple, `-4116` duplicated client order ID.
+- `-2019` on testnet (2026-10-26): a market entry sized to exactly the available balance × leverage (2×, no other position open) was refused, so the margin check needs room beyond notional ÷ leverage: the opening commission at least; whether it also prices the order away from the mark is unchecked.
 
 ### Income history (2026-10-10)
 
@@ -245,7 +247,7 @@ Check each item while implementing the related feature:
 - [ ] Symbol filters: the error codes testnet actually returns for orders that violate them (docs list them under Orders, lookups, and unknown outcomes).
 - [ ] Signed requests: the error code returned when the timestamp is outside `recvWindow`.
 - [ ] Exchange-side stops: the error a `STOP_MARKET` gets when its trigger is already crossed (`-2021` or `-4142`), and whether a `closePosition` stop can be placed with no open position.
-- [ ] A stop that triggers: the `ALGO_UPDATE` sequence (`TRIGGERING` → `TRIGGERED` → `FINISHED`?) and the client order ID of the market order it creates (only `ai` = `orderId` links them in the docs). The trades list (D-51) finds the stop through `allAlgoOrders`' `actualOrderId` matching the fill's `orderId`; check it does.
+- [ ] A stop that triggers: the `ALGO_UPDATE` sequence (`TRIGGERING` → `TRIGGERED` → `FINISHED`?), which the engine doesn't log at INFO. The order it places is under Algo orders above.
 - [ ] Trade history reads (D-51): whether `userTrades` with `startTime` returns the oldest fills first (the engine pages forward by time past 1000), whether `allOrders` with `orderId` alone reaches back only 7 days, and which time `allAlgoOrders`' `startTime`/`endTime` filter (creation or update).
 - [ ] `GET /fapi/v1/openOrders` with a non-empty result (the engine reads `clientOrderId`, `orderId`, `side`, `type`, `origQty`, `reduceOnly`).
 - [ ] Margin type and leverage: the errors when changing them with a position or open orders (docs: `-4047`, `-4048`, `-4161`).
