@@ -8,11 +8,15 @@ Its decisions depend only on recent candles and that position. Whatever it keeps
 indicator windows, must be rebuildable from `warmup` past candles, so a restart can't change
 a decision (D-06), and it treats every position on its symbol as its own, adopted ones
 included (D-14, D-19). Sizing, risk, and orders stay outside the strategy (D-22 to D-25).
+
+It also tells clients' charts the levels it decides by (D-56), computed by the same code its
+decisions use, so a line on the chart is exactly what the close was compared against.
 """
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
-from typing import Protocol
+from typing import Literal, Protocol
 
 from quantdeck_engine.binance.streams import Kline
 from quantdeck_engine.trading.position import Position
@@ -46,6 +50,27 @@ class Exit:
 Action = Enter | Exit
 
 
+PositionState = Literal["flat", "long", "short"]
+
+
+@dataclass(frozen=True)
+class ChartLine:
+    """A level a strategy decides by, drawn on clients' charts (D-56).
+
+    `when` lists the position states it decides by it in: "flat" for entries, "long" or
+    "short" for exits; a chart shows only the lines of the current state. `label` is what the
+    user reads, in Korean like the parameter help. `pane` is "price", or "indicator" for a
+    value on a scale of its own such as ADX, and `threshold` a fixed level drawn with it,
+    such as the ADX an entry needs.
+    """
+
+    key: str
+    label: str
+    when: tuple[PositionState, ...]
+    pane: Literal["price", "indicator"] = "price"
+    threshold: Decimal | None = None
+
+
 def parameter[T](default: T, description: str) -> T:
     """A strategy parameter: a dataclass field with `default` and the help the GUI's settings
     show next to it (D-48). The help is in Korean, the language the GUI speaks to the user."""
@@ -74,5 +99,21 @@ class Strategy(Protocol):
 
         Returns None until it has seen `warmup` candles. Reads nothing but its arguments,
         not even the clock, so the same candles and positions always give the same actions.
+        """
+        ...
+
+    @property
+    def chart_lines(self) -> tuple[ChartLine, ...]:
+        """The levels it decides by, for clients' charts (D-56); empty if it draws none."""
+        ...
+
+    def levels(self, previous: Sequence[Kline], candle: Kline | None) -> dict[str, Decimal]:
+        """The levels of `chart_lines` it decides `candle` by, by key, given up to
+        `warmup - 1` candles before it, oldest first. With no candle, the levels for the next
+        candle that the candles before it already fix.
+
+        Leaves out a level it has too little history for or doesn't use on that candle.
+        Reads nothing but its arguments and parameters, never the state `on_candle` keeps,
+        so a chart can ask about any candle.
         """
         ...

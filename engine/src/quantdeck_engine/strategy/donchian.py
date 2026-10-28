@@ -7,11 +7,50 @@ while the exchange-side stop stays where it was placed (D-36).
 """
 
 from collections import deque
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass, field
+from decimal import Decimal
 
 from quantdeck_engine.binance.streams import Kline
-from quantdeck_engine.strategy.base import Action, Enter, Exit, Position, parameter
+from quantdeck_engine.strategy.base import Action, ChartLine, Enter, Exit, Position, parameter
 from quantdeck_engine.trading.rules import Side
+
+
+@dataclass(frozen=True)
+class Channels:
+    """The extremes of the candles before the current one, never including it: a close can
+    only break out of a channel it isn't part of."""
+
+    entry_high: Decimal
+    entry_low: Decimal
+    exit_high: Decimal
+    exit_low: Decimal
+
+
+def channels(previous: Sequence[Kline], entry_period: int, exit_period: int) -> Channels | None:
+    """The channels over the last `entry_period` and `exit_period` of `previous`; None with
+    fewer than `entry_period` of them."""
+    if len(previous) < entry_period:
+        return None
+    entry = previous[-entry_period:]
+    exit_ = previous[-exit_period:]
+    return Channels(
+        entry_high=max(k.high for k in entry),
+        entry_low=min(k.low for k in entry),
+        exit_high=max(k.high for k in exit_),
+        exit_low=min(k.low for k in exit_),
+    )
+
+
+def channel_lines(entry_period: int, exit_period: int) -> tuple[ChartLine, ...]:
+    """The channels on a chart (D-56): the entry channel while flat, and while holding only
+    the exit channel's side that closes the position."""
+    return (
+        ChartLine("entry_high", f"진입 채널 위 (직전 {entry_period}봉 최고가)", ("flat",)),
+        ChartLine("entry_low", f"진입 채널 아래 (직전 {entry_period}봉 최저가)", ("flat",)),
+        ChartLine("exit_low", f"청산선 (직전 {exit_period}봉 최저가)", ("long",)),
+        ChartLine("exit_high", f"청산선 (직전 {exit_period}봉 최고가)", ("short",)),
+    )
 
 
 @dataclass
@@ -43,6 +82,14 @@ class DonchianBreakout:
     def limit_entries(self) -> bool:
         return False
 
+    @property
+    def chart_lines(self) -> tuple[ChartLine, ...]:
+        return channel_lines(self.entry_period, self.exit_period)
+
+    def levels(self, previous: Sequence[Kline], candle: Kline | None) -> dict[str, Decimal]:
+        found = channels(previous, self.entry_period, self.exit_period)
+        return {} if found is None else asdict(found)
+
     def on_candle(self, candle: Kline, position: Position | None) -> Action | None:
         try:
             return self._decide(candle, position)
@@ -50,19 +97,17 @@ class DonchianBreakout:
             self._previous.append(candle)
 
     def _decide(self, candle: Kline, position: Position | None) -> Action | None:
-        if len(self._previous) < self.entry_period:
+        found = channels(list(self._previous), self.entry_period, self.exit_period)
+        if found is None:
             return None
-        recent = list(self._previous)[-self.exit_period :]
-        exit_low = min(k.low for k in recent)
-        exit_high = max(k.high for k in recent)
         if position is not None:
-            if position.side is Side.LONG and candle.close < exit_low:
+            if position.side is Side.LONG and candle.close < found.exit_low:
                 return Exit()
-            if position.side is Side.SHORT and candle.close > exit_high:
+            if position.side is Side.SHORT and candle.close > found.exit_high:
                 return Exit()
             return None
-        if candle.close > max(k.high for k in self._previous):
-            return Enter(Side.LONG, exit_low)
-        if candle.close < min(k.low for k in self._previous):
-            return Enter(Side.SHORT, exit_high)
+        if candle.close > found.entry_high:
+            return Enter(Side.LONG, found.exit_low)
+        if candle.close < found.entry_low:
+            return Enter(Side.SHORT, found.exit_high)
         return None

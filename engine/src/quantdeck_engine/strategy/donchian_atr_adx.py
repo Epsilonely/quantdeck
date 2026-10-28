@@ -18,12 +18,14 @@ candles whenever an entry needs it; by the window's end its starting values weig
 """
 
 from collections import deque
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass, field
 from decimal import Decimal
 from itertools import pairwise
 
 from quantdeck_engine.binance.streams import Kline
-from quantdeck_engine.strategy.base import Action, Enter, Exit, Position, parameter
+from quantdeck_engine.strategy.base import Action, ChartLine, Enter, Exit, Position, parameter
+from quantdeck_engine.strategy.donchian import channel_lines, channels
 from quantdeck_engine.trading.rules import Side
 
 ADX_WINDOW_PERIODS = 11
@@ -85,6 +87,25 @@ class DonchianAtrAdx:
     def limit_entries(self) -> bool:
         return False
 
+    @property
+    def chart_lines(self) -> tuple[ChartLine, ...]:
+        """The channels as the Donchian breakout draws them, and the ADX while flat if the
+        filter is on. The ATR stop is set once at entry, where the stop line shows it."""
+        lines = channel_lines(self.entry_period, self.exit_period)
+        if self.adx_min:
+            label = f"ADX ({self.adx_period}봉) · 진입 최소 {format(self.adx_min, 'f')}"
+            lines += (ChartLine("adx", label, ("flat",), "indicator", self.adx_min),)
+        return lines
+
+    def levels(self, previous: Sequence[Kline], candle: Kline | None) -> dict[str, Decimal]:
+        found = channels(previous, self.entry_period, self.exit_period)
+        values: dict[str, Decimal] = {} if found is None else asdict(found)
+        if self.adx_min and candle is not None:
+            window = self._adx_window([*previous, candle])
+            if len(window) == ADX_WINDOW_PERIODS * self.adx_period:
+                values["adx"] = adx(window, self.adx_period)
+        return values
+
     def on_candle(self, candle: Kline, position: Position | None) -> Action | None:
         try:
             return self._decide(candle, position)
@@ -95,28 +116,23 @@ class DonchianAtrAdx:
         if len(self._previous) < (self._previous.maxlen or 0):
             return None
         previous = list(self._previous)
-        recent = previous[-self.exit_period :]
-        exit_low = min(k.low for k in recent)
-        exit_high = max(k.high for k in recent)
+        found = channels(previous, self.entry_period, self.exit_period)
+        assert found is not None  # the warm-up covers the entry channel
         if position is not None:
-            if position.side is Side.LONG and candle.close < exit_low:
+            if position.side is Side.LONG and candle.close < found.exit_low:
                 return Exit()
-            if position.side is Side.SHORT and candle.close > exit_high:
+            if position.side is Side.SHORT and candle.close > found.exit_high:
                 return Exit()
             return None
-        channel = previous[-self.entry_period :]
-        if candle.close > max(k.high for k in channel):
-            side, channel_stop = Side.LONG, exit_low
-        elif candle.close < min(k.low for k in channel):
-            side, channel_stop = Side.SHORT, exit_high
+        if candle.close > found.entry_high:
+            side, channel_stop = Side.LONG, found.exit_low
+        elif candle.close < found.entry_low:
+            side, channel_stop = Side.SHORT, found.exit_high
         else:
             return None
         candles = [*previous, candle]
-        if (
-            self.adx_min
-            and adx(candles[-ADX_WINDOW_PERIODS * self.adx_period :], self.adx_period)
-            < self.adx_min
-        ):
+        # Only on a breakout, since it reads the whole window; a chart asks for it every candle.
+        if self.adx_min and adx(self._adx_window(candles), self.adx_period) < self.adx_min:
             return None
         if not self.stop_atr:
             return Enter(side, channel_stop)
@@ -128,6 +144,10 @@ class DonchianAtrAdx:
         if not atr:
             return None
         return Enter(side, candle.close - side.sign * self.stop_atr * atr)
+
+    def _adx_window(self, candles: list[Kline]) -> list[Kline]:
+        """The last candles the ADX is computed from, the current one last."""
+        return candles[-ADX_WINDOW_PERIODS * self.adx_period :]
 
 
 def adx(candles: list[Kline], period: int) -> Decimal:

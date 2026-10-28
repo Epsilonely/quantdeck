@@ -13,11 +13,12 @@ next bar boundary too (D-36).
 """
 
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 
 from quantdeck_engine.binance.streams import INTERVAL_MS, Kline
-from quantdeck_engine.strategy.base import Action, Enter, Exit, Position, parameter
+from quantdeck_engine.strategy.base import Action, ChartLine, Enter, Exit, Position, parameter
 from quantdeck_engine.trading.rules import Side
 
 DAY_MS = 24 * 60 * 60 * 1000
@@ -66,6 +67,14 @@ class MoveFade:
     @property
     def limit_entries(self) -> bool:
         return False
+
+    @property
+    def chart_lines(self) -> tuple[ChartLine, ...]:
+        """None: it decides by a bar's return against σ, not by a price on the chart."""
+        return ()
+
+    def levels(self, previous: Sequence[Kline], candle: Kline | None) -> dict[str, Decimal]:
+        return {}
 
     def on_candle(self, candle: Kline, position: Position | None) -> Action | None:
         bar_start = candle.open_time - candle.open_time % self._bar_ms

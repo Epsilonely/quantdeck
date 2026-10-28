@@ -6,7 +6,8 @@
   the connection. Connections with an `Origin` header (browsers) are refused at the handshake.
 - After the hello the client gets `welcome` (with the catalog of what `set_symbol` accepts,
   D-48), the recent log records, the whole state, the last 7 days' trades (D-51) once the
-  engine has read them, and one `candles` message per symbol with a strategy (D-54). The
+  engine has read them, and one `candles` message per symbol with a strategy, which also
+  carries the strategy's lines (D-54, D-56). The
   state, the trades, and each symbol's candles are sent again whenever they change, and log
   records as they happen.
 - Commands are `{"type": "command", "id": ..., "name": ..., "args": {...}}`; the reply is a

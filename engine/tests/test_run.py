@@ -397,8 +397,8 @@ async def test_strategy_warms_up_at_startup_and_shows_in_the_snapshot(
     engine = await start(exchange, store, symbol_store, symbols, forward_dir=tmp_path)
 
     (warm_up,) = exchange.calls("GET", "/fapi/v1/klines")
-    # The chart's 300 candles (D-54), more than the strategy's 4, and 2 spare.
-    assert (warm_up["interval"], warm_up["limit"]) == ("4h", "302")
+    # The chart's 300 candles (D-54), the 3 before them its lines need (D-56), and 2 spare.
+    assert (warm_up["interval"], warm_up["limit"]) == ("4h", "305")
     runner = engine.runners["BTCUSDT"]
     assert runner._record is not None
     assert runner._record.path == tmp_path / "BTCUSDT_4h_donchian_entry_period=3_exit_period=2.csv"

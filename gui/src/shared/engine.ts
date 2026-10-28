@@ -150,6 +150,20 @@ export interface RecentTrades {
   trades: TradeRow[]
 }
 
+// The position states a strategy decides in: flat for entries, long or short for exits.
+export type PositionState = 'flat' | 'long' | 'short'
+
+// A level the strategy decides by (D-56), computed by the engine with the strategy's own code.
+export interface ChartLine {
+  key: string
+  label: string // what the user reads, with the parameters in it
+  when: PositionState[] // shown only while the position is in one of these
+  pane: 'price' | 'indicator' // the candles' pane, or one below with a scale of its own (ADX)
+  threshold: string | null // a fixed level drawn with it, such as the ADX an entry needs
+  values: (string | null)[] // one per candle, what that candle was decided by
+  next: string | null // the forming candle's, when the closed candles already fix it
+}
+
 // A `candles` message (D-54): one symbol's last closed candles on its strategy's interval,
 // oldest first, the candles the strategy decided on. Sent per symbol with a strategy when a
 // client connects and whenever that list changes. Engines before 2026-10-28 never send it.
@@ -157,6 +171,7 @@ export interface SymbolCandles {
   symbol: string
   interval: string
   candles: ChartCandle[]
+  lines?: ChartLine[] // engines from before the strategy lines (#36, 2026-10-28) don't send them
 }
 
 // What `set_symbol` accepts, sent with `welcome` (D-48). Engines before 2026-10-20 don't send

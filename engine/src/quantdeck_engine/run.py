@@ -494,10 +494,12 @@ async def warmed_up_runner(
     forward_dir: Path,
 ) -> StrategyRunner:
     """A symbol's strategy with its warm-up candles loaded (D-43); its first decision, on the
-    latest of them, comes once it runs. Its feed also fills the symbol's chart (D-54)."""
-    chart = CandleChart(trader.symbol, strategy.interval)
+    latest of them, comes once it runs. Its feed also fills the symbol's chart (D-54), which
+    asks the same strategy for its lines (D-56)."""
+    built = strategy.build()
+    chart = CandleChart(trader.symbol, strategy.interval, strategy=built)
     runner = StrategyRunner(
-        strategy.build(),
+        built,
         trader,
         ClosedCandleFeed(client, ws_root, trader.symbol, strategy.interval, chart=chart),
         ForwardRecord(forward_record_path(forward_dir, trader.symbol, strategy)),

@@ -11,12 +11,21 @@ out than the close (a long buys below it), and the stop sits `stop_width` beyond
 """
 
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 
 from quantdeck_engine.binance.streams import Kline
-from quantdeck_engine.strategy.base import Action, Enter, Exit, Position, parameter
+from quantdeck_engine.strategy.base import Action, ChartLine, Enter, Exit, Position, parameter
 from quantdeck_engine.trading.rules import Side
+
+
+@dataclass(frozen=True)
+class Bands:
+    middle: Decimal  # the mean
+    upper: Decimal
+    lower: Decimal
+    deviation: Decimal
 
 
 @dataclass
@@ -59,26 +68,55 @@ class BollingerReversion:
     def limit_entries(self) -> bool:
         return self.limit_offset > 0
 
+    @property
+    def chart_lines(self) -> tuple[ChartLine, ...]:
+        """The bands while flat; while holding, the middle band that closes the position."""
+        period, width = self.period, format(self.width, "f")
+        return (
+            ChartLine("upper", f"위 밴드 ({period}봉 평균 + {width}σ)", ("flat",)),
+            ChartLine("lower", f"아래 밴드 ({period}봉 평균 − {width}σ)", ("flat",)),
+            ChartLine("middle", f"청산선 ({period}봉 평균)", ("long", "short")),
+        )
+
+    def levels(self, previous: Sequence[Kline], candle: Kline | None) -> dict[str, Decimal]:
+        if candle is None:
+            return {}  # the bands take the candle's own close
+        closes = [k.close for k in previous[-(self.period - 1) :]]
+        bands = self._bands([*closes, candle.close])
+        if bands is None:
+            return {}
+        return {"upper": bands.upper, "lower": bands.lower, "middle": bands.middle}
+
     def on_candle(self, candle: Kline, position: Position | None) -> Action | None:
         self._closes.append(candle.close)
-        if len(self._closes) < self.period:
+        bands = self._bands(list(self._closes))
+        if bands is None:
             return None
-        mean = sum(self._closes, Decimal(0)) / self.period
-        deviation = (sum(((c - mean) ** 2 for c in self._closes), Decimal(0)) / self.period).sqrt()
         close = candle.close
         if position is not None:
-            if position.side is Side.LONG and close >= mean:
+            if position.side is Side.LONG and close >= bands.middle:
                 return Exit()
-            if position.side is Side.SHORT and close <= mean:
+            if position.side is Side.SHORT and close <= bands.middle:
                 return Exit()
             return None
-        if deviation == 0:
+        if bands.deviation == 0:
             return None
-        if close < mean - self.width * deviation:
-            return self._enter(Side.LONG, close, deviation)
-        if close > mean + self.width * deviation:
-            return self._enter(Side.SHORT, close, deviation)
+        if close < bands.lower:
+            return self._enter(Side.LONG, close, bands.deviation)
+        if close > bands.upper:
+            return self._enter(Side.SHORT, close, bands.deviation)
         return None
+
+    def _bands(self, closes: Sequence[Decimal]) -> Bands | None:
+        """The bands over the last `period` of `closes`, the current one last; None with
+        fewer."""
+        if len(closes) < self.period:
+            return None
+        window = closes[-self.period :]
+        mean = sum(window, Decimal(0)) / self.period
+        deviation = (sum(((c - mean) ** 2 for c in window), Decimal(0)) / self.period).sqrt()
+        spread = self.width * deviation
+        return Bands(mean, mean + spread, mean - spread, deviation)
 
     def _enter(self, side: Side, close: Decimal, deviation: Decimal) -> Enter:
         if not self.limit_offset:

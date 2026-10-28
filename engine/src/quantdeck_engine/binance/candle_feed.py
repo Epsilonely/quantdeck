@@ -19,8 +19,8 @@ while trading is down) once a later closed candle exists; it is logged and passe
 as the backtest's data loader does (D-38).
 
 Given a chart (D-54), the feed also fills it for clients: the warm-up loads enough candles
-for it, every candle handed out joins it, and the stream's updates of the forming candle,
-which the strategy never sees, go to it.
+for it and its strategy's lines (D-56), every candle handed out joins it, and the stream's
+updates of the forming candle, which the strategy never sees, go to it.
 """
 
 import asyncio
@@ -93,12 +93,17 @@ class ClosedCandleFeed:
         """
         if not 1 <= count < REST_LIMIT:
             raise ValueError(f"Warm-up of {count} candles is outside 1 to {REST_LIMIT - 1}")
-        wanted = count if self._chart is None else max(count, self._chart.size)
+        wanted = count
+        if self._chart is not None:
+            # The chart's candles and the ones before them its lines need (D-56), within
+            # one request; past it, the chart's first candles go without lines.
+            shown = self._chart.size + self._chart.lookback
+            wanted = max(count, min(shown, REST_LIMIT - 2))
         rows = await self._client.klines(self.symbol, self.interval, limit=wanted + 2)
         server_ms = await self._client.server_time()
         settled = settled_klines(rows, self.symbol, self.interval, server_ms)
         if self._chart is not None:
-            self._chart.reset(settled[-self._chart.size :])
+            self._chart.reset(settled)  # it keeps what it needs
         candles = settled[-count:]
         self._log_gaps(candles)
         if len(candles) < count:

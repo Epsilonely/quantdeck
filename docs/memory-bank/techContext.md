@@ -6,7 +6,7 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 
 | Component | Technology | Status |
 |---|---|---|
-| GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the commands after an in-app confirmation (D-53); starts the engine when none is running (D-34); symbol settings panel (D-48); the last 7 days' trades (D-51); a chart of each strategy's candles (D-54); the engine log in a window of its own (D-55); light/dark theme (D-35) |
+| GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the commands after an in-app confirmation (D-53); starts the engine when none is running (D-34); symbol settings panel (D-48); the last 7 days' trades (D-51); a chart of each strategy's candles (D-54) with the levels it decides by (D-56); the engine log in a window of its own (D-55); light/dark theme (D-35) |
 | Fonts | Pretendard, JetBrains Mono, bundled from npm (D-49) | In use |
 | Charts | lightweight-charts, bundled in the renderer (D-54) | In use |
 | Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch, `run` (D-31) with a strategy per symbol (D-43, D-47) serving clients (D-32, D-33), backtests (D-37 to D-40, D-45) |
@@ -66,7 +66,7 @@ Every message is a JSON object with a `type`. Amounts are strings in fixed-point
 | engine → client | `logs` | `records`: list of `{time, level, logger, message}`. First the backlog (up to 200, INFO and above), then each new record as it is logged |
 | engine → client | `state` | `state`: the whole state (below). Sent after `welcome`, then whenever it changes (checked every 0.25 s) |
 | engine → client | `trades` | The last 7 days' trades (below; D-51). Sent after `state` once the engine has read them, then whenever the list changes |
-| engine → client | `candles` | One symbol's chart candles (below; D-54). One per symbol with a strategy after `trades`, then again whenever that symbol's list changes |
+| engine → client | `candles` | One symbol's chart candles and its strategy's lines (below; D-54, D-56). One per symbol with a strategy after `trades`, then again whenever that symbol's list changes |
 | client → engine | `command` | `id` (any JSON value, echoed back), `name`: `emergency_close`, `lift_halt`, `stop_engine`, `set_symbol`, `remove_symbol`, `pause_symbol`, `close_symbol`, or `resume_symbol`; `args` (an object, optional, used by the symbol commands) |
 | engine → client | `result` | `id`, `ok` (bool), `message` (text for the user) |
 
@@ -130,7 +130,11 @@ symbol     a symbol with a strategy
 interval   the strategy's interval
 candles    [{open_time, open, high, low, close}]  the last 300 closed candles (fewer before the
            symbol has that many), oldest first: the ones the strategy decided on
+lines      [{key, label, when: ["flat" | "long" | "short"], pane: "price" | "indicator",
+             threshold: str | null, values: [str | null], next: str | null}]  (D-56)
 ```
+
+`lines` are the levels the strategy decides by, empty for a strategy with none. `values` has one per candle, null where the strategy has no level for it, rounded to 8 decimal places; `next` is the forming candle's when the closed candles already fix it. `when` lists the position states the strategy uses the line in, and a client shows only the lines of the current state. `label` is Korean, for the user, with the parameters in it; `threshold` is a fixed level drawn with the line (the ADX an entry needs). An engine from before #36 (2026-10-28) sends no `lines`.
 
 A symbol whose strategy is removed gets no more `candles`; the GUI shows a list only while its `interval` is the symbol's strategy's, so one left from a replaced strategy is never drawn. Like `trades`, the GUI forgets every list when it connects to an engine.
 

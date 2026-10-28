@@ -5,6 +5,7 @@
 
 import { readFile } from 'fs/promises'
 import type {
+  ChartLine,
   CommandResult,
   ConnectionStatus,
   EngineCommand,
@@ -330,7 +331,7 @@ function parseTrades(message: Record<string, unknown>): RecentTrades | null {
 
 // Checked once here like the trades, so a malformed list can't break the chart (D-54).
 function parseCandles(message: Record<string, unknown>): SymbolCandles | null {
-  const { symbol, interval, candles } = message as unknown as SymbolCandles
+  const { symbol, interval, candles, lines } = message as unknown as SymbolCandles
   const valid =
     typeof symbol === 'string' &&
     typeof interval === 'string' &&
@@ -344,7 +345,33 @@ function parseCandles(message: Record<string, unknown>): SymbolCandles | null {
     console.error('[engine] a candles message is malformed; ignored')
     return null
   }
-  return { symbol, interval, candles }
+  if (lines === undefined) return { symbol, interval, candles } // an engine without lines
+  if (!validLines(lines, candles.length)) {
+    console.error('[engine] the strategy lines in a candles message are malformed; not drawn')
+    return { symbol, interval, candles }
+  }
+  return { symbol, interval, candles, lines }
+}
+
+// The strategy's lines (D-56): each with a value or null per candle.
+function validLines(lines: unknown, candles: number): lines is ChartLine[] {
+  const isLevel = (value: unknown): boolean => value === null || typeof value === 'string'
+  return (
+    Array.isArray(lines) &&
+    lines.every(
+      (line) =>
+        typeof line?.key === 'string' &&
+        typeof line.label === 'string' &&
+        Array.isArray(line.when) &&
+        line.when.every((state: unknown) => ['flat', 'long', 'short'].includes(state as string)) &&
+        ['price', 'indicator'].includes(line.pane) &&
+        isLevel(line.threshold) &&
+        Array.isArray(line.values) &&
+        line.values.length === candles &&
+        line.values.every(isLevel) &&
+        isLevel(line.next)
+    )
+  )
 }
 
 function now(): string {

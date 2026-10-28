@@ -11,12 +11,13 @@ backtest fills limit entries.
 """
 
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 from itertools import pairwise
 
 from quantdeck_engine.binance.streams import INTERVAL_MS, Kline
-from quantdeck_engine.strategy.base import Action, Enter, Exit, Position, parameter
+from quantdeck_engine.strategy.base import Action, ChartLine, Enter, Exit, Position, parameter
 from quantdeck_engine.trading.rules import Side
 
 DAY_MS = 24 * 60 * 60 * 1000
@@ -87,6 +88,15 @@ class TrendPullback:
     @property
     def limit_entries(self) -> bool:
         return self.limit_atr > 0
+
+    @property
+    def chart_lines(self) -> tuple[ChartLine, ...]:
+        """None: it decides on bars built from its candles, which the chart doesn't show, and
+        the engine refuses its limit entries (D-45)."""
+        return ()
+
+    def levels(self, previous: Sequence[Kline], candle: Kline | None) -> dict[str, Decimal]:
+        return {}
 
     def on_candle(self, candle: Kline, position: Position | None) -> Action | None:
         self._add(candle)

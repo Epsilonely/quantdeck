@@ -489,6 +489,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Limitations:** the candles are last-price candles while stops trigger on the mark price (D-18), so a candle can touch a stop line without the stop firing, and the reverse; the legend's tooltip says so. A stop far from the candles in view squeezes them, since the price axis keeps it on screen. Fill dots reach back 7 days only. A strategy stopped by an error (D-43) stops its chart too. After a reconnect near a close, a closed candle can reach the chart up to a minute late (D-42), while the forming candle already shows the next one.
 - **Alternatives:** a kline stream per symbol for the chart alone, which would also chart symbols without a strategy; the GUI reading Binance's public klines; a grid of small charts; the closed candles in the state; the strategies' indicator lines (Donchian channel, Bollinger bands), left for later since the engine would have to send their values; zooming on a plain wheel; zooming to a box dragged over the chart, which the library lacks and which would clash with dragging to pan; a short tick at each fill's price with a price label, whose labels would overlap where fills crowd; hollow rings, whose role colors read weaker; larger dots ringed in the background.
 - **Date:** 2026-10-28
+- **Note (2026-10-28):** The strategies' lines came with D-56, and the warm-up now also loads the candles they need before the first one shown.
 
 ## D-55 The engine log shows in a window of its own, opened from the header, which counts the warnings missed
 
@@ -502,4 +503,30 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - The count: with the log out of view, a warning or error would go unseen. Counted in the main process, which knows whether the log window is open, so a reload of the main window's page keeps it. The backlog repeats records from before the connection, so counting it would show warnings again at every reconnect.
 - **Limitations:** a log window that is open but behind other windows counts as seen. Its size and place aren't remembered between openings.
 - **Alternatives:** a panel laid over the main window; showing and hiding the log section like the trades panel; counting in the main window's page; counting the backlog.
+- **Date:** 2026-10-28
+
+## D-56 The chart draws the levels a strategy decides by in the position's current state, computed by the strategy's own code
+
+- **Decision:**
+  - **What:** each strategy names the levels it decides by and the position states it uses each in: flat for entries, long or short for exits (GitHub issue #36). The chart (D-54) draws only the current state's lines, across the whole chart as it draws the entry and stop lines:
+    - Donchian: the entry channel while flat; while holding, only the exit channel's side that closes the position.
+    - Bollinger: both bands while flat; the middle band while holding.
+    - Donchian with ATR stop and ADX filter: the Donchian's lines, plus, while flat and with the filter on, the ADX and its minimum in a pane under the candles.
+    - Daily-open breakout: its two levels while flat (the upper only when long only), none while holding, since it exits at the day's end.
+    - Move fade and trend pullback: none; they decide on bars built from the candles.
+  - A legend button hides and shows them; the legend names each line with its parameters.
+  - **Computed by the strategy:** for each candle, the strategy gives the levels it compared that candle against, from the candles before it, through the same functions its decisions use. A level it doesn't use on a candle is left out (the daily breakout's once the day's entry has come). For the forming candle go the levels the closed candles already fix (the channels); Bollinger's bands take the candle's own close, so they end at the last closed candle.
+  - **Protocol:** `candles` carries `lines`, with one value per candle and the forming candle's (`techContext.md`). The protocol version stays 1. Connected to an engine that sends none, the GUI draws no lines and says a restart brings them.
+  - **History:** the chart keeps the strategy's warm-up of candles before the first one shown, so the warm-up request asks for 300 candles plus that many, capped at one request (1500); past the cap the first candles have no lines. Each candle's levels are computed once, when it joins the chart.
+- **Why:**
+  - The user asked (2026-10-28) to see the strategies' period settings on the chart, with different lines before and after an entry: once in a position, the lines used only to enter go. Of drawing the current state across the whole chart and switching lines at the entry candle, they chose the first. The second needs each candle's position, and the engine knows when the current position opened only from the last 7 days' fills (D-51).
+  - Computed by the strategy in the engine: a line is there to show why the strategy entered or didn't, so it must be exactly what the close was compared against. The Donchian channel here leaves out the current candle, unlike the usual chart indicator, which no close could ever break. A copy in the GUI would drift from the strategy, as a copy of the catalog would (D-48).
+  - Backtests are unchanged (D-07): the old and new strategy code decided identically on every candle of BTCUSDT 4h from 2020 and ETHUSDT 15m from 2024-07, at random positions, for every strategy with lines (2026-10-28).
+  - Labels come from the engine because they carry the parameters. Lines are drawn as steps because a level holds for its whole candle.
+- **Limitations:**
+  - Stretches of past positions show the current state's lines too.
+  - Stops placed once at entry (the ATR stop, Bollinger's stop width) show only as the stop line.
+  - The levels come from last-price candles, while stops trigger on the mark price (D-18).
+  - With the ADX filter on, filling 300 candles' levels takes about 0.2 s on the development PC, on the event loop, at startup and whenever the symbol's strategy is set; the other strategies take about 10 ms.
+- **Alternatives:** the GUI computing the indicators; switching lines at the entry candle; every line in every state; smooth lines.
 - **Date:** 2026-10-28

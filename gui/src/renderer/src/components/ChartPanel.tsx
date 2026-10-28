@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import {
   CandlestickSeries,
   ColorType,
+  LineSeries,
   LineStyle,
+  LineType,
   createChart,
   type AutoscaleInfo,
   type CandlestickData,
@@ -11,13 +13,17 @@ import {
   type IPrimitivePaneView,
   type ISeriesApi,
   type ISeriesPrimitive,
+  type LineData,
   type MouseEventParams,
   type SeriesAttachedParameter,
   type Time,
-  type UTCTimestamp
+  type UTCTimestamp,
+  type WhitespaceData
 } from 'lightweight-charts'
 import type {
   ChartCandle,
+  ChartLine,
+  PositionState,
   RecentTrades,
   SymbolCandles,
   SymbolState,
@@ -35,8 +41,9 @@ import {
 } from '../format'
 
 // The chart of one of the engine's symbols (D-54): its strategy's candles, the position's entry
-// price, its exchange-side stops, and the last 7 days' fills. Prices arrive as text; they become
-// numbers here only to be drawn, and nothing is computed from them.
+// price, its exchange-side stops, the last 7 days' fills, and the levels the strategy decides by
+// in the position's current state (D-56). Prices arrive as text; they become numbers here only to
+// be drawn, and nothing is computed from them.
 
 interface Palette {
   background: string
@@ -46,6 +53,7 @@ interface Palette {
   profit: string
   loss: string
   warn: string
+  level: string // the strategy's lines
   fills: Record<TradeRole, string> // the fill dots' colors
 }
 
@@ -61,6 +69,7 @@ function readPalette(): Palette {
     profit: color('--profit'),
     loss: color('--loss'),
     warn: color('--warn'),
+    level: color('--level'),
     // Liquidation and ADL share the kill switch's color.
     fills: {
       entry: color('--fill-entry'),
@@ -246,11 +255,46 @@ function priceLines(symbol: SymbolState | undefined): PriceLineSpec[] {
   return lines
 }
 
+function positionState(symbol: SymbolState | undefined): PositionState {
+  const position = symbol?.position
+  if (!position) return 'flat'
+  return isNegative(position.amount) ? 'short' : 'long'
+}
+
+/**
+ * A strategy line's points: one per closed candle, blank where it has no level, then the forming
+ * candle's when the closed candles already fix it.
+ */
+function levelData(
+  line: ChartLine,
+  closed: SymbolCandles,
+  formingOpen: string | null
+): (LineData<Time> | WhitespaceData<Time>)[] {
+  const points: (LineData<Time> | WhitespaceData<Time>)[] = closed.candles.map((candle, i) => {
+    const time = chartTime(candle.open_time)
+    const value = line.values[i]
+    return value === null ? { time } : { time, value: Number(value) }
+  })
+  const latest = closed.candles.at(-1)
+  if (
+    line.next !== null &&
+    formingOpen !== null &&
+    latest &&
+    chartTime(formingOpen) > chartTime(latest.open_time)
+  )
+    points.push({ time: chartTime(formingOpen), value: Number(line.next) })
+  return points
+}
+
+const INDICATOR_PANE = 1 // under the candles' pane
+const INDICATOR_HEIGHT = 80 // px
+
 interface ChartParts {
   chart: IChartApi
   series: ISeriesApi<'Candlestick'>
   dots: FillDots
   lines: IPriceLine[]
+  levels: ISeriesApi<'Line'>[] // the strategy's lines drawn
 }
 
 // The view range buttons: the latest so many bars, or all of them.
@@ -274,6 +318,7 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
   const parts = useRef<ChartParts | null>(null)
   const drawn = useRef<{ view: string; candles: SymbolCandles | null }>({ view: '', candles: null })
   const [hover, setHover] = useState<Hover | null>(null)
+  const [showLevels, setShowLevels] = useState(true)
 
   const symbol = symbols.find((s) => s.symbol === selected)
   const strategy = symbol?.strategy ?? null
@@ -282,6 +327,9 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
   const closed = strategy && sent?.interval === strategy.interval ? sent : null
   const forming = strategy?.forming_candle ?? null
   const view = `${selected} ${strategy?.interval ?? ''}`
+  // Only the lines the strategy decides by in the position's current state, over the whole chart.
+  const state = positionState(symbol)
+  const levels = (closed?.lines ?? []).filter((line) => line.when.includes(state))
 
   let note: string | null = null
   if (!strategy) note = '전략을 정하면 그 주기의 차트가 나옵니다'
@@ -330,7 +378,7 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
     const series = chart.addSeries(CandlestickSeries, { borderVisible: false })
     const dots = new FillDots()
     series.attachPrimitive(dots)
-    parts.current = { chart, series, dots, lines: [] }
+    parts.current = { chart, series, dots, lines: [], levels: [] }
     drawn.current = { view: '', candles: null }
     return () => {
       element.removeEventListener('wheel', passWheel, { capture: true })
@@ -393,6 +441,48 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
       p.series.update(bar(newer))
     }
   }, [closed, forming, view])
+
+  // The strategy's lines, drawn again when the candles, the position's state, or the forming
+  // candle change, not with every state message. A pane left without series goes away.
+  const latestCandle = closed?.candles.at(-1)
+  const precision = latestCandle ? decimals(latestCandle) : 2
+  useEffect(() => {
+    const p = parts.current
+    if (!p) return
+    for (const series of p.levels) p.chart.removeSeries(series)
+    p.levels = []
+    if (!closed?.lines || !showLevels) return
+    for (const line of closed.lines.filter((l) => l.when.includes(state))) {
+      const indicator = line.pane === 'indicator'
+      const series = p.chart.addSeries(
+        LineSeries,
+        {
+          color: palette.level,
+          lineWidth: 1,
+          // A level holds for its whole candle; an indicator such as ADX moves between them.
+          lineType: indicator ? LineType.Simple : LineType.WithSteps,
+          priceLineVisible: false,
+          crosshairMarkerVisible: false,
+          priceFormat: indicator
+            ? { type: 'price', precision: 1, minMove: 0.1 }
+            : { type: 'price', precision, minMove: 10 ** -precision }
+        },
+        indicator ? INDICATOR_PANE : 0
+      )
+      series.setData(levelData(line, closed, formingOpen))
+      if (line.threshold !== null)
+        series.createPriceLine({
+          price: Number(line.threshold),
+          color: palette.text,
+          lineWidth: 1,
+          lineStyle: LineStyle.Dashed,
+          axisLabelVisible: true,
+          title: '기준'
+        })
+      p.levels.push(series)
+    }
+    p.chart.panes()[INDICATOR_PANE]?.setHeight(INDICATOR_HEIGHT)
+  }, [closed, state, showLevels, formingOpen, precision, palette])
 
   // Keyed by the lines' text, so they are drawn again only when one changes, not with every state.
   useEffect(() => {
@@ -476,7 +566,13 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
           ))}
         </div>
       </div>
-      <div className="chart-frame">
+      <div
+        className={
+          showLevels && levels.some((line) => line.pane === 'indicator')
+            ? 'chart-frame with-indicator'
+            : 'chart-frame'
+        }
+      >
         <div className="chart" ref={container} />
         {hover && hovered.length > 0 && (
           <ul
@@ -506,6 +602,25 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
         {strategy?.name && (
           <span>
             {selected} · {strategy.interval} · {strategy.name}
+          </span>
+        )}
+        {closed && !closed.lines && <span>전략 기준선은 엔진을 새 코드로 재시작하면 나옵니다</span>}
+        {levels.length > 0 && (
+          <span className="legend-levels">
+            <button
+              className="small"
+              aria-pressed={showLevels}
+              title="전략이 지금 포지션 상태에서 판단에 쓰는 선입니다. 포지션이 없으면 진입 기준, 있으면 청산 기준을 보여 줍니다"
+              onClick={() => setShowLevels((shown) => !shown)}
+            >
+              기준선
+            </button>
+            {showLevels &&
+              levels.map((line) => (
+                <span key={line.key} className="legend-level">
+                  ― {line.label}
+                </span>
+              ))}
           </span>
         )}
         <span className="spacer" />

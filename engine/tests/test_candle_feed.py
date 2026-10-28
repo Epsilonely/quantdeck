@@ -9,11 +9,12 @@ import pytest
 from fake_stream_server import lingering_server, time_to_cancel
 
 from quantdeck_engine.binance import streams
-from quantdeck_engine.binance.candle_feed import ClosedCandleFeed, FeedStopped
+from quantdeck_engine.binance.candle_feed import REST_LIMIT, ClosedCandleFeed, FeedStopped
 from quantdeck_engine.binance.rest import BinanceRestClient
 from quantdeck_engine.binance.streams import Kline, kline_stream
 from quantdeck_engine.chart import CandleChart
 from quantdeck_engine.config import parse_settings
+from quantdeck_engine.strategy.donchian import DonchianBreakout
 from quantdeck_engine.times import iso_utc
 
 SETTINGS = parse_settings({"BINANCE_API_KEY": "test-key", "BINANCE_API_SECRET": "test-secret"})
@@ -64,6 +65,7 @@ class Exchange:
         self.failures = 0  # klines requests to fail with HTTP 503
         self.events: asyncio.Queue[object] = asyncio.Queue()
         self.sleeps: list[float] = []
+        self.limits: list[int] = []  # of each klines request
 
     def handler(self, request: httpx.Request) -> httpx.Response:
         if request.url.path == "/fapi/v1/time":
@@ -74,6 +76,7 @@ class Exchange:
             return httpx.Response(503, json={"code": -1001, "msg": "Service Unavailable."})
         params = request.url.params
         limit = int(params["limit"])
+        self.limits.append(limit)
         existing = [r for r in self.rows if int(str(r[0])) <= self.now_ms]
         if "startTime" not in params:
             return httpx.Response(200, json=existing[-limit:])
@@ -249,6 +252,27 @@ async def test_a_chart_gets_the_warm_up_the_candles_handed_out_and_the_forming_o
             exchange.events.put_nowait(kline(10, closed=False))
             await until_forming(10)
     assert chart.forming() is None  # the stream stopped, so it would go stale
+
+
+async def test_the_warm_up_also_loads_the_candles_the_charts_lines_need() -> None:
+    # D-56: the 4 candles before the first one shown give it its levels.
+    exchange = Exchange(list(range(11)), now_ms=WARM)
+    strategy = DonchianBreakout(entry_period=4, exit_period=2)
+    chart = CandleChart("BTCUSDT", "1m", strategy=strategy, size=5)
+    feed = exchange.feed(chart=chart)
+
+    assert len(await feed.warm_up(strategy.warmup)) == 5
+    assert exchange.limits == [5 + 4 + 2]
+    assert chart.payload is not None
+    assert len(chart.payload["candles"]) == 5
+    assert all(value is not None for value in chart.payload["lines"][0]["values"])
+
+
+async def test_the_charts_lines_never_take_the_warm_up_past_one_request() -> None:
+    exchange = Exchange(list(range(11)), now_ms=WARM)
+    chart = CandleChart("BTCUSDT", "1m", strategy=DonchianBreakout(entry_period=1400))
+    await exchange.feed(chart=chart).warm_up(3)
+    assert exchange.limits == [REST_LIMIT]
 
 
 async def test_a_stream_that_ends_stops_the_feed() -> None:

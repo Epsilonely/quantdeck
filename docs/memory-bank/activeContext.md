@@ -20,6 +20,7 @@ Merged work not yet seen against a real engine:
 - The symbol table's warning when a strategy's next decision is overdue (#33). Checked only with a fake API.
 - The entry gate's count of every open position's stop: tested with fakes only. No entry has been capped by the room left under the daily loss limit yet.
 - The chart (#34, D-54) on a running engine: a 15m and a 4h symbol's candles, the forming candle moving and closing, the entry and stop lines, the fill dots and their hover details, and a strategy change switching the chart's interval. Also, with a real mouse in the Electron window, that a plain wheel over the chart scrolls the page and Ctrl+wheel zooms the chart, not the whole window. Checked only with a fake API in the browser pane.
+- The chart's strategy lines (#36, D-56) on a running engine: BTCUSDT's entry channel while flat and its exit line once it holds, a 15m Bollinger symbol's bands, and the lines following each closed candle. Checked only with a fake API in the browser pane, fed by the engine's chart code over archived candles.
 - How the GUI reports an engine's stop or failure since it starts the engine through a starter (D-34 note).
 - The in-app confirmation (#7, D-53) in the GUI itself: in `npm run dev`, where the page comes from the dev server; with a real mouse and keyboard, including that clicks don't reach the main page under it; and in a packaged build. Checked only in a test harness with the real overlay over a fake API.
 - Switching the Windows app mode while the GUI runs (D-35).

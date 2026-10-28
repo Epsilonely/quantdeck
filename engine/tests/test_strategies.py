@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 
 from quantdeck_engine.binance.streams import Kline
-from quantdeck_engine.strategy.base import Enter, Exit, Position
+from quantdeck_engine.strategy.base import Action, Enter, Exit, Position, Strategy
 from quantdeck_engine.strategy.bollinger import BollingerReversion
 from quantdeck_engine.strategy.daily_breakout import DailyOpenBreakout
 from quantdeck_engine.strategy.donchian import DonchianBreakout
@@ -619,3 +619,185 @@ def test_registry_builds_the_donchian_variant() -> None:
     strategy = make_strategy("donchian-atr-adx", "4h", {"stop_atr": 0, "adx_min": 20})
     assert isinstance(strategy, DonchianAtrAdx)
     assert (strategy.stop_atr, strategy.adx_min, strategy.warmup) == (0, 20, 154)
+
+
+# Chart levels (D-56): each strategy's levels are what its decisions compare against.
+
+Replay = list[tuple[Kline, Action | None, dict[str, Decimal]]]
+
+
+def replay(strategy: Strategy, candles: list[Kline], position: Position | None) -> Replay:
+    """Each candle with the strategy's action on it, `position` held throughout, and the
+    levels it gives for that candle from the candles before it, as a chart asks."""
+    keys = {line.key for line in strategy.chart_lines}
+    seen: list[Kline] = []
+    results: Replay = []
+    for k in candles:
+        levels = strategy.levels(seen[-(strategy.warmup - 1) :], k)
+        assert set(levels) <= keys
+        results.append((k, strategy.on_candle(k, position), levels))
+        seen.append(k)
+    return results
+
+
+def test_donchian_levels_are_its_channels() -> None:
+    candles = random_walk(2000, seed=3)
+    entries = 0
+    for k, action, levels in replay(DonchianBreakout(entry_period=20), candles, None):
+        if not levels:
+            assert action is None
+        elif k.close > levels["entry_high"]:
+            assert action == Enter(Side.LONG, levels["exit_low"])
+        elif k.close < levels["entry_low"]:
+            assert action == Enter(Side.SHORT, levels["exit_high"])
+        else:
+            assert action is None
+        entries += action is not None
+    assert entries > 20
+
+    for position, key in ((LONG, "exit_low"), (SHORT, "exit_high")):
+        exits = 0
+        for k, action, levels in replay(DonchianBreakout(entry_period=20), candles, position):
+            beyond = bool(levels) and (k.close - levels[key]) * position.side.sign < 0
+            assert action == (Exit() if beyond else None)
+            exits += action is not None
+        assert exits > 20
+
+
+def test_donchian_levels_for_the_next_candle_are_already_fixed() -> None:
+    strategy = DonchianBreakout(entry_period=20)
+    candles = random_walk(100, seed=4)
+    for i in range(len(candles)):
+        previous = candles[max(i - 20, 0) : i]
+        assert strategy.levels(previous, None) == strategy.levels(previous, candles[i])
+
+
+def test_donchian_draws_the_entry_channel_while_flat_and_one_exit_side_while_holding() -> None:
+    lines = {
+        line.key: line for line in DonchianBreakout(entry_period=55, exit_period=20).chart_lines
+    }
+    assert {key: line.when for key, line in lines.items()} == {
+        "entry_high": ("flat",),
+        "entry_low": ("flat",),
+        "exit_low": ("long",),
+        "exit_high": ("short",),
+    }
+    assert lines["entry_high"].label == "진입 채널 위 (직전 55봉 최고가)"
+    assert lines["exit_low"].label == "청산선 (직전 20봉 최저가)"
+
+
+def test_bollinger_levels_are_its_bands() -> None:
+    candles = random_walk(2000, seed=5)
+    entries = 0
+    for k, action, levels in replay(BollingerReversion(), candles, None):
+        if not levels:
+            assert action is None
+        elif k.close < levels["lower"]:
+            assert isinstance(action, Enter) and action.side is Side.LONG
+        elif k.close > levels["upper"]:
+            assert isinstance(action, Enter) and action.side is Side.SHORT
+        else:
+            assert action is None
+        entries += action is not None
+    assert entries > 20
+
+    for position in (LONG, SHORT):
+        exits = 0
+        for k, action, levels in replay(BollingerReversion(), candles, position):
+            back = bool(levels) and (k.close - levels["middle"]) * position.side.sign >= 0
+            assert action == (Exit() if back else None)
+            exits += action is not None
+        assert exits > 20
+
+
+def test_bollinger_has_no_levels_for_a_close_still_to_come() -> None:
+    strategy = BollingerReversion(period=4)
+    assert strategy.levels(closes(["100", "102", "100", "96"]), None) == {}
+    assert [line.when for line in strategy.chart_lines] == [
+        ("flat",),
+        ("flat",),
+        ("long", "short"),
+    ]
+    assert strategy.chart_lines[0].label == "위 밴드 (4봉 평균 + 2σ)"
+
+
+def test_donchian_atr_adx_levels_are_its_channels_and_adx() -> None:
+    candles = random_walk(3000, seed=6)
+    strategy = DonchianAtrAdx(entry_period=20, exit_period=10, adx_period=5, adx_min=Decimal(40))
+    taken = skipped = 0
+    for i, (k, action, levels) in enumerate(replay(strategy, candles, None)):
+        if i < strategy.warmup - 1:
+            continue  # it waits for its whole warm-up, which a chart has
+        side = None
+        if k.close > levels["entry_high"]:
+            side = Side.LONG
+        elif k.close < levels["entry_low"]:
+            side = Side.SHORT
+        if side is not None and levels["adx"] >= strategy.adx_min:
+            assert isinstance(action, Enter) and action.side is side
+            taken += 1
+        else:
+            assert action is None
+            skipped += side is not None
+    assert taken > 10 and skipped > 10
+
+    for position, key in ((LONG, "exit_low"), (SHORT, "exit_high")):
+        strategy = DonchianAtrAdx(entry_period=20, exit_period=10, adx_period=5)
+        for i, (k, action, levels) in enumerate(replay(strategy, candles, position)):
+            if i >= strategy.warmup - 1:
+                beyond = (k.close - levels[key]) * position.side.sign < 0
+                assert action == (Exit() if beyond else None)
+
+
+def test_donchian_atr_adx_draws_adx_only_with_the_filter_on() -> None:
+    lines = DonchianAtrAdx(adx_period=14, adx_min=Decimal(20)).chart_lines
+    (adx_line,) = [line for line in lines if line.key == "adx"]
+    assert (adx_line.when, adx_line.pane, adx_line.threshold) == (
+        ("flat",),
+        "indicator",
+        Decimal(20),
+    )
+    assert adx_line.label == "ADX (14봉) · 진입 최소 20"
+
+    without = DonchianAtrAdx(adx_min=Decimal(0))
+    assert "adx" not in {line.key for line in without.chart_lines}
+    candles = random_walk(200, seed=1)
+    assert "adx" not in without.levels(candles[:-1], candles[-1])
+
+
+def test_daily_breakout_levels_are_the_days_entry_levels() -> None:
+    candles = random_walk(60 * 24, seed=8)  # 60 days of 1h candles from 00:00 UTC
+    entries = 0
+    strategy = DailyOpenBreakout(interval="1h", k=Decimal("0.3"))
+    for k, action, levels in replay(strategy, candles, None):
+        if "upper" in levels and k.close >= levels["upper"]:
+            assert isinstance(action, Enter) and action.side is Side.LONG
+        elif "lower" in levels and k.close <= levels["lower"]:
+            assert isinstance(action, Enter) and action.side is Side.SHORT
+        else:
+            assert action is None
+        entries += action is not None
+    assert entries > 20
+
+
+def test_daily_breakout_levels_end_once_the_days_entry_has_come() -> None:
+    yesterday = [
+        bar(i * QUARTER_MS, "100", "110" if i == 10 else "100", "100", "100") for i in range(96)
+    ]
+    levels = {"upper": Decimal(105), "lower": Decimal(95)}  # range 10 from the open at 100
+    strategy = DailyOpenBreakout(k=Decimal("0.5"))
+    assert strategy.levels(yesterday, None) == {}  # the next candle's open isn't known yet
+    assert strategy.levels(yesterday, today(0, "100")) == levels
+    assert strategy.levels([*yesterday, today(0, "100")], None) == levels
+    assert strategy.levels([*yesterday, today(0, "100"), today(1, "106")], None) == {}
+
+    long_only = DailyOpenBreakout(k=Decimal("0.5"), long_only=True)
+    assert long_only.levels(yesterday, today(0, "100")) == {"upper": Decimal(105)}
+    assert [line.key for line in long_only.chart_lines] == ["upper"]
+
+
+def test_strategies_deciding_on_bars_draw_nothing() -> None:
+    candles = random_walk(5, seed=1)
+    for strategy in (MoveFade(), TrendPullback()):
+        assert strategy.chart_lines == ()
+        assert strategy.levels(candles[:-1], candles[-1]) == {}
