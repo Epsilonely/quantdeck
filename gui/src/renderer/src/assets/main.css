@@ -716,11 +716,28 @@ button[aria-pressed='true'] {
   border-color: var(--text-muted);
 }
 
-.log-section {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 180px;
+/* The log button's count of the warnings and errors that arrived while the log window was closed
+   or minimized (D-55). */
+.log-count {
+  display: inline-block;
+  min-width: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  color: var(--bg);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+  text-align: center;
+  vertical-align: 1px;
+}
+
+.log-count.warn {
+  background: var(--warn);
+}
+
+.log-count.danger {
+  background: var(--danger);
 }
 
 .trades-panel {
@@ -870,8 +887,10 @@ button[aria-pressed='true'] {
   }
 }
 
+/* The log window's records fill it under its header (D-55). */
 .logs {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   background: var(--bg-sunken);
   border: 1px solid var(--border);

@@ -23,6 +23,7 @@ Merged work not yet seen against a real engine:
 - How the GUI reports an engine's stop or failure since it starts the engine through a starter (D-34 note).
 - The in-app confirmation (#7, D-53) in the GUI itself: in `npm run dev`, where the page comes from the dev server; with a real mouse and keyboard, including that clicks don't reach the main page under it; and in a packaged build. Checked only in a test harness with the real overlay over a fake API.
 - Switching the Windows app mode while the GUI runs (D-35).
+- The log window (#35, D-55) in Electron: opening it and bringing it to the front, closing with the main window, the button's count while it is closed or minimized, its colors following a theme change, and in a packaged build. Checked only with a fake API in the browser pane.
 
 Exchange behavior not yet seen is under To verify in `binanceNotes.md`.
 

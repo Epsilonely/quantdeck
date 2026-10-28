@@ -3,19 +3,16 @@ import type {
   ConnectionStatus,
   EngineState,
   LaunchState,
-  LogRecord,
   RecentTrades,
   StrategyCatalog,
   SymbolCandles
 } from '../../shared/engine'
 
-const LOG_CAPACITY = 1000
-
+// The engine's logs show in a window of their own (D-55), not here.
 export interface EngineView {
   status: ConnectionStatus | null // null until the main process first answers
   launch: LaunchState
   state: EngineState | null
-  logs: LogRecord[]
   catalog: StrategyCatalog | null // what set_symbol accepts (D-48); null from older engines
   trades: RecentTrades | null // the last 7 days' trades (D-51); null until sent
   candles: Record<string, SymbolCandles> // each strategy's chart candles (D-54), by symbol
@@ -24,7 +21,6 @@ export interface EngineView {
 export function useEngine(): EngineView {
   const [status, setStatus] = useState<ConnectionStatus | null>(null)
   const [state, setState] = useState<EngineState | null>(null)
-  const [logs, setLogs] = useState<LogRecord[]>([])
   const [launch, setLaunch] = useState<LaunchState>({ phase: 'idle', message: null })
   const [catalog, setCatalog] = useState<StrategyCatalog | null>(null)
   const [trades, setTrades] = useState<RecentTrades | null>(null)
@@ -40,12 +36,7 @@ export function useEngine(): EngineView {
       engine.onLaunch(setLaunch),
       engine.onCatalog(setCatalog),
       engine.onTrades(setTrades),
-      engine.onCandles(setCandles),
-      engine.onLogs((update) =>
-        setLogs((shown) =>
-          update.reset ? update.records : [...shown, ...update.records].slice(-LOG_CAPACITY)
-        )
-      )
+      engine.onCandles(setCandles)
     ]
     let active = true
     engine.snapshot().then((snapshot) => {
@@ -53,7 +44,6 @@ export function useEngine(): EngineView {
       setStatus(snapshot.status)
       setLaunch(snapshot.launch)
       setState(snapshot.state)
-      setLogs(snapshot.logs)
       setCatalog(snapshot.catalog)
       setTrades(snapshot.trades)
       setCandles(snapshot.candles)
@@ -64,5 +54,5 @@ export function useEngine(): EngineView {
     }
   }, [])
 
-  return { status, launch, state, logs, catalog, trades, candles }
+  return { status, launch, state, catalog, trades, candles }
 }

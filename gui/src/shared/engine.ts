@@ -269,7 +269,6 @@ export interface EngineApi {
   startEngine(): Promise<void>
   onStatus(listener: (status: ConnectionStatus) => void): () => void
   onState(listener: (state: EngineState) => void): () => void
-  onLogs(listener: (update: LogsUpdate) => void): () => void
   onLaunch(listener: (launch: LaunchState) => void): () => void
   onCatalog(listener: (catalog: StrategyCatalog | null) => void): () => void
   onTrades(listener: (trades: RecentTrades | null) => void): () => void

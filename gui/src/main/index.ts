@@ -7,7 +7,9 @@ import { EngineLauncher } from './engine-launcher'
 import { isThemeSource, loadTheme, setTheme, themeBackground } from './theme'
 import { confirmation, parseCommand } from './commands'
 import { ConfirmOverlay } from './confirm-overlay'
+import { LogWindow } from './log-window'
 import type { CommandResult, EngineSnapshot } from '../shared/engine'
+import type { LogSnapshot } from '../shared/logs'
 
 // engine/ in this checkout, for the connection file (D-32) and starting the engine (D-34). When
 // run from source, the app path is gui/. A packaged app would need another way to find it; that
@@ -15,8 +17,13 @@ import type { CommandResult, EngineSnapshot } from '../shared/engine'
 const ENGINE_DIR = join(app.getAppPath(), '..', 'engine')
 const CONNECTION_FILE = join(ENGINE_DIR, 'state', 'connection.json')
 
+// The engine log's window (D-55) gets only the records and the connection, from its own calls.
+const logWindow = new LogWindow((unseen) => broadcast('logs:unseen', unseen))
+
 function broadcast(channel: string, value: unknown): void {
-  for (const window of BrowserWindow.getAllWindows()) window.webContents.send(channel, value)
+  for (const window of BrowserWindow.getAllWindows()) {
+    if (!logWindow.owns(window)) window.webContents.send(channel, value)
+  }
 }
 
 const launcher = new EngineLauncher(ENGINE_DIR, (launch) => broadcast('engine:launch', launch))
@@ -27,12 +34,13 @@ let firstAttempt = true
 const engine = new EngineClient(CONNECTION_FILE, {
   status: (status) => {
     broadcast('engine:status', status)
+    logWindow.status(status)
     if (status.phase === 'connected') launcher.connected()
     else if (status.phase === 'disconnected' && firstAttempt) launcher.start()
     if (status.phase !== 'connecting') firstAttempt = false
   },
   state: (state) => broadcast('engine:state', state),
-  logs: (update) => broadcast('engine:logs', update),
+  logs: (update) => logWindow.logs(update),
   catalog: (catalog) => broadcast('engine:catalog', catalog),
   trades: (trades) => broadcast('engine:trades', trades),
   candles: (candles) => broadcast('engine:candles', candles)
@@ -73,6 +81,8 @@ function createWindow(): void {
   mainWindow.on('ready-to-show', () => {
     mainWindow.show()
   })
+  // The log window has no use without the main one, and would keep the app from quitting.
+  mainWindow.on('closed', () => logWindow.close())
 
   mainWindow.webContents.setWindowOpenHandler((details) => {
     shell.openExternal(details.url)
@@ -104,6 +114,14 @@ app.whenReady().then(() => {
     // lock refuses a second one (D-31, D-34).
     if (!BrowserWindow.fromWebContents(event.sender)) return
     if (snapshot().status.phase !== 'connected') launcher.start()
+  })
+  ipcMain.handle('logs:open', (event) => {
+    if (BrowserWindow.fromWebContents(event.sender)) logWindow.open()
+  })
+  ipcMain.handle('logs:unseen', () => logWindow.counts)
+  ipcMain.handle('logs:snapshot', (): LogSnapshot => {
+    const { status, logs } = engine.snapshot()
+    return { status, logs }
   })
   ipcMain.handle('engine:command', async (event, value: unknown): Promise<CommandResult | null> => {
     const window = BrowserWindow.fromWebContents(event.sender)

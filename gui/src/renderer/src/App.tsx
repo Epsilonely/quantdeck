@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { CommandName, CommandResult, EngineCommand } from '../../shared/engine'
 import ChartPanel from './components/ChartPanel'
-import LogView from './components/LogView'
+import LogButton from './components/LogButton'
 import SymbolEditor, { type EditTarget } from './components/SymbolEditor'
 import SymbolTable, { type RowCommand } from './components/SymbolTable'
 import ThemeSwitch from './components/ThemeSwitch'
@@ -52,7 +52,7 @@ function targetKey(target: EditTarget): string {
 }
 
 function App(): React.JSX.Element {
-  const { status, launch, state, logs, catalog, trades, candles } = useEngine()
+  const { status, launch, state, catalog, trades, candles } = useEngine()
   const [showTrades, setShowTrades] = useState(true)
   const [chartSymbol, setChartSymbol] = useState<string | null>(null)
   const [busy, setBusy] = useState<CommandName | null>(null)
@@ -169,6 +169,7 @@ function App(): React.JSX.Element {
         >
           거래 기록
         </button>
+        <LogButton />
         <ThemeSwitch />
         {connected ? (
           <button disabled={busy !== null} onClick={() => run({ name: 'stop_engine' })}>
@@ -344,11 +345,6 @@ function App(): React.JSX.Element {
           ) : (
             <p className="muted">엔진 상태를 아직 받지 못했습니다.</p>
           )}
-
-          <section className="log-section">
-            <h2>엔진 로그</h2>
-            <LogView logs={logs} />
-          </section>
         </div>
         {showTrades && <TradeList trades={trades} connected={connected} />}
       </div>
