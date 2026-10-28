@@ -1,6 +1,7 @@
 import type { RecentTrades, TradeRow } from '../../../shared/engine'
 import {
   ROLE_LABELS,
+  SIDE_LABELS,
   clock,
   dateTime,
   dayLabel,
@@ -12,8 +13,6 @@ import {
 
 // The recent trades panel (D-51): the last 7 days' orders, newest first, under a heading per
 // local date. The engine sends every amount, totals included; nothing here adds them.
-
-const SIDE_LABELS: Record<string, string> = { BUY: '매수', SELL: '매도' }
 
 function feesText(fees: Record<string, string>): string {
   const parts = Object.entries(fees).map(([asset, amount]) => `${amount} ${asset}`)

@@ -4,13 +4,15 @@ import {
   ColorType,
   LineStyle,
   createChart,
-  createSeriesMarkers,
+  type AutoscaleInfo,
   type CandlestickData,
   type IChartApi,
   type IPriceLine,
+  type IPrimitivePaneView,
   type ISeriesApi,
-  type ISeriesMarkersPluginApi,
-  type SeriesMarker,
+  type ISeriesPrimitive,
+  type MouseEventParams,
+  type SeriesAttachedParameter,
   type Time,
   type UTCTimestamp
 } from 'lightweight-charts'
@@ -19,9 +21,18 @@ import type {
   RecentTrades,
   SymbolCandles,
   SymbolState,
-  TradeRole
+  TradeRole,
+  TradeRow
 } from '../../../shared/engine'
-import { ROLE_LABELS, isNegative } from '../format'
+import {
+  ROLE_LABELS,
+  SIDE_LABELS,
+  isNegative,
+  isZero,
+  pnlClass,
+  shortDateTime,
+  signed
+} from '../format'
 
 // The chart of one of the engine's symbols (D-54): its strategy's candles, the position's entry
 // price, its exchange-side stops, and the last 7 days' fills. Prices arrive as text; they become
@@ -34,11 +45,8 @@ interface Palette {
   font: string
   profit: string
   loss: string
-  info: string
-  ok: string
   warn: string
-  danger: string
-  muted: string
+  fills: Record<TradeRole, string> // the fill dots' colors
 }
 
 // main.css holds every color; the chart takes them in JavaScript (techContext.md, GUI notes).
@@ -52,11 +60,17 @@ function readPalette(): Palette {
     font: color('--mono'),
     profit: color('--profit'),
     loss: color('--loss'),
-    info: color('--info'),
-    ok: color('--ok'),
     warn: color('--warn'),
-    danger: color('--danger'),
-    muted: color('--text-muted')
+    // Liquidation and ADL share the kill switch's color.
+    fills: {
+      entry: color('--fill-entry'),
+      exit: color('--fill-exit'),
+      stop: color('--fill-stop'),
+      kill: color('--fill-kill'),
+      liquidation: color('--fill-kill'),
+      adl: color('--fill-kill'),
+      other: color('--text-muted')
+    }
   }
 }
 
@@ -70,17 +84,6 @@ function usePalette(): Palette {
     return () => query.removeEventListener('change', changed)
   }, [])
   return palette
-}
-
-// The trades panel's badge colors, so a marker and its row read alike.
-const ROLE_COLORS: Record<TradeRole, keyof Palette> = {
-  entry: 'info',
-  exit: 'ok',
-  stop: 'warn',
-  kill: 'danger',
-  liquidation: 'danger',
-  adl: 'danger',
-  other: 'muted'
 }
 
 // lightweight-charts shows timestamps as if they were UTC; shifting them by the local offset
@@ -127,32 +130,98 @@ function barAt(times: UTCTimestamp[], time: number): UTCTimestamp {
   return times[low]
 }
 
-/** A marker per fill of `symbol` on the bar it happened in, oldest first. */
-function tradeMarkers(
+interface ChartFill {
+  row: TradeRow
+  bar: UTCTimestamp // the bar it happened in
+}
+
+/** The fills of `symbol` from the chart's first bar on, oldest first; `times` from barTimes. */
+function chartFills(
   trades: RecentTrades | null,
   symbol: string,
-  times: UTCTimestamp[],
-  palette: Palette
-): SeriesMarker<Time>[] {
+  times: UTCTimestamp[]
+): ChartFill[] {
   if (!trades || times.length === 0) return []
   return trades.trades
     .filter((row) => row.symbol === symbol && chartTime(row.time) >= times[0])
-    .map((row): SeriesMarker<Time> => {
-      const buy = row.side === 'BUY'
-      return {
-        time: barAt(times, chartTime(row.time)),
-        position: buy ? 'belowBar' : 'aboveBar',
-        shape: buy ? 'arrowUp' : 'arrowDown',
-        color: palette[ROLE_COLORS[row.role] ?? 'muted'],
-        text: ROLE_LABELS[row.role] ?? row.role
-      }
+    .sort((a, b) => chartTime(a.time) - chartTime(b.time))
+    .map((row) => ({ row, bar: barAt(times, chartTime(row.time)) }))
+}
+
+interface Dot {
+  time: UTCTimestamp
+  price: number
+  color: string
+}
+
+const DOT_RADIUS = 3.5 // px
+
+/**
+ * A dot per fill at its price on its bar, in its role's color; hovering the bar tells the rest.
+ * Drawn here rather than as the library's markers, whose dots are at least 11 px and grow with the
+ * zoom: these stay small at every zoom, and are drawn over the candles and the price lines.
+ */
+class FillDots implements ISeriesPrimitive<Time> {
+  private dots: Dot[] = []
+  private host: SeriesAttachedParameter<Time> | null = null
+
+  private readonly view: IPrimitivePaneView = {
+    renderer: () => ({
+      draw: (target) =>
+        target.useMediaCoordinateSpace(({ context }) => {
+          if (!this.host) return
+          const { chart, series } = this.host
+          for (const dot of this.dots) {
+            const x = chart.timeScale().timeToCoordinate(dot.time)
+            const y = series.priceToCoordinate(dot.price)
+            if (x === null || y === null) continue
+            context.fillStyle = dot.color
+            context.beginPath()
+            context.arc(x, y, DOT_RADIUS, 0, 2 * Math.PI)
+            context.fill()
+          }
+        })
     })
-    .sort((a, b) => (a.time as number) - (b.time as number))
+  }
+
+  attached(host: SeriesAttachedParameter<Time>): void {
+    this.host = host
+  }
+
+  detached(): void {
+    this.host = null
+  }
+
+  paneViews(): readonly IPrimitivePaneView[] {
+    return [this.view]
+  }
+
+  set(dots: Dot[]): void {
+    this.dots = dots
+    this.host?.requestUpdate()
+  }
+}
+
+function fillDots(fills: ChartFill[], palette: Palette): Dot[] {
+  return fills.map(({ row, bar }) => ({
+    time: bar,
+    price: Number(row.price),
+    color: palette.fills[row.role] ?? palette.fills.other
+  }))
+}
+
+// The legend's roles; liquidation and ADL share the kill switch's color.
+const LEGEND_ROLES: TradeRole[] = ['entry', 'exit', 'stop', 'kill']
+
+/** The bar under the pointer, and where the fill details go: on the side away from it. */
+interface Hover {
+  bar: number
+  right: number | null // the box's distance from the frame's right edge, or null at the left
 }
 
 interface PriceLineSpec {
   price: string
-  color: keyof Palette
+  color: 'profit' | 'loss' | 'warn'
   style: LineStyle
   title: string
 }
@@ -180,9 +249,16 @@ function priceLines(symbol: SymbolState | undefined): PriceLineSpec[] {
 interface ChartParts {
   chart: IChartApi
   series: ISeriesApi<'Candlestick'>
-  markers: ISeriesMarkersPluginApi<Time>
+  dots: FillDots
   lines: IPriceLine[]
 }
+
+// The view range buttons: the latest so many bars, or all of them.
+const RANGES: [label: string, bars: number | null][] = [
+  ['50봉', 50],
+  ['100봉', 100],
+  ['전체', null]
+]
 
 interface Props {
   symbols: SymbolState[]
@@ -197,6 +273,7 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
   const container = useRef<HTMLDivElement>(null)
   const parts = useRef<ChartParts | null>(null)
   const drawn = useRef<{ view: string; candles: SymbolCandles | null }>({ view: '', candles: null })
+  const [hover, setHover] = useState<Hover | null>(null)
 
   const symbol = symbols.find((s) => s.symbol === selected)
   const strategy = symbol?.strategy ?? null
@@ -214,6 +291,12 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
 
   const formingOpen = forming?.open_time ?? null
   const linesKey = JSON.stringify(priceLines(symbol))
+  const hovered =
+    hover === null
+      ? []
+      : chartFills(trades, selected, barTimes(closed, formingOpen)).filter(
+          (fill) => fill.bar === hover.bar
+        )
 
   useEffect(() => {
     const element = container.current
@@ -222,15 +305,35 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
       autoSize: true,
       localization: { locale: 'ko-KR' },
       timeScale: { timeVisible: true, secondsVisible: false },
-      // The wheel scrolls the page, which the chart sits in; dragging pans, and dragging an axis
-      // zooms.
+      // Dragging pans and dragging an axis zooms it. The wheel zooms the time around the pointer,
+      // but only with Ctrl: see passWheel.
       handleScroll: { mouseWheel: false },
-      handleScale: { mouseWheel: false }
+      handleScale: { mouseWheel: true }
+    })
+    // The chart sits in the scrolling page, so a plain wheel stops here, before the chart, and
+    // scrolls the page. With Ctrl (a touchpad pinch arrives as one) the chart takes it, which
+    // also keeps it from zooming the whole window.
+    const passWheel = (event: WheelEvent): void => {
+      if (!event.ctrlKey) event.stopPropagation()
+    }
+    element.addEventListener('wheel', passWheel, { capture: true })
+    // Set only when the bar or the side changes, not with every move of the pointer.
+    chart.subscribeCrosshairMove((param: MouseEventParams<Time>) => {
+      const bar = param.point && typeof param.time === 'number' ? param.time : null
+      const axis = chart.priceScale('right').width()
+      const right =
+        param.point && param.point.x < (element.clientWidth - axis) / 2 ? axis + 8 : null
+      setHover((old) =>
+        bar === null ? null : old?.bar === bar && old.right === right ? old : { bar, right }
+      )
     })
     const series = chart.addSeries(CandlestickSeries, { borderVisible: false })
-    parts.current = { chart, series, markers: createSeriesMarkers(series, []), lines: [] }
+    const dots = new FillDots()
+    series.attachPrimitive(dots)
+    parts.current = { chart, series, dots, lines: [] }
     drawn.current = { view: '', candles: null }
     return () => {
+      element.removeEventListener('wheel', passWheel, { capture: true })
       parts.current = null
       chart.remove()
     }
@@ -278,8 +381,13 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
         })
       }
       p.series.setData(bars)
-      // Another symbol or interval opens at its latest candles, not where the last one was left.
-      if (view !== last.view) p.chart.timeScale().resetTimeScale()
+      // Another symbol or interval opens at its latest candles with its prices fitted, not
+      // scrolled or zoomed as the last one was left. Dragging the price axis turns its
+      // autoscale off, which resetting the time scale doesn't undo.
+      if (view !== last.view) {
+        p.chart.timeScale().resetTimeScale()
+        p.series.priceScale().applyOptions({ autoScale: true })
+      }
       drawn.current = { view, candles: closed }
     } else if (newer) {
       p.series.update(bar(newer))
@@ -290,8 +398,9 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
   useEffect(() => {
     const p = parts.current
     if (!p) return
+    const specs = JSON.parse(linesKey) as PriceLineSpec[]
     for (const line of p.lines) p.series.removePriceLine(line)
-    p.lines = (JSON.parse(linesKey) as PriceLineSpec[]).map((spec) =>
+    p.lines = specs.map((spec) =>
       p.series.createPriceLine({
         price: Number(spec.price),
         color: palette[spec.color],
@@ -301,13 +410,40 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
         title: spec.title
       })
     )
+    // The price axis fits these lines along with the candles in view, so the entry and stops stay
+    // on screen without dragging the axis.
+    const prices = specs.map((spec) => Number(spec.price))
+    p.series.applyOptions({
+      autoscaleInfoProvider: (candles: () => AutoscaleInfo | null) => {
+        const info = candles()
+        if (!info?.priceRange || prices.length === 0) return info
+        const { minValue, maxValue } = info.priceRange
+        return {
+          ...info,
+          priceRange: {
+            minValue: Math.min(minValue, ...prices),
+            maxValue: Math.max(maxValue, ...prices)
+          }
+        }
+      }
+    })
   }, [linesKey, palette])
 
   // Placed again when a bar is added, not with every update of the forming one.
   useEffect(() => {
-    const times = barTimes(closed, formingOpen)
-    parts.current?.markers.setMarkers(tradeMarkers(trades, selected, times, palette))
+    const fills = chartFills(trades, selected, barTimes(closed, formingOpen))
+    parts.current?.dots.set(fillDots(fills, palette))
   }, [trades, selected, closed, formingOpen, palette])
+
+  // A range button also fits the prices again, as an axis dragged before would have left them.
+  function showBars(bars: number | null): void {
+    const p = parts.current
+    if (!p) return
+    const count = p.series.data().length
+    if (bars === null || count <= bars) p.chart.timeScale().fitContent()
+    else p.chart.timeScale().setVisibleLogicalRange({ from: count - bars - 0.5, to: count - 0.5 })
+    p.series.priceScale().applyOptions({ autoScale: true })
+  }
 
   return (
     <section className="chart-section">
@@ -327,9 +463,43 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
             </button>
           ))}
         </div>
+        <div className="chart-range">
+          {RANGES.map(([label, bars]) => (
+            <button
+              key={label}
+              className="small"
+              disabled={note !== null}
+              onClick={() => showBars(bars)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
       <div className="chart-frame">
         <div className="chart" ref={container} />
+        {hover && hovered.length > 0 && (
+          <ul
+            className="chart-fills"
+            style={hover.right === null ? { left: 8 } : { right: hover.right }}
+          >
+            {hovered.map(({ row }) => (
+              <li key={row.order_id}>
+                <span className="trade-time">{shortDateTime(row.time)}</span>
+                <span className={`role role-${row.role}`}>{ROLE_LABELS[row.role] ?? row.role}</span>
+                <span>{SIDE_LABELS[row.side] ?? row.side}</span>
+                <span className="mono">
+                  {row.quantity} @ {row.price}
+                </span>
+                {!isZero(row.realized_pnl) && (
+                  <span className={`mono ${pnlClass(row.realized_pnl)}`}>
+                    {signed(row.realized_pnl)}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+        )}
         {note && <div className="chart-note">{note}</div>}
       </div>
       <div className="chart-legend">
@@ -346,7 +516,14 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
         >
           ┄ 손절가
         </span>
-        <span>▲▼ 최근 7일 체결</span>
+        <span className="legend-fills">
+          최근 7일 체결
+          {LEGEND_ROLES.map((role) => (
+            <span key={role}>
+              <span className={`fill-${role}`}>●</span> {ROLE_LABELS[role]}
+            </span>
+          ))}
+        </span>
         {strategy?.stopped && (
           <span className="tag danger" title={strategy.stopped}>
             전략이 멈춰 차트가 갱신되지 않습니다

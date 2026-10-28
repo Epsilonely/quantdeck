@@ -15,6 +15,12 @@
   --danger: #e5534b;
   --profit: #3fb27f;
   --loss: #e5534b;
+  /* The chart's fill dots (D-54): small, so brighter than the role badges, and in hues the
+     candles don't use. */
+  --fill-entry: #00e5ff;
+  --fill-exit: #a6ff00;
+  --fill-stop: #ffb000;
+  --fill-kill: #ff2fd0;
   /* Both fonts are bundled (main.tsx). Monospace fonts have no Hangul, so Hangul in --mono text
      falls through to Pretendard. JetBrains Mono joins sequences such as >= and -> into one glyph,
      so every rule that uses --mono also turns ligatures off: logs, IDs, and values show the
@@ -38,6 +44,10 @@
     --danger: #c62f2a;
     --profit: #127448;
     --loss: #c62f2a;
+    --fill-entry: #0095e8;
+    --fill-exit: #5cb800;
+    --fill-stop: #f08c00;
+    --fill-kill: #e000c0;
   }
 }
 
@@ -555,8 +565,15 @@ h3 {
 
 /* The chart (D-54), under the symbol table: a tab per symbol, the chart, and a legend. */
 .chart-tabs {
+  flex: 1;
   display: flex;
   flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* The view range buttons, right of the tabs. */
+.chart-range {
+  display: flex;
   gap: 6px;
 }
 
@@ -604,6 +621,59 @@ h3 {
 .legend-stop {
   color: var(--warn);
   cursor: help;
+}
+
+.legend-fills {
+  display: flex;
+  gap: 10px;
+}
+
+.fill-entry {
+  color: var(--fill-entry);
+}
+
+.fill-exit {
+  color: var(--fill-exit);
+}
+
+.fill-stop {
+  color: var(--fill-stop);
+}
+
+.fill-kill {
+  color: var(--fill-kill);
+}
+
+/* The fills on the bar under the pointer, over the chart on the side away from it. */
+.chart-fills {
+  position: absolute;
+  top: 8px;
+  z-index: 1;
+  margin: 0;
+  padding: 6px 9px;
+  list-style: none;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgb(0 0 0 / 25%);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+.chart-fills li {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.chart-fills li + li {
+  margin-top: 4px;
+}
+
+.chart-fills .mono {
+  font-family: var(--mono);
+  font-variant-ligatures: none;
 }
 
 .notice {

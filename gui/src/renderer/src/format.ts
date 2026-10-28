@@ -81,7 +81,10 @@ export function pnlClass(amount: string | null): string {
   return isNegative(amount) ? 'loss' : 'profit'
 }
 
-/** What a filled order was for (D-51), as the trades panel and the chart's markers name it. */
+/** An order's side, as the trades panel and the chart's fill details name it. */
+export const SIDE_LABELS: Record<string, string> = { BUY: '매수', SELL: '매도' }
+
+/** What a filled order was for (D-51), as the trades panel and the chart name it. */
 export const ROLE_LABELS: Record<TradeRole, string> = {
   entry: '진입',
   exit: '청산',
