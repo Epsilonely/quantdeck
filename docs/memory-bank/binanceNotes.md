@@ -178,7 +178,7 @@ Source: [Account — Income History](https://developers.binance.com/en/docs/cata
 
 ### Cost to open a position (2026-10-26)
 
-Source: Binance FAQ "How to Calculate Cost Required to Open a Position in Perpetual Futures Contracts" (updated 2026-07-08), testnet response. Docs only, apart from the two `-2019` refusals above.
+Source: Binance FAQ "How to Calculate Cost Required to Open a Position in Perpetual Futures Contracts" (updated 2026-07-08), testnet response. Docs only, apart from the two `-2019` refusals above and one entry sized to the engine's available-balance cap, which allows for this cost (D-25 note of 2026-10-26): it filled (testnet, 2026-10-28, XRPUSDT at 3× with an ETHUSDT position open).
 
 - Cost = initial margin + open loss, checked against the available balance.
 - Initial margin = assumed price × quantity ÷ leverage. A market order's assumed price is the last price × (1 + 0.15%), long or short.
