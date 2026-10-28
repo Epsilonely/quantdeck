@@ -409,6 +409,15 @@ table.symbols tr.editing td {
   background: var(--bg-raised);
 }
 
+/* A click on a row shows it on the chart (D-54); a bar marks the row shown. */
+table.symbols tbody tr {
+  cursor: pointer;
+}
+
+table.symbols tr.charted td:first-child {
+  box-shadow: inset 3px 0 0 var(--info);
+}
+
 .section-head {
   display: flex;
   align-items: center;
@@ -542,6 +551,59 @@ h3 {
   /* Hangul breaks between words, not inside them. */
   word-break: keep-all;
   pointer-events: none;
+}
+
+/* The chart (D-54), under the symbol table: a tab per symbol, the chart, and a legend. */
+.chart-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chart-tabs button[aria-selected='true'] {
+  background: var(--bg-sunken);
+  border-color: var(--info);
+}
+
+.chart-frame {
+  position: relative;
+  height: 320px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+/* Its own stacking context, so the chart's layered canvases stay under the note below. */
+.chart {
+  width: 100%;
+  height: 100%;
+  isolation: isolate;
+}
+
+/* Covers the chart while there is nothing to draw, saying why. */
+.chart-note {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: var(--bg-sunken);
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.chart-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 14px;
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.legend-stop {
+  color: var(--warn);
+  cursor: help;
 }
 
 .notice {

@@ -1,18 +1,17 @@
-import type { RecentTrades, TradeRole, TradeRow } from '../../../shared/engine'
-import { clock, dateTime, dayLabel, isZero, localDay, pnlClass, signed } from '../format'
+import type { RecentTrades, TradeRow } from '../../../shared/engine'
+import {
+  ROLE_LABELS,
+  clock,
+  dateTime,
+  dayLabel,
+  isZero,
+  localDay,
+  pnlClass,
+  signed
+} from '../format'
 
 // The recent trades panel (D-51): the last 7 days' orders, newest first, under a heading per
 // local date. The engine sends every amount, totals included; nothing here adds them.
-
-const ROLE_LABELS: Record<TradeRole, string> = {
-  entry: '진입',
-  exit: '청산',
-  stop: '손절',
-  kill: '킬 스위치',
-  liquidation: '강제 청산',
-  adl: 'ADL',
-  other: '기타'
-}
 
 const SIDE_LABELS: Record<string, string> = { BUY: '매수', SELL: '매도' }
 

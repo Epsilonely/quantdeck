@@ -25,12 +25,16 @@ class FakeEngine:
         self.stopped = asyncio.Event()
         self.symbol_args: list[dict[str, Any]] = []
         self.trade_list: dict[str, Any] | None = None  # replaced, never changed in place
+        self.candle_lists: dict[str, dict[str, Any]] = {}  # likewise, each list
 
     def snapshot(self) -> dict[str, Any]:
         return dict(self.state)
 
     def trades(self) -> dict[str, Any] | None:
         return self.trade_list
+
+    def candles(self) -> dict[str, dict[str, Any]]:
+        return dict(self.candle_lists)
 
     async def emergency_close(self) -> bool:
         self.closes += 1
@@ -257,6 +261,62 @@ async def test_a_list_sent_on_connect_is_not_sent_again_by_the_next_round(tmp_pa
     task.cancel()
     with suppress(asyncio.CancelledError):
         await task
+
+
+# Chart candles (D-54)
+
+
+def candles(symbol: str, *closes: str) -> dict[str, Any]:
+    return {
+        "symbol": symbol,
+        "interval": "15m",
+        "candles": [{"open_time": str(i), "close": c} for i, c in enumerate(closes)],
+    }
+
+
+async def test_each_symbols_candles_follow_the_trades_on_connect(served: Served) -> None:
+    served.engine.trade_list = TRADES
+    served.engine.candle_lists = {"BTCUSDT": candles("BTCUSDT", "1"), "ETHUSDT": candles("ETHUSDT")}
+    async with await hello(served.file) as ws:
+        first = [json.loads(await ws.recv()) for _ in range(6)]
+    assert [m["type"] for m in first] == [
+        "welcome",
+        "logs",
+        "state",
+        "trades",
+        "candles",
+        "candles",
+    ]
+    assert first[4] == {"type": "candles", **candles("BTCUSDT", "1")}
+    assert first[5]["symbol"] == "ETHUSDT"
+
+
+async def test_only_a_changed_symbols_candles_are_sent_again(served: Served) -> None:
+    served.engine.candle_lists = {"BTCUSDT": candles("BTCUSDT", "1"), "ETHUSDT": candles("ETHUSDT")}
+    async with await hello(served.file) as ws:
+        await receive(ws, "candles")
+        await receive(ws, "candles")
+        await asyncio.sleep(0.05)  # several publish rounds with the same lists
+        served.engine.candle_lists = {
+            **served.engine.candle_lists,
+            "ETHUSDT": candles("ETHUSDT", "2"),
+        }
+        changed = await receive(ws, "candles")
+        assert (changed["symbol"], changed["candles"][0]["close"]) == ("ETHUSDT", "2")
+        served.engine.state["mark"] = "60000"
+        # Only the state follows: BTCUSDT's unchanged candles weren't sent again.
+        assert json.loads(await ws.recv())["type"] == "state"
+
+
+async def test_candles_of_a_symbol_added_back_are_sent_again(served: Served) -> None:
+    btc = candles("BTCUSDT", "1")
+    served.engine.candle_lists = {"BTCUSDT": btc}
+    async with await hello(served.file) as ws:
+        await receive(ws, "candles")
+        served.engine.candle_lists = {}  # the strategy was removed
+        await asyncio.sleep(0.05)
+        served.engine.candle_lists = {"BTCUSDT": btc}
+        assert (await receive(ws, "candles"))["symbol"] == "BTCUSDT"
 
 
 # Commands (D-33)

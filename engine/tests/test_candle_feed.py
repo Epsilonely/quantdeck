@@ -12,7 +12,9 @@ from quantdeck_engine.binance import streams
 from quantdeck_engine.binance.candle_feed import ClosedCandleFeed, FeedStopped
 from quantdeck_engine.binance.rest import BinanceRestClient
 from quantdeck_engine.binance.streams import Kline, kline_stream
+from quantdeck_engine.chart import CandleChart
 from quantdeck_engine.config import parse_settings
+from quantdeck_engine.times import iso_utc
 
 SETTINGS = parse_settings({"BINANCE_API_KEY": "test-key", "BINANCE_API_SECRET": "test-secret"})
 MINUTE = 60_000
@@ -97,13 +99,14 @@ class Exchange:
     async def sleep(self, seconds: float) -> None:
         self.sleeps.append(seconds)
 
-    def feed(self, *, grace: float = 3600.0) -> ClosedCandleFeed:
+    def feed(self, *, grace: float = 3600.0, chart: CandleChart | None = None) -> ClosedCandleFeed:
         client = BinanceRestClient(SETTINGS, transport=httpx.MockTransport(self.handler))
         return ClosedCandleFeed(
             client,
             "wss://example",
             "BTCUSDT",
             "1m",
+            chart=chart,
             stream=self.stream,
             clock=lambda: self.now_ms / 1000,
             sleep=self.sleep,
@@ -210,6 +213,42 @@ async def test_updates_of_a_forming_candle_are_ignored() -> None:
         exchange.events.put_nowait(event)
 
     assert await take(feed, 2) == [9, 10]
+
+
+async def test_a_chart_gets_the_warm_up_the_candles_handed_out_and_the_forming_one() -> None:
+    # D-54
+    exchange = Exchange(list(range(12)), now_ms=WARM)
+    chart = CandleChart("BTCUSDT", "1m", size=5, forming_interval=0)
+    feed = exchange.feed(chart=chart)
+
+    def shown() -> list[str]:
+        assert chart.payload is not None
+        return [c["open_time"] for c in chart.payload["candles"]]
+
+    async def until_forming(i: int) -> None:
+        for _ in range(1000):
+            forming = chart.forming()
+            if forming is not None and forming.open_time == T0 + i * MINUTE:
+                return
+            await asyncio.sleep(0)
+        raise AssertionError(f"candle {i} never showed as forming")
+
+    assert len(await feed.warm_up(3)) == 3
+    # More than the strategy's warm-up: candles 4 to 8.
+    assert shown() == [iso_utc((T0 + i * MINUTE) / 1000) for i in range(4, 9)]
+
+    exchange.events.put_nowait(kline(9, closed=False))
+    async with asyncio.timeout(2):
+        async with aclosing(feed.candles()) as candles:
+            handed_out = asyncio.ensure_future(anext(candles))
+            await until_forming(9)
+            exchange.events.put_nowait(kline(9))
+            assert (await handed_out).open_time == T0 + 9 * MINUTE
+            assert chart.forming() is None  # it closed
+            assert shown()[-1] == iso_utc((T0 + 9 * MINUTE) / 1000)
+            exchange.events.put_nowait(kline(10, closed=False))
+            await until_forming(10)
+    assert chart.forming() is None  # the stream stopped, so it would go stale
 
 
 async def test_a_stream_that_ends_stops_the_feed() -> None:

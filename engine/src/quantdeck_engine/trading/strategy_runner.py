@@ -32,6 +32,7 @@ from typing import Protocol
 
 from quantdeck_engine.binance.rest import REQUEST_ERRORS
 from quantdeck_engine.binance.streams import Kline
+from quantdeck_engine.chart import CandleChart
 from quantdeck_engine.config import StrategyConfig
 from quantdeck_engine.strategy.base import Action, Enter, Exit, Strategy
 from quantdeck_engine.times import iso_utc, utc_text
@@ -166,6 +167,7 @@ class StrategyRunner:
         feed: CandleSource,
         record: ForwardRecord | None,
         *,
+        chart: CandleChart | None = None,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
         retry_delay: float = RETRY_DELAY,
     ) -> None:
@@ -181,6 +183,7 @@ class StrategyRunner:
         self.last_candle: Kline | None = None  # the last candle decided on
         self.last_signal: Signal | None = None  # the last action and its outcome
         self.stopped: str | None = None  # why the strategy stopped, if it did
+        self.chart = chart  # the candles the feed fills for clients' charts (D-54)
 
     async def warm_up(self) -> None:
         """Load the warm-up candles and feed in all but the latest, which `run` decides on.

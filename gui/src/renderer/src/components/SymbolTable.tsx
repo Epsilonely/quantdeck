@@ -300,6 +300,7 @@ function Actions({ symbol, blocked, busy, onCommand }: ActionsProps): React.JSX.
 interface Props {
   symbols: SymbolState[]
   editing: string | null // the symbol open in the settings panel
+  charted: string | null // the symbol the chart shows (D-54)
   editBlocked: string | null // why settings can't be changed now
   actionBlocked: string | null // why a row's pause, close, or resume can't be sent now
   busy: { name: RowCommand; symbol: string } | null
@@ -307,18 +308,21 @@ interface Props {
   connected: boolean
   onEdit(symbol: string): void
   onCommand(name: RowCommand, symbol: string): void
+  onChart(symbol: string): void
 }
 
 function SymbolTable({
   symbols,
   editing,
+  charted,
   editBlocked,
   actionBlocked,
   busy,
   now,
   connected,
   onEdit,
-  onCommand
+  onCommand,
+  onChart
 }: Props): React.JSX.Element {
   if (symbols.length === 0) return <p className="muted">설정된 심볼이 없습니다.</p>
   return (
@@ -338,7 +342,19 @@ function SymbolTable({
       </thead>
       <tbody>
         {symbols.map((s) => (
-          <tr key={s.symbol} className={s.symbol === editing ? 'editing' : undefined}>
+          <tr
+            key={s.symbol}
+            className={
+              [s.symbol === editing && 'editing', s.symbol === charted && 'charted']
+                .filter(Boolean)
+                .join(' ') || undefined
+            }
+            // A click on a row shows its symbol on the chart; a click on one of its buttons does
+            // only what the button says.
+            onClick={(event) => {
+              if (!(event.target as HTMLElement).closest('button')) onChart(s.symbol)
+            }}
+          >
             <td className="strong">{s.symbol}</td>
             <td>
               <Status symbol={s} />

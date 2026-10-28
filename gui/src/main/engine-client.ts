@@ -13,7 +13,8 @@ import type {
   LogRecord,
   LogsUpdate,
   RecentTrades,
-  StrategyCatalog
+  StrategyCatalog,
+  SymbolCandles
 } from '../shared/engine'
 
 const PROTOCOL = 1
@@ -27,6 +28,7 @@ export interface EngineClientEvents {
   logs(update: LogsUpdate): void
   catalog(catalog: StrategyCatalog | null): void
   trades(trades: RecentTrades | null): void
+  candles(candles: Record<string, SymbolCandles>): void
 }
 
 interface ConnectionInfo {
@@ -39,6 +41,7 @@ type EngineMessage =
   | { type: 'logs'; records: LogRecord[] }
   | { type: 'state'; state: EngineState }
   | ({ type: 'trades' } & Record<string, unknown>)
+  | ({ type: 'candles' } & Record<string, unknown>)
   | { type: 'result'; id: unknown; ok: boolean; message: string }
 
 export class EngineClient {
@@ -52,6 +55,7 @@ export class EngineClient {
   private logs: LogRecord[] = []
   private catalog: StrategyCatalog | null = null
   private trades: RecentTrades | null = null
+  private candles: Record<string, SymbolCandles> = {} // replaced, never changed in place
 
   constructor(
     private readonly connectionFile: string,
@@ -75,7 +79,8 @@ export class EngineClient {
       state: this.state,
       logs: [...this.logs],
       catalog: this.catalog,
-      trades: this.trades
+      trades: this.trades,
+      candles: this.candles
     }
   }
 
@@ -140,9 +145,12 @@ export class EngineClient {
           // Before the status, so a screen that opens on "connected" finds the catalog.
           this.catalog = parseCatalog(message.catalog)
           this.events.catalog(this.catalog)
-          // This engine sends its own trades after its state, or none if it predates them.
+          // This engine sends its own trades and candles after its state, or none if it predates
+          // them.
           this.trades = null
           this.events.trades(null)
+          this.candles = {}
+          this.events.candles(this.candles)
           this.setStatus('connected', null)
           break
         case 'logs':
@@ -168,6 +176,14 @@ export class EngineClient {
           if (trades) {
             this.trades = trades
             this.events.trades(trades)
+          }
+          break
+        }
+        case 'candles': {
+          const candles = parseCandles(message)
+          if (candles) {
+            this.candles = { ...this.candles, [candles.symbol]: candles }
+            this.events.candles(this.candles)
           }
           break
         }
@@ -310,6 +326,25 @@ function parseTrades(message: Record<string, unknown>): RecentTrades | null {
     return null
   }
   return { window_days, asset, totals, trades }
+}
+
+// Checked once here like the trades, so a malformed list can't break the chart (D-54).
+function parseCandles(message: Record<string, unknown>): SymbolCandles | null {
+  const { symbol, interval, candles } = message as unknown as SymbolCandles
+  const valid =
+    typeof symbol === 'string' &&
+    typeof interval === 'string' &&
+    Array.isArray(candles) &&
+    candles.every((c) =>
+      ['open_time', 'open', 'high', 'low', 'close'].every(
+        (key) => typeof c?.[key as keyof typeof c] === 'string'
+      )
+    )
+  if (!valid) {
+    console.error('[engine] a candles message is malformed; ignored')
+    return null
+  }
+  return { symbol, interval, candles }
 }
 
 function now(): string {

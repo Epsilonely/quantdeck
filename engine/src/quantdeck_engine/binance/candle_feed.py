@@ -17,6 +17,10 @@ candle up to about a minute late.
 A candle missing even from REST counts as a real gap (the exchange produces no candles
 while trading is down) once a later closed candle exists; it is logged and passed over,
 as the backtest's data loader does (D-38).
+
+Given a chart (D-54), the feed also fills it for clients: the warm-up loads enough candles
+for it, every candle handed out joins it, and the stream's updates of the forming candle,
+which the strategy never sees, go to it.
 """
 
 import asyncio
@@ -34,6 +38,7 @@ from quantdeck_engine.binance.streams import (
     kline_stream,
     settled_klines,
 )
+from quantdeck_engine.chart import CandleChart
 from quantdeck_engine.times import utc_text
 
 logger = logging.getLogger(__name__)
@@ -59,6 +64,7 @@ class ClosedCandleFeed:
         symbol: str,
         interval: str,
         *,
+        chart: CandleChart | None = None,
         stream: StreamFactory = kline_stream,
         clock: Callable[[], float] = time.time,
         sleep: Callable[[float], Awaitable[None]] = asyncio.sleep,
@@ -67,6 +73,7 @@ class ClosedCandleFeed:
     ) -> None:
         if interval not in INTERVAL_MS:
             raise ValueError(f"Unsupported interval {interval!r}")
+        self._chart = chart
         self._client = client
         self._ws_root = ws_root
         self.symbol = symbol
@@ -86,9 +93,13 @@ class ClosedCandleFeed:
         """
         if not 1 <= count < REST_LIMIT:
             raise ValueError(f"Warm-up of {count} candles is outside 1 to {REST_LIMIT - 1}")
-        rows = await self._client.klines(self.symbol, self.interval, limit=count + 2)
+        wanted = count if self._chart is None else max(count, self._chart.size)
+        rows = await self._client.klines(self.symbol, self.interval, limit=wanted + 2)
         server_ms = await self._client.server_time()
-        candles = settled_klines(rows, self.symbol, self.interval, server_ms)[-count:]
+        settled = settled_klines(rows, self.symbol, self.interval, server_ms)
+        if self._chart is not None:
+            self._chart.reset(settled[-self._chart.size :])
+        candles = settled[-count:]
         self._log_gaps(candles)
         if len(candles) < count:
             logger.warning(
@@ -142,10 +153,16 @@ class ClosedCandleFeed:
             queue.put_nowait(_CONNECTED)
 
         stream = self._stream(self._ws_root, self.symbol, self.interval, on_connect=connected)
-        async with aclosing(stream) as updates:
-            async for update in updates:
-                if update.closed:
-                    queue.put_nowait(update)
+        try:
+            async with aclosing(stream) as updates:
+                async for update in updates:
+                    if update.closed:
+                        queue.put_nowait(update)
+                    elif self._chart is not None:
+                        self._chart.set_forming(update)
+        finally:
+            if self._chart is not None:
+                self._chart.set_forming(None)  # it would go stale
 
     async def _next_event(
         self, queue: asyncio.Queue[object], reader: asyncio.Task[None], *, until: float
@@ -250,6 +267,8 @@ class ClosedCandleFeed:
                 utc_text(candle.open_time),
             )
         self.last = candle
+        if self._chart is not None:
+            self._chart.add_closed(candle)
 
     def _expected(self) -> int:
         assert self.last is not None

@@ -34,7 +34,8 @@ const engine = new EngineClient(CONNECTION_FILE, {
   state: (state) => broadcast('engine:state', state),
   logs: (update) => broadcast('engine:logs', update),
   catalog: (catalog) => broadcast('engine:catalog', catalog),
-  trades: (trades) => broadcast('engine:trades', trades)
+  trades: (trades) => broadcast('engine:trades', trades),
+  candles: (candles) => broadcast('engine:candles', candles)
 })
 
 function snapshot(): EngineSnapshot {

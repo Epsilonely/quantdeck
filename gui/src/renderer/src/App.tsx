@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { CommandName, CommandResult, EngineCommand } from '../../shared/engine'
+import ChartPanel from './components/ChartPanel'
 import LogView from './components/LogView'
 import SymbolEditor, { type EditTarget } from './components/SymbolEditor'
 import SymbolTable, { type RowCommand } from './components/SymbolTable'
@@ -51,8 +52,9 @@ function targetKey(target: EditTarget): string {
 }
 
 function App(): React.JSX.Element {
-  const { status, launch, state, logs, catalog, trades } = useEngine()
+  const { status, launch, state, logs, catalog, trades, candles } = useEngine()
   const [showTrades, setShowTrades] = useState(true)
+  const [chartSymbol, setChartSymbol] = useState<string | null>(null)
   const [busy, setBusy] = useState<CommandName | null>(null)
   const [busySymbol, setBusySymbol] = useState<string | null>(null) // the symbol `busy` names
   const [result, setResult] = useState<ShownResult | null>(null)
@@ -108,6 +110,11 @@ function App(): React.JSX.Element {
     busy !== null && busySymbol !== null && isRowCommand(busy)
       ? { name: busy, symbol: busySymbol }
       : null
+  // The chart shows the symbol picked last, or the first while that one isn't traded (D-54).
+  const symbols = state?.symbols ?? []
+  const charted = symbols.some((s) => s.symbol === chartSymbol)
+    ? chartSymbol
+    : (symbols[0]?.symbol ?? null)
 
   let statusText: string
   let statusClass: string
@@ -298,6 +305,7 @@ function App(): React.JSX.Element {
                 <SymbolTable
                   symbols={state.symbols}
                   editing={editing?.mode === 'edit' ? editing.symbol : null}
+                  charted={charted}
                   editBlocked={editBlocked}
                   actionBlocked={actionBlocked}
                   busy={busyRow}
@@ -305,6 +313,7 @@ function App(): React.JSX.Element {
                   connected={connected}
                   onEdit={(symbol) => openEditor({ mode: 'edit', symbol })}
                   onCommand={(name, symbol) => run({ name, args: { symbol } })}
+                  onChart={setChartSymbol}
                 />
                 {editing && catalog && (
                   <SymbolEditor
@@ -321,6 +330,16 @@ function App(): React.JSX.Element {
                   />
                 )}
               </section>
+
+              {charted !== null && (
+                <ChartPanel
+                  symbols={state.symbols}
+                  candles={candles}
+                  trades={trades}
+                  selected={charted}
+                  onSelect={setChartSymbol}
+                />
+              )}
             </>
           ) : (
             <p className="muted">엔진 상태를 아직 받지 못했습니다.</p>

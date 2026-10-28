@@ -1,6 +1,8 @@
 // Display helpers. Amounts stay strings (D-33): they are only inspected as text, never parsed.
 // Times arrive as ISO 8601 UTC and are shown in this computer's time zone (KST here; D-12 note).
 
+import type { TradeRole } from '../../shared/engine'
+
 function pad(value: number): string {
   return String(value).padStart(2, '0')
 }
@@ -77,4 +79,15 @@ export function signed(amount: string): string {
 export function pnlClass(amount: string | null): string {
   if (amount === null || isZero(amount)) return ''
   return isNegative(amount) ? 'loss' : 'profit'
+}
+
+/** What a filled order was for (D-51), as the trades panel and the chart's markers name it. */
+export const ROLE_LABELS: Record<TradeRole, string> = {
+  entry: '진입',
+  exit: '청산',
+  stop: '손절',
+  kill: '킬 스위치',
+  liquidation: '강제 청산',
+  adl: 'ADL',
+  other: '기타'
 }

@@ -1,6 +1,6 @@
 # Active Context
 
-_Last updated: 2026-10-26_
+_Last updated: 2026-10-28_
 
 ## Current focus
 
@@ -8,7 +8,7 @@ _Last updated: 2026-10-26_
 
 **Engine exercise on ETHUSDT.** Since 2026-10-21 the user's `symbols.json` also holds ETHUSDT with a short-timeframe strategy, since 2026-10-26 the Bollinger reversion at 5×, on 15m since that afternoon (1m before). It is an engine exercise, not a strategy: many entries, stops, and exits on testnet within days, where the 4h strategy takes weeks per trade, plus real signals for the replay tool; such short timeframes lose after costs (D-44 note). It made the first strategy entries and exits by `run`, on 2026-10-21, and the first stop-outs, on 2026-10-26. On 1m its stops sat 0.1–0.3% away, so every entry was trimmed to the position cap and a round trip's taker fees came to about 30–80% of its planned risk. It shares the account with BTCUSDT, so a day of its losses can fire the kill switch, which also closes BTCUSDT and halts both until the user lifts it; an emergency close of it on 2026-10-21 halted BTCUSDT too, the reason for the per-symbol pause (D-50). Apart from this exercise, a strategy goes on a coin only after it has held up on several coins (D-39); nothing enforces it in code (D-47), and the settings panel only reminds the user.
 
-**Several coins, each with its own strategy, set from the GUI** (decided 2026-10-19): coins are added and removed, and their strategy, parameters, and leverage changed, but not while the coin has an open position. Done: the entry gate counts every open position's stop (GitHub issue #13), the engine side (#18, D-47), and the GUI settings panel (#19, D-48), both checked on testnet. The user's `config.toml` holds risk values only. Per-symbol pause, close-and-pause, and resume (#24, D-50) is merged but not yet checked on testnet (below).
+**Several coins, each with its own strategy, set from the GUI** (decided 2026-10-19): coins are added and removed, and their strategy, parameters, and leverage changed, but not while the coin has an open position. Done: the entry gate counts every open position's stop (GitHub issue #13), the engine side (#18, D-47), and the GUI settings panel (#19, D-48), both checked on testnet. The user's `config.toml` holds risk values only. Per-symbol pause, close-and-pause, and resume (#24, D-50) is merged; pause and resume have run on testnet, the close not yet (below).
 
 Engine work is done in a git worktree while the forward test runs from the main checkout; CLAUDE.md's working rules say what must not run there.
 
@@ -24,7 +24,8 @@ Merged work not yet seen against a real engine; most of it needs the engine rest
 - The `donchian-atr-adx` strategy (D-52) on a running engine: setting it from the panel, its 154-candle warm-up with the ADX filter on, and its decisions and record file. Tested in backtests and with unit tests only.
 - The symbol table's display on a running engine (#31, #33): the mark price and a signal's stop on the tick, each signal result's label, the ROI under the unrealized PnL, and the warning when a strategy's next decision is overdue. Checked only with a fake API.
 - The entry gate's count of every open position's stop: tested with fakes only.
-- An entry trimmed by the available-balance cap filling on testnet (#32, D-25 note of 2026-10-26): ETHUSDT at 2× with its 1m stops would show it. Tested against Binance's documented cost formula only.
+- An entry trimmed by the available-balance cap filling on testnet (#32, D-25 note of 2026-10-26). At 2× with nothing else open that cap sits just under the position cap, so any entry big enough to be capped at 2× would show it; at 5×, where ETHUSDT trades now, the position cap binds first. Tested against Binance's documented cost formula only.
+- The chart (#34, D-54) on a running engine: a 15m and a 4h symbol's candles, the forming candle moving and closing, the entry and stop lines, the fill markers, and a strategy change switching the chart's interval. Checked only with a fake API in the browser pane.
 - How the GUI reports an engine's stop or failure since it starts the engine through a starter (D-34 note).
 - The in-app confirmation (#7, D-53) in the GUI itself: in `npm run dev`, where the page comes from the dev server; with a real mouse and keyboard, including that clicks don't reach the main page under it; and in a packaged build. Checked only in a test harness with the real overlay over a fake API.
 - Switching the Windows app mode while the GUI runs (D-35).

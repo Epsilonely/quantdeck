@@ -6,9 +6,9 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 
 | Component | Technology | Status |
 |---|---|---|
-| GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the commands after an in-app confirmation (D-53); starts the engine when none is running (D-34); symbol settings panel (D-48); the last 7 days' trades (D-51); light/dark theme (D-35) |
+| GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the commands after an in-app confirmation (D-53); starts the engine when none is running (D-34); symbol settings panel (D-48); the last 7 days' trades (D-51); a chart of each strategy's candles (D-54); light/dark theme (D-35) |
 | Fonts | Pretendard, JetBrains Mono, bundled from npm (D-49) | In use |
-| Charts | lightweight-charts | Planned, not installed |
+| Charts | lightweight-charts, bundled in the renderer (D-54) | In use |
 | Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch, `run` (D-31) with a strategy per symbol (D-43, D-47) serving clients (D-32, D-33), backtests (D-37 to D-40, D-45) |
 | Binance client | In-house, asyncio on httpx + websockets (D-10) | REST including orders and algo orders, kline stream, user data stream |
 | Discord bot | Undecided | Not started |
@@ -66,10 +66,11 @@ Every message is a JSON object with a `type`. Amounts are strings in fixed-point
 | engine → client | `logs` | `records`: list of `{time, level, logger, message}`. First the backlog (up to 200, INFO and above), then each new record as it is logged |
 | engine → client | `state` | `state`: the whole state (below). Sent after `welcome`, then whenever it changes (checked every 0.25 s) |
 | engine → client | `trades` | The last 7 days' trades (below; D-51). Sent after `state` once the engine has read them, then whenever the list changes |
+| engine → client | `candles` | One symbol's chart candles (below; D-54). One per symbol with a strategy after `trades`, then again whenever that symbol's list changes |
 | client → engine | `command` | `id` (any JSON value, echoed back), `name`: `emergency_close`, `lift_halt`, `stop_engine`, `set_symbol`, `remove_symbol`, `pause_symbol`, `close_symbol`, or `resume_symbol`; `args` (an object, optional, used by the symbol commands) |
 | engine → client | `result` | `id`, `ok` (bool), `message` (text for the user) |
 
-After `hello` the first three messages are `welcome`, `logs`, `state`, in that order, then `trades` if the engine has read them yet.
+After `hello` the first three messages are `welcome`, `logs`, `state`, in that order, then `trades` if the engine has read them yet, then a `candles` for each symbol with a strategy.
 
 **State.**
 
@@ -87,7 +88,8 @@ symbols      [{symbol, halted: str | null (the engine's own halt of it, D-16/D-1
                                  last_candle: null | {open_time, close},
                                  last_signal: null | {candle_open_time, action, stop_price: str | null,
                                                       result, outcome},
-                                 stopped: str | null},
+                                 stopped: str | null,
+                                 forming_candle: null | {open_time, open, high, low, close}},
                mark_price: str | null,
                position: null | {amount (negative = short), entry_price, unrealized_pnl: str | null,
                                  roi_pct: str | null},
@@ -95,7 +97,7 @@ symbols      [{symbol, halted: str | null (the engine's own halt of it, D-16/D-1
                stops:  [{client_algo_id, side, type, trigger_price, close_position}]}]
 ```
 
-Strategy fields (D-43, D-47): `params` holds every parameter, as strings like amounts. `action` is `enter_long`, `enter_short`, or `exit`. `stop_price` is an entry's stop as the trader places it, rounded to the tick toward the entry; the forward record keeps the strategy's own. `result` says what came of the signal: `entered`, `closed`, `skipped_paused` (the user's pause), `skipped_halted` (the engine's halt of the symbol, or the kill switch), `ignored`, `not_entered`, or `failed`; only the first two carried the signal out, and the GUI colors only those. `outcome` is the engine's text for the same, as in the forward record, and `stopped` says why this symbol's strategy stopped. `unrealized_pnl` is every open position's unrealized PnL at the display-only mark prices, before closing fees, and `loss_with_unrealized` is `loss` minus it, both rounded to 0.01; they are null with no position open or before every position's mark price has arrived, since a partial total would mislead, and only the GUI uses them (D-24 note of 2026-10-22). A symbol's `mark_price` is rounded to its tick, since the stream sends more digits, and its position's `unrealized_pnl` to 0.01; both are computed from the unrounded mark price. `roi_pct` is that unrealized PnL as a percent of the initial margin at entry, |amount| × entry price ÷ the symbol's set leverage (the price move times the leverage), rounded to 0.01 and null with `unrealized_pnl`; display only, like the unrealized fields. Fields are added without changing the protocol version (the strategy fields, `leverage`, `paused_at`, the unrealized fields, `started_at`, `result`, and `roi_pct` all were), so a client must accept any of them missing from an older engine; the GUI takes a missing `paused_at` to mean the engine can't pause a symbol, and shows a signal without `result` as it did before.
+Strategy fields (D-43, D-47): `params` holds every parameter, as strings like amounts. `action` is `enter_long`, `enter_short`, or `exit`. `stop_price` is an entry's stop as the trader places it, rounded to the tick toward the entry; the forward record keeps the strategy's own. `result` says what came of the signal: `entered`, `closed`, `skipped_paused` (the user's pause), `skipped_halted` (the engine's halt of the symbol, or the kill switch), `ignored`, `not_entered`, or `failed`; only the first two carried the signal out, and the GUI colors only those. `outcome` is the engine's text for the same, as in the forward record, and `stopped` says why this symbol's strategy stopped. `forming_candle` is the chart's candle still forming on the strategy's interval (D-54), the kline stream's latest update at most a second old; null before the stream sends one, once the stream stops, and once that candle is among the closed ones in `candles`. `unrealized_pnl` is every open position's unrealized PnL at the display-only mark prices, before closing fees, and `loss_with_unrealized` is `loss` minus it, both rounded to 0.01; they are null with no position open or before every position's mark price has arrived, since a partial total would mislead, and only the GUI uses them (D-24 note of 2026-10-22). A symbol's `mark_price` is rounded to its tick, since the stream sends more digits, and its position's `unrealized_pnl` to 0.01; both are computed from the unrounded mark price. `roi_pct` is that unrealized PnL as a percent of the initial margin at entry, |amount| × entry price ÷ the symbol's set leverage (the price move times the leverage), rounded to 0.01 and null with `unrealized_pnl`; display only, like the unrealized fields. Fields are added without changing the protocol version (the strategy fields, `leverage`, `paused_at`, the unrealized fields, `started_at`, `result`, `roi_pct`, and `forming_candle` all were), so a client must accept any of them missing from an older engine; the GUI takes a missing `paused_at` to mean the engine can't pause a symbol, a missing `forming_candle` to mean it sends no chart candles, and shows a signal without `result` as it did before.
 
 **Catalog** (D-48). What `set_symbol` accepts, built from the strategy registry. Like the state's added fields, `catalog` and `description` may be missing from an older engine; the GUI then turns the settings off or shows no `?`.
 
@@ -121,6 +123,17 @@ trades       [{time (the first fill), symbol, order_id: int,
 
 An engine before 2026-10-22 never sends `trades`; the GUI then says so in the panel. The GUI forgets a list when it connects to an engine, since that engine sends its own.
 
+**Candles** (D-54). Fields at the top level, beside `type`.
+
+```
+symbol     a symbol with a strategy
+interval   the strategy's interval
+candles    [{open_time, open, high, low, close}]  the last 300 closed candles (fewer before the
+           symbol has that many), oldest first: the ones the strategy decided on
+```
+
+A symbol whose strategy is removed gets no more `candles`; the GUI shows a list only while its `interval` is the symbol's strategy's, so one left from a replaced strategy is never drawn. Like `trades`, the GUI forgets every list when it connects to an engine.
+
 Defaults are text, like parameter values. `description` is the parameter's help in Korean, which the settings panel shows when the pointer is over the `?` after the name; it is declared with the parameter in the strategy's code, and a test fails if any parameter lacks one. Whether a setting enters with limit orders depends on its values, so the catalog doesn't say; `set_symbol` refuses those (D-45).
 
 **Commands.** `emergency_close` fires the kill switch (D-27); `ok` is false if a symbol couldn't be flattened. `lift_halt` answers `ok: true` with "halt lifted" or "not halted", and `ok: false` while today's loss is still at the limit. `stop_engine` (D-34) answers `ok: true` once any kill switch in progress has finished; the engine then closes every connection with code 1001 and deletes the connection file. The process itself exits a few seconds later, after its Binance streams close.
@@ -137,11 +150,11 @@ A client whose unsent messages pile up past 1000 is disconnected.
 - The main process finds `engine/` relative to the app path, which works only when run from source (`npm run dev`). A packaged app needs another way to find the connection file and the engine's virtualenv.
 - Closing a terminal tab of the Claude desktop app ends the tab's whole process tree, detached processes included, as long as their parent is alive; a detached process whose parent had already exited survived (2026-10-19). An engine started as Electron's direct child therefore died with the terminal running `npm run dev`, without its clean shutdown, and missed a 4h decision. Hence the starter in the D-34 note.
 - The GUI starts the engine as `engine/.venv/Scripts/pythonw.exe -m quantdeck_engine run` (D-34), so the venv must exist (`uv sync`). That launcher is uv's trampoline, which runs the real interpreter as its child, so one engine shows as two `pythonw.exe` processes. The engine inherits Electron's inheritable handles: started from a GUI run with `--remoteDebuggingPort`, it kept that port bound after the GUI quit, and the next GUI couldn't open its debugging port (2026-10-16). Use a different port, or stop the engine, when testing over the DevTools protocol.
-- The preload script exposes only `window.api.engine` (snapshot, the commands, starting the engine, and status/state/logs/launch/catalog/trades listeners) and `window.api.theme` (get and set the theme); the template's general `window.electron` IPC access was removed. The main process checks and confirms every command before sending it (D-48), on the confirmation page (D-53), which is a second electron-vite page and preload with only `window.confirmApi`.
+- The preload script exposes only `window.api.engine` (snapshot, the commands, starting the engine, and status/state/logs/launch/catalog/trades/candles listeners) and `window.api.theme` (get and set the theme); the template's general `window.electron` IPC access was removed. The main process checks and confirms every command before sending it (D-48), on the confirmation page (D-53), which is a second electron-vite page and preload with only `window.confirmApi`.
 - Screen checks without Electron or an engine, as in a worktree where neither may run (CLAUDE.md working rules): `npx electron-vite build`, copy `out/renderer/` elsewhere, add a `<script>` before the bundle that defines a fake `window.api` returning a made-up snapshot, and serve the copy on `127.0.0.1` for the browser pane. The browser pane can't show the confirmation page over the window, since the main process draws it; for that, a scratch Electron script that loads only the overlay and command modules (bundled with esbuild) over the built page with a fake `window.api` starts no engine client, and `desktopCapturer` captures the window with the overlay on top (2026-10-26).
 - From the Git Bash tool, `npx electron-vite build | tail` wrote every output file but never exited (2026-10-26); the same build from PowerShell finished in 7 s.
 - A stopping engine waits about 2 s for each Binance stream to close (`binanceNotes.md`, GitHub issue #20) before it releases the instance lock (D-31), so a start pressed meanwhile is refused and the GUI shows the lock error. A symbol change that replaces or removes a running strategy waits the same 2 s, holding that symbol's order lock.
-- Theme (D-35): the choice is saved as `theme.json` in Electron's userData folder (`%APPDATA%\gui` when run from source). `main.css` keeps every color in `:root` variables, dark by default and light under `prefers-color-scheme: light`; new UI uses the variables, never literal colors. lightweight-charts takes colors in JavaScript, so charts will need to read the variables and redraw when the theme changes.
+- Theme (D-35): the choice is saved as `theme.json` in Electron's userData folder (`%APPDATA%\gui` when run from source). `main.css` keeps every color in `:root` variables, dark by default and light under `prefers-color-scheme: light`; new UI uses the variables, never literal colors. lightweight-charts takes colors in JavaScript, so the chart (D-54) reads the variables and applies them again when `prefers-color-scheme` changes. Its canvases are layered with `z-index`, so anything meant to cover the chart needs the chart's container to be a stacking context of its own (`isolation: isolate`); without it the chart drew over its note (2026-10-28).
 - Screen checks over the DevTools protocol: while the window is behind other windows, `document.visibilityState` is `hidden` and Chromium doesn't repaint, so a Win32 window capture (`PrintWindow`) shows the last painted frame while the title bar is current (2026-10-16). Take a `Page.captureScreenshot` first, which forces a paint. To catch an animation mid-way, slow it with `Animation.setPlaybackRate` in the same DevTools session.
 - Electron 39's built-in `WebSocket` (main process, checked 2026-10-16) differs from Node 24's:
   - A refused connection fires `error` and never `close`, so the client treats either event as the end of the connection.

@@ -13,7 +13,7 @@ runs (D-47): one symbol at a time, only while that symbol is flat, saved to `sym
 before the engine acts on it, and without touching the other symbols. They also pause one
 symbol, close its position and pause it, or resume it (D-50); the pause is saved with the
 symbol, so a restart keeps it, and the other symbols keep trading. They also get the last 7
-days' trades, read from the exchange (D-51).
+days' trades, read from the exchange (D-51), and each strategy's candles for a chart (D-54).
 
 Only one engine process runs at a time (D-31). Stop it with Ctrl+C or a client's
 `stop_engine` command (D-34).
@@ -37,6 +37,7 @@ from quantdeck_engine.binance.user_stream import (
     UserEvent,
     UserStreamConnected,
 )
+from quantdeck_engine.chart import CandleChart
 from quantdeck_engine.config import (
     MAX_SYMBOLS,
     Settings,
@@ -307,6 +308,14 @@ class Engine:
         """The last 7 days' trades clients see (D-51); None until first read."""
         return self.history.payload
 
+    def candles(self) -> dict[str, dict[str, Any]]:
+        """Each strategy's closed candles for clients' charts (D-54), by symbol."""
+        return {
+            symbol: payload
+            for symbol, runner in self.runners.items()
+            if runner.chart is not None and (payload := runner.chart.payload) is not None
+        }
+
     def on_event(self, event: UserEvent) -> None:
         # D-30: events sent while disconnected are lost, and funding changes today's loss.
         if isinstance(event, UserStreamConnected) or (
@@ -485,12 +494,14 @@ async def warmed_up_runner(
     forward_dir: Path,
 ) -> StrategyRunner:
     """A symbol's strategy with its warm-up candles loaded (D-43); its first decision, on the
-    latest of them, comes once it runs."""
+    latest of them, comes once it runs. Its feed also fills the symbol's chart (D-54)."""
+    chart = CandleChart(trader.symbol, strategy.interval)
     runner = StrategyRunner(
         strategy.build(),
         trader,
-        ClosedCandleFeed(client, ws_root, trader.symbol, strategy.interval),
+        ClosedCandleFeed(client, ws_root, trader.symbol, strategy.interval, chart=chart),
         ForwardRecord(forward_record_path(forward_dir, trader.symbol, strategy)),
+        chart=chart,
     )
     await runner.warm_up()
     return runner

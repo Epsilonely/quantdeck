@@ -21,7 +21,8 @@ const engine: EngineApi = {
   onLogs: (listener) => subscribe('engine:logs', listener),
   onLaunch: (listener) => subscribe('engine:launch', listener),
   onCatalog: (listener) => subscribe('engine:catalog', listener),
-  onTrades: (listener) => subscribe('engine:trades', listener)
+  onTrades: (listener) => subscribe('engine:trades', listener),
+  onCandles: (listener) => subscribe('engine:candles', listener)
 }
 
 const theme: ThemeApi = {

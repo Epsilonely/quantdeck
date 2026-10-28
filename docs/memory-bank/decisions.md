@@ -2,7 +2,7 @@
 
 Design decisions and why they were made. Add new entries at the bottom. When a decision is reversed, mark the old entry `Superseded by D-XX` instead of deleting it.
 
-The backtest and the strategy search (D-37 to D-41, D-44 to D-46) are in `strategyResearch.md`. The two files share one numbering: a new entry takes the next number after the highest in either file and goes at the bottom of the file for its area.
+The backtest and the strategy search (D-37 to D-41, D-44 to D-46, D-52) are in `strategyResearch.md`. The two files share one numbering: a new entry takes the next number after the highest in either file and goes at the bottom of the file for its area.
 
 Safety rules (`reduceOnly`, exchange-side stops, kill switch, key handling, …) live in CLAUDE.md, not here.
 
@@ -469,3 +469,21 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - A reload loses the request the page was showing, and a page that can't answer would leave an empty view over the whole window, taking every click.
 - **Alternatives:** #7's option A as written (a frameless transparent window over the main one); option B (a React modal in the main page); keeping the native box.
 - **Date:** 2026-10-26
+
+## D-54 The GUI charts each strategy's candles, which the engine sends from the strategy's own feed
+
+- **Decision:**
+  - **Screen:** one chart under the symbol table shows one of the engine's symbols, picked by a tab per symbol or a click on its table row (GitHub issue #34). Its interval is the symbol's strategy's; a symbol without a strategy gets a note instead. On it: the candles, the position's entry price (a solid line in the long or short color), each exchange-side stop (a dashed line), and a marker per fill from the last 7 days' trades (D-51) on the candle it fell in, colored by role as in the trades panel. The library is lightweight-charts, bundled in the renderer, with its attribution logo on, as its Apache-2.0 license asks. The mouse wheel scrolls the page; dragging pans the chart and dragging an axis zooms.
+  - **Source:** the strategy's closed-candle feed (D-42) fills a chart per symbol. Its warm-up loads 300 closed candles, or the strategy's warm-up if more, in the same request; each candle it hands out joins them; and it keeps the kline stream's latest update of the forming candle, which the strategy never sees, and drops it when the stream stops.
+  - **Protocol:** a new engine → client message `candles`, one per symbol with a strategy: its whole list of closed candles, sent on connect and whenever that list changes (a close, a new strategy). The forming candle rides in the state as `strategy.forming_candle`, updated at most once a second. Shapes in `techContext.md`; the protocol version stays 1.
+  - **Display only:** nothing reads the chart back, and the GUI turns prices into numbers only to draw them.
+- **Why:**
+  - The user asked (2026-10-27) for charts of their own coins only, on the interval each is registered with, showing their entry price.
+  - Candles from the engine: the GUI makes no exchange calls (D-08), and testnet prices differ from mainnet's by up to about 0.1% (`binanceNotes.md`), so a chart from elsewhere wouldn't line up with the entry and stop lines.
+  - From the strategy's feed rather than a stream of the chart's own: no second kline connection per symbol, and the chart's closed candles are exactly the ones the strategy decided on.
+  - A whole list per symbol, as the trades are sent (D-51), so a reconnect or a missed message can't leave a client out of step (D-33); the list changes once a candle, so sending it whole costs little. The forming candle changes several times a second, and the state already goes out about once a second.
+  - One chart with tabs: up to 10 symbols would leave each of a grid too small to read its price lines.
+  - The wheel: the chart sits in the scrolling main column, and a chart that zoomed on the wheel trapped the page's scroll (browser pane, 2026-10-28).
+- **Limitations:** the candles are last-price candles while stops trigger on the mark price (D-18), so a candle can touch a stop line without the stop firing, and the reverse; the legend's tooltip says so. Markers reach back 7 days only. A strategy stopped by an error (D-43) stops its chart too. After a reconnect near a close, a closed candle can reach the chart up to a minute late (D-42), while the forming candle already shows the next one.
+- **Alternatives:** a kline stream per symbol for the chart alone, which would also chart symbols without a strategy; the GUI reading Binance's public klines; a grid of small charts; the closed candles in the state; the strategies' indicator lines (Donchian channel, Bollinger bands), left for later since the engine would have to send their values.
+- **Date:** 2026-10-28

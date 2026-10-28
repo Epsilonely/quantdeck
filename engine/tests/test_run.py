@@ -397,7 +397,8 @@ async def test_strategy_warms_up_at_startup_and_shows_in_the_snapshot(
     engine = await start(exchange, store, symbol_store, symbols, forward_dir=tmp_path)
 
     (warm_up,) = exchange.calls("GET", "/fapi/v1/klines")
-    assert (warm_up["interval"], warm_up["limit"]) == ("4h", "6")  # 4 candles and 2 spare
+    # The chart's 300 candles (D-54), more than the strategy's 4, and 2 spare.
+    assert (warm_up["interval"], warm_up["limit"]) == ("4h", "302")
     runner = engine.runners["BTCUSDT"]
     assert runner._record is not None
     assert runner._record.path == tmp_path / "BTCUSDT_4h_donchian_entry_period=3_exit_period=2.csv"
@@ -408,6 +409,7 @@ async def test_strategy_warms_up_at_startup_and_shows_in_the_snapshot(
         "last_candle": None,
         "last_signal": None,
         "stopped": None,
+        "forming_candle": None,
     }
 
     last = kline_from_row(exchange.klines[-2], "BTCUSDT", "4h")
@@ -429,6 +431,42 @@ async def test_strategy_warms_up_at_startup_and_shows_in_the_snapshot(
             "outcome": "entered 0.083 at ~60000",
         },
         "stopped": "RuntimeError: a bug",
+        "forming_candle": None,
+    }
+
+
+async def test_each_strategys_chart_candles_and_forming_candle(
+    store: HaltStore, symbol_store: SymbolStore
+) -> None:
+    # D-54
+    exchange = with_klines(FakeExchange(other_symbols={"ETHUSDT": 5}))
+    symbols = {"BTCUSDT": BTC_DONCHIAN, "ETHUSDT": SymbolConfig("ETHUSDT", 5)}
+    engine = await start(exchange, store, symbol_store, symbols)
+
+    # Every closed warm-up candle, more than the strategy's 4; none for a symbol without one.
+    (chart,) = engine.candles().values()
+    assert (chart["symbol"], chart["interval"]) == ("BTCUSDT", "4h")
+    assert len(chart["candles"]) == 6
+    assert chart["candles"][-1] == {
+        "open_time": "2026-10-14T12:00:00+00:00",
+        "open": "60000",
+        "high": "60100",
+        "low": "59900",
+        "close": "60050",
+    }
+    assert engine.candles()["BTCUSDT"] is chart  # the same object until it changes
+
+    runner = engine.runners["BTCUSDT"]
+    assert runner.chart is not None
+    row = [OPEN_NOW, "60050", "60300", "60000", "60200", "1", OPEN_NOW + STEP - 1]
+    runner.chart.set_forming(kline_from_row(row, "BTCUSDT", "4h"))
+    forming = engine.snapshot()["symbols"][0]["strategy"]["forming_candle"]
+    assert forming == {
+        "open_time": "2026-10-14T16:00:00+00:00",
+        "open": "60050",
+        "high": "60300",
+        "low": "60000",
+        "close": "60200",
     }
 
 

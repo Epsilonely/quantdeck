@@ -7,6 +7,7 @@ The shape is recorded in docs/memory-bank/techContext.md.
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from quantdeck_engine.chart import candle_values
 from quantdeck_engine.config import StrategyConfig
 from quantdeck_engine.times import iso_utc
 from quantdeck_engine.trading.state import SymbolState
@@ -147,6 +148,7 @@ def _strategy(
         return None
     candle = None if runner is None else runner.last_candle
     signal = None if runner is None else runner.last_signal
+    forming = None if runner is None or runner.chart is None else runner.chart.forming()
     return {
         "name": config.name,
         "interval": config.interval,
@@ -165,4 +167,6 @@ def _strategy(
             "outcome": signal.outcome,
         },
         "stopped": None if runner is None else runner.stopped,
+        # The chart's candle still forming (D-54); its closed candles go in `candles`.
+        "forming_candle": None if forming is None else candle_values(forming),
     }

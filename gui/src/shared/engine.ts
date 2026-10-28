@@ -68,6 +68,15 @@ export interface StrategySignal {
   outcome: string // the engine's text, as in its forward test record
 }
 
+// A candle on a chart (D-54): prices as text, like every amount.
+export interface ChartCandle {
+  open_time: string
+  open: string
+  high: string
+  low: string
+  close: string
+}
+
 // A symbol's strategy (D-47) and what it last did (D-43). Engines before 2026-10-20 had one
 // strategy for every symbol and don't send name, interval, or params here.
 export interface SymbolStrategy {
@@ -77,6 +86,9 @@ export interface SymbolStrategy {
   last_candle: { open_time: string; close: string } | null // the last candle decided on
   last_signal: StrategySignal | null
   stopped: string | null // why this symbol's strategy stopped
+  // The chart's candle still forming on the strategy's interval (D-54); null before the stream
+  // sends one. Engines before 2026-10-28 don't send it.
+  forming_candle?: ChartCandle | null
 }
 
 export interface SymbolState {
@@ -136,6 +148,15 @@ export interface RecentTrades {
   asset: string // the margin asset, which realized PnL is in
   totals: { realized_pnl: string; fees: Record<string, string> }
   trades: TradeRow[]
+}
+
+// A `candles` message (D-54): one symbol's last closed candles on its strategy's interval,
+// oldest first, the candles the strategy decided on. Sent per symbol with a strategy when a
+// client connects and whenever that list changes. Engines before 2026-10-28 never send it.
+export interface SymbolCandles {
+  symbol: string
+  interval: string
+  candles: ChartCandle[]
 }
 
 // What `set_symbol` accepts, sent with `welcome` (D-48). Engines before 2026-10-20 don't send
@@ -237,6 +258,7 @@ export interface EngineSnapshot {
   logs: LogRecord[]
   catalog: StrategyCatalog | null // from the last welcome; null if that engine sent none
   trades: RecentTrades | null // null until this connection's engine sends them
+  candles: Record<string, SymbolCandles> // by symbol; empty until this connection's engine sends them
 }
 
 export interface EngineApi {
@@ -251,4 +273,5 @@ export interface EngineApi {
   onLaunch(listener: (launch: LaunchState) => void): () => void
   onCatalog(listener: (catalog: StrategyCatalog | null) => void): () => void
   onTrades(listener: (trades: RecentTrades | null) => void): () => void
+  onCandles(listener: (candles: Record<string, SymbolCandles>) => void): () => void
 }

@@ -5,9 +5,10 @@
 - A client's first message must be `{"type": "hello", "token": ...}`; anything else closes
   the connection. Connections with an `Origin` header (browsers) are refused at the handshake.
 - After the hello the client gets `welcome` (with the catalog of what `set_symbol` accepts,
-  D-48), the recent log records, the whole state, and the last 7 days' trades (D-51) once
-  the engine has read them. The state and the trades are sent again whenever they change,
-  and log records as they happen.
+  D-48), the recent log records, the whole state, the last 7 days' trades (D-51) once the
+  engine has read them, and one `candles` message per symbol with a strategy (D-54). The
+  state, the trades, and each symbol's candles are sent again whenever they change, and log
+  records as they happen.
 - Commands are `{"type": "command", "id": ..., "name": ..., "args": {...}}`; the reply is a
   `result` with the same `id`. Names: `emergency_close` (the kill switch, D-27),
   `lift_halt`, `stop_engine` (D-34), `set_symbol` and `remove_symbol` (D-47), and
@@ -62,6 +63,11 @@ class EngineControl(Protocol):
     def trades(self) -> dict[str, Any] | None:
         """The last 7 days' trades as JSON-ready values (D-51), or None until first read.
         The same object until the list changes."""
+        ...
+
+    def candles(self) -> dict[str, dict[str, Any]]:
+        """Each strategy's closed candles for a chart (D-54), by symbol. The same object per
+        symbol until its list changes."""
         ...
 
     async def emergency_close(self) -> bool:
@@ -149,10 +155,12 @@ class LogBuffer(logging.Handler):
 class _Client:
     conn: ServerConnection
     outbox: asyncio.Queue[str] = field(default_factory=lambda: asyncio.Queue(OUTBOX_LIMIT))
-    # The last state and trades queued for this client. Kept per client: one that connects
-    # before a publish round has seen a change gets it on connect, and not again from that round.
+    # The last state, trades, and candles queued for this client. Kept per client: one that
+    # connects before a publish round has seen a change gets it on connect, and not again from
+    # that round.
     state: str | None = None
     trades: str | None = None
+    candles: dict[str, str] = field(default_factory=dict)  # by symbol
 
 
 class ClientServer:
@@ -177,6 +185,7 @@ class ClientServer:
         )
         self._clients: set[_Client] = set()
         self._trades: tuple[object, str] | None = None  # the engine's trades and their message
+        self._candles: dict[str, tuple[object, str]] = {}  # likewise, by symbol
         self.port: int | None = None
         self.listening = asyncio.Event()
 
@@ -211,6 +220,9 @@ class ClientServer:
         client.trades = self._trades_message()
         if client.trades is not None:
             client.outbox.put_nowait(client.trades)
+        client.candles = self._candles_messages()
+        for message in client.candles.values():
+            client.outbox.put_nowait(message)
         writer = asyncio.create_task(self._write(client))
         logger.info("Client connected (%d connected)", len(self._clients))
         try:
@@ -353,6 +365,16 @@ class ClientServer:
                     if trades is not None and client.trades is not trades:
                         client.trades = trades
                         _offer(client, trades)
+            try:
+                candles = self._candles_messages()
+            except Exception:
+                logger.exception("Could not build the candles for clients")
+            else:
+                for client in list(self._clients):
+                    for symbol, message in candles.items():
+                        if client.candles.get(symbol) is not message:
+                            _offer(client, message)
+                    client.candles = candles
             await asyncio.sleep(self._publish_interval)
 
     def _state_message(self) -> str:
@@ -366,6 +388,18 @@ class ClientServer:
         if self._trades is None or self._trades[0] is not trades:
             self._trades = (trades, _dumps({"type": "trades", **trades}))
         return self._trades[1]
+
+    def _candles_messages(self) -> dict[str, str]:
+        """By symbol, each encoded once per list as the trades are. A symbol that loses its
+        strategy drops out; clients then stop showing its chart."""
+        encoded = {}
+        for symbol, candles in self._engine.candles().items():
+            cached = self._candles.get(symbol)
+            if cached is None or cached[0] is not candles:
+                cached = (candles, _dumps({"type": "candles", **candles}))
+            encoded[symbol] = cached
+        self._candles = encoded
+        return {symbol: message for symbol, (_, message) in encoded.items()}
 
     def _post_log(self, entry: dict[str, str]) -> None:
         self._post(_dumps({"type": "logs", "records": [entry]}))

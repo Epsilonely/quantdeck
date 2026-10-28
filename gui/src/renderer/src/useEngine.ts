@@ -5,7 +5,8 @@ import type {
   LaunchState,
   LogRecord,
   RecentTrades,
-  StrategyCatalog
+  StrategyCatalog,
+  SymbolCandles
 } from '../../shared/engine'
 
 const LOG_CAPACITY = 1000
@@ -17,6 +18,7 @@ export interface EngineView {
   logs: LogRecord[]
   catalog: StrategyCatalog | null // what set_symbol accepts (D-48); null from older engines
   trades: RecentTrades | null // the last 7 days' trades (D-51); null until sent
+  candles: Record<string, SymbolCandles> // each strategy's chart candles (D-54), by symbol
 }
 
 export function useEngine(): EngineView {
@@ -26,6 +28,7 @@ export function useEngine(): EngineView {
   const [launch, setLaunch] = useState<LaunchState>({ phase: 'idle', message: null })
   const [catalog, setCatalog] = useState<StrategyCatalog | null>(null)
   const [trades, setTrades] = useState<RecentTrades | null>(null)
+  const [candles, setCandles] = useState<Record<string, SymbolCandles>>({})
 
   useEffect(() => {
     const { engine } = window.api
@@ -37,6 +40,7 @@ export function useEngine(): EngineView {
       engine.onLaunch(setLaunch),
       engine.onCatalog(setCatalog),
       engine.onTrades(setTrades),
+      engine.onCandles(setCandles),
       engine.onLogs((update) =>
         setLogs((shown) =>
           update.reset ? update.records : [...shown, ...update.records].slice(-LOG_CAPACITY)
@@ -52,6 +56,7 @@ export function useEngine(): EngineView {
       setLogs(snapshot.logs)
       setCatalog(snapshot.catalog)
       setTrades(snapshot.trades)
+      setCandles(snapshot.candles)
     })
     return () => {
       active = false
@@ -59,5 +64,5 @@ export function useEngine(): EngineView {
     }
   }, [])
 
-  return { status, launch, state, logs, catalog, trades }
+  return { status, launch, state, logs, catalog, trades, candles }
 }
