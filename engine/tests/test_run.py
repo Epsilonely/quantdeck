@@ -299,6 +299,24 @@ async def test_checker_runs_at_start_and_once_for_requests_close_together() -> N
         task.cancel()
 
 
+async def test_the_startup_check_stands_in_for_the_checkers_first(
+    store: HaltStore, symbol_store: SymbolStore
+) -> None:
+    engine = await start(FakeExchange(), store, symbol_store)
+    assert engine.checker.latest is not None  # read by the guard at startup
+    guard = CountingGuard()
+    checker = RiskChecker(guard, interval=60, delay=0)  # type: ignore[arg-type]
+    checker.latest = engine.checker.latest
+    task = asyncio.create_task(checker.run())
+    try:
+        await asyncio.sleep(0.01)
+        assert guard.calls == 0
+        checker.request()  # the stream connected
+        await until(lambda: guard.calls == 1)
+    finally:
+        task.cancel()
+
+
 async def test_checker_runs_every_interval_without_requests() -> None:
     guard = CountingGuard()
     checker = RiskChecker(guard, interval=0.01)  # type: ignore[arg-type]
@@ -342,7 +360,12 @@ async def test_snapshot_of_a_protected_position(
     assert snapshot["started_at"] == iso_utc(engine.started_at)
     assert "strategy" not in snapshot  # per symbol since D-47
     assert snapshot["halt"] == {"halted": False, "reason": None, "since": None}
-    assert snapshot["daily_loss"] is None  # until the first check
+    # From the startup check, so a client sees it before the checker's first.
+    assert {k: snapshot["daily_loss"][k] for k in ("base", "loss", "limit")} == {
+        "base": "5000",
+        "loss": "0",
+        "limit": "150",
+    }
     assert snapshot["balances"] == {"USDT": "5000"}
     (symbol,) = snapshot["symbols"]
     assert symbol["symbol"] == "BTCUSDT" and symbol["halted"] is None

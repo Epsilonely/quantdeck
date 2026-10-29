@@ -540,7 +540,7 @@ async def start_engine(
     account = await build_account(client, trading, store, symbols.values())
     for trader in account.traders:
         await trader.prepare()
-    await account.guard.start()
+    daily = await account.guard.start()
     runners = {}
     for trader in account.traders:
         strategy = symbols[trader.symbol].strategy
@@ -548,7 +548,7 @@ async def start_engine(
             runners[trader.symbol] = await warmed_up_runner(
                 client, settings.endpoints.ws, trader, strategy, forward_dir
             )
-    return Engine(
+    engine = Engine(
         client,
         settings.endpoints.ws,
         trading,
@@ -560,6 +560,10 @@ async def start_engine(
         paused=paused,
         forward_dir=forward_dir,
     )
+    # The startup check just read today's loss: clients see it at once, and the checker
+    # doesn't read it again before the stream connects (D-30).
+    engine.checker.latest = daily
+    return engine
 
 
 async def run_engine(settings: Settings, trading: TradingConfig) -> None:

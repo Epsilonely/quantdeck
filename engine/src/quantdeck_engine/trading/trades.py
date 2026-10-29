@@ -301,6 +301,9 @@ class TradeHistory:
     def _publish(self, now: int) -> None:
         since = now - WINDOW_MS
         fills = [f for fills in self._fills.values() for f in fills if f.time_ms >= since]
+        # An order whose fills have all left the window won't be shown again.
+        shown = {(f.symbol, f.order_id) for f in fills}
+        self._roles = {key: role for key, role in self._roles.items() if key in shown}
         payload = trades_payload(order_trades(fills, self._roles), self._asset)
         if payload != self.payload:
             self.payload = payload

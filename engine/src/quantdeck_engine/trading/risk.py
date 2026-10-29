@@ -136,16 +136,16 @@ class RiskGuard:
     def halted(self) -> bool:
         return self.halt_reason is not None
 
-    async def start(self) -> None:
-        """Startup, after each trader's `prepare` (D-27).
+    async def start(self) -> DailyLoss | None:
+        """Startup, after each trader's `prepare` (D-27). Returns today's loss, which it
+        reads unless a halt record starts the engine halted.
 
         A halt record, or a loss already at the limit, starts the engine halted, and every
         symbol is flattened again in case an earlier kill switch couldn't finish.
         """
         record = self._store.load()
         if record is None:
-            await self.check()
-            return
+            return await self.check()
         self._recorded = True
         self.halt_reason = record.reason
         self.halted_at = record.halted_at or None
@@ -157,6 +157,7 @@ class RiskGuard:
         )
         async with self._kill_lock:
             await self._flatten()
+        return None
 
     async def daily_loss(self) -> DailyLoss:
         base = await self._base.get()
@@ -377,7 +378,8 @@ def _log_kill_failure(task: asyncio.Task[bool]) -> None:
 
 class RiskChecker:
     """Runs the guard's check (D-30): once at start, a few seconds after each request, and
-    every minute regardless. Requests that arrive close together share one check."""
+    every minute regardless. Requests that arrive close together share one check. A `latest`
+    set before it runs, the guard's startup check, stands in for the first check."""
 
     def __init__(
         self,
@@ -403,15 +405,21 @@ class RiskChecker:
         self._wake.set()
 
     async def run(self) -> None:
+        if self.latest is None:
+            await self._check()
         while True:
-            self._wake.clear()
-            try:
-                self.latest = await self._guard.check()
-            except REQUEST_ERRORS as e:
-                logger.warning("Risk check failed (%s); trying again at the next check", e)
             try:
                 async with asyncio.timeout(self._interval):
                     await self._wake.wait()
             except TimeoutError:
-                continue
-            await self._sleep(self._delay)
+                pass
+            else:
+                await self._sleep(self._delay)
+            await self._check()
+
+    async def _check(self) -> None:
+        self._wake.clear()
+        try:
+            self.latest = await self._guard.check()
+        except REQUEST_ERRORS as e:
+            logger.warning("Risk check failed (%s); trying again at the next check", e)

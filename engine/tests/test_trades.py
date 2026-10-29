@@ -235,6 +235,7 @@ async def test_fills_leave_the_list_as_the_window_moves() -> None:
     now[0] += 2 * DAY_MS
     await trades.refresh(["ETHUSDT"])  # BTCUSDT isn't read again, but its fill is too old now
     assert rows(trades) == []
+    assert trades._roles == {}  # nor is its order's role kept
 
 
 async def test_nothing_is_shown_until_every_symbol_is_read() -> None:

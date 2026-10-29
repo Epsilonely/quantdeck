@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   CandlestickSeries,
   ColorType,
@@ -155,6 +155,20 @@ function chartFills(
     .filter((row) => row.symbol === symbol && chartTime(row.time) >= times[0])
     .sort((a, b) => chartTime(a.time) - chartTime(b.time))
     .map((row) => ({ row, bar: barAt(times, chartTime(row.time)) }))
+}
+
+/** `chartFills`, found again when a bar is added or the trades change, not on every state
+ * message. */
+function useChartFills(
+  trades: RecentTrades | null,
+  symbol: string,
+  closed: SymbolCandles | null,
+  formingOpen: string | null
+): ChartFill[] {
+  return useMemo(
+    () => chartFills(trades, symbol, barTimes(closed, formingOpen)),
+    [trades, symbol, closed, formingOpen]
+  )
 }
 
 interface Dot {
@@ -339,12 +353,8 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
 
   const formingOpen = forming?.open_time ?? null
   const linesKey = JSON.stringify(priceLines(symbol))
-  const hovered =
-    hover === null
-      ? []
-      : chartFills(trades, selected, barTimes(closed, formingOpen)).filter(
-          (fill) => fill.bar === hover.bar
-        )
+  const fills = useChartFills(trades, selected, closed, formingOpen)
+  const hovered = hover === null ? [] : fills.filter((fill) => fill.bar === hover.bar)
 
   useEffect(() => {
     const element = container.current
@@ -521,9 +531,8 @@ function ChartPanel({ symbols, candles, trades, selected, onSelect }: Props): Re
 
   // Placed again when a bar is added, not with every update of the forming one.
   useEffect(() => {
-    const fills = chartFills(trades, selected, barTimes(closed, formingOpen))
     parts.current?.dots.set(fillDots(fills, palette))
-  }, [trades, selected, closed, formingOpen, palette])
+  }, [fills, palette])
 
   // A range button also fits the prices again, as an axis dragged before would have left them.
   function showBars(bars: number | null): void {

@@ -240,6 +240,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Why:** The exchange stays the only source (D-06): no events missed while the stream is disconnected, no double counting when a resync replays events, no separate handling for commission assets or funding events. The cost is weight 30 per read (one page holds 1000 records), small next to the 2400 per minute limit at a few reads a minute.
 - **Trade-off:** If income records appear some time after a fill, a check right after a stop-out can miss it; the periodic check catches it. The trial measures the delay: 1.1 s on testnet (2026-10-16, one sample, `binanceNotes.md`), so the periodic check backs up the post-close check rather than being its main path.
 - **Alternatives:** Add `rp` and `n` from `ORDER_TRADE_UPDATE` and funding from `ACCOUNT_UPDATE` as events arrive, with income history only at startup and after reconnects.
+- **Note (2026-10-29, GitHub issue #40):** At startup the kill switch's own startup check (D-27) stands in for the trading loop's first check, so today's loss is read once rather than twice before the stream connects, and clients see it from the first state. The check after the stream connects still runs, since a fill can come between the startup read and the connection.
 - **Date:** 2026-10-16
 
 ## D-31 `quantdeck-engine run` is the long-running engine, built before any strategy
