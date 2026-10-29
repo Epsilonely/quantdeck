@@ -407,6 +407,11 @@ table.symbols td button.small {
   margin-top: 4px;
 }
 
+/* A narrow column would otherwise break a name like donchian-atr-adx at its hyphens. */
+table.symbols .strategy-name {
+  white-space: nowrap;
+}
+
 table.symbols tr.editing td {
   background: var(--bg-raised);
 }
@@ -550,9 +555,34 @@ h3 {
   font-weight: 400;
   line-height: 1.5;
   text-align: left;
-  /* Hangul breaks between words, not inside them. */
+  /* Hangul breaks between words, not inside them. The tip sits inside its anchor, so it wraps
+     even where the anchor's text doesn't. */
   word-break: keep-all;
+  white-space: normal;
   pointer-events: none;
+}
+
+/* Text with a tip of more than help, such as a strategy's name whose tip lists its parameters. */
+.has-tip {
+  text-decoration: underline dotted var(--text-muted);
+  text-underline-offset: 3px;
+  cursor: help;
+}
+
+.has-tip:focus-visible {
+  outline: 2px solid var(--info);
+  outline-offset: 1px;
+}
+
+/* A strategy's parameters in a tip: the names, and the values right-aligned beside them. */
+.tip-params {
+  display: grid;
+  grid-template-columns: auto auto;
+  column-gap: 14px;
+}
+
+.tip-params > :nth-child(even) {
+  text-align: right;
 }
 
 /* The chart (D-54), under the symbol table: a tab per symbol, the chart, and a legend. */

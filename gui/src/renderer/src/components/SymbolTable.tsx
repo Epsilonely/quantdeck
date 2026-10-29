@@ -1,3 +1,4 @@
+import { Fragment } from 'react'
 import type {
   SignalResult,
   StrategyAction,
@@ -7,6 +8,7 @@ import type {
 } from '../../../shared/engine'
 import { paramsText } from '../../../shared/strategy'
 import { dateTime, isNegative, pnlClass, shortDateTime, signed } from '../format'
+import { Tip } from './HelpTip'
 
 // What a row's buttons send (D-50).
 export type RowCommand = 'pause_symbol' | 'close_symbol' | 'resume_symbol'
@@ -54,10 +56,26 @@ function carriedOut(signal: StrategySignal): boolean {
   return !signal.result || signal.result === 'entered' || signal.result === 'closed'
 }
 
-// The symbol's leverage and strategy setting (D-47), with every parameter below it.
+// A strategy's parameters, one per line.
+function ParamList({ params }: { params: Record<string, string> }): React.JSX.Element {
+  return (
+    <span className="tip-params">
+      {Object.entries(params).map(([key, value]) => (
+        <Fragment key={key}>
+          <span className="muted">{key}</span>
+          <span>{value}</span>
+        </Fragment>
+      ))}
+    </span>
+  )
+}
+
+// The symbol's leverage and strategy setting (D-47). The parameters show on hover, since a line of
+// them widened the column past the others.
 function Setting({ symbol }: { symbol: SymbolState }): React.JSX.Element {
   const strategy = symbol.strategy
-  const params = paramsText(strategy?.params ?? {})
+  const params = strategy?.params ?? {}
+  const name = strategy && `${strategy.name} ${strategy.interval}`
   return (
     <>
       {symbol.leverage !== undefined && <div>{symbol.leverage}x</div>}
@@ -66,9 +84,18 @@ function Setting({ symbol }: { symbol: SymbolState }): React.JSX.Element {
           전략 없음
         </span>
       ) : strategy.name ? (
-        <div>
-          {strategy.name} {strategy.interval}
-          {params && <div className="muted">{params}</div>}
+        <div className="strategy-name">
+          {Object.keys(params).length > 0 ? (
+            <Tip
+              tip={<ParamList params={params} />}
+              className="has-tip"
+              aria-label={`${name} (${paramsText(params)})`}
+            >
+              {name}
+            </Tip>
+          ) : (
+            name
+          )}
         </div>
       ) : (
         <span className="muted">—</span>
