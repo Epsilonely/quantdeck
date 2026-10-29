@@ -1,3 +1,4 @@
+import logging
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
@@ -8,11 +9,13 @@ from fake_exchange import BRACKETS
 from quantdeck_engine.backtest.data import FundingRate
 from quantdeck_engine.backtest.report import (
     by_year,
+    format_grid,
     format_report,
     longest_losing_streak,
     max_drawdown_percent,
     summarize,
 )
+from quantdeck_engine.backtest.run import BacktestFailed, _settings, strategies_for
 from quantdeck_engine.backtest.simulator import Costs, LimitEntries, Market, Simulator
 from quantdeck_engine.binance.streams import Kline
 from quantdeck_engine.config import TradingConfig
@@ -223,6 +226,44 @@ def test_report_numbers() -> None:
     assert max_drawdown_percent(result.equity) == Decimal(1)
     assert by_year(result) == {2026: (1, Decimal(-100), Decimal(-1))}
     assert longest_losing_streak([]) == 0
+
+
+def test_settings_of_a_grid_are_told_apart_by_what_differs(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    params = ["entry_period=10,20", "exit_period=5,15"]
+    with caplog.at_level(logging.WARNING):
+        strategies = strategies_for("donchian", "4h", params)
+    # exit_period=15 is longer than entry_period=10, which the strategy refuses.
+    assert "Leaving out entry_period=10 exit_period=15" in caplog.text
+    common, labels = _settings(strategies)
+    assert common == "DonchianBreakout(4h)"
+    assert labels == [
+        "entry_period=10 exit_period=5",
+        "entry_period=20 exit_period=5",
+        "entry_period=20 exit_period=15",
+    ]
+    common, labels = _settings(strategies_for("donchian", "4h", ["entry_period=10,20"]))
+    assert (common, labels) == (
+        "DonchianBreakout(4h, exit_period=10)",
+        ["entry_period=10", "entry_period=20"],
+    )
+    with pytest.raises(BacktestFailed, match="refused every setting"):
+        strategies_for("donchian", "4h", ["entry_period=5", "exit_period=10,20"])
+
+
+def test_grid_report_has_a_line_per_setting() -> None:
+    candles = [flat(0), flat(1), candle(2, "100", "100", "89", "90")]
+    _, simulator = simulate({0: Enter(Side.LONG, Decimal(95))}, candles)
+    summary = summarize(simulator._result)
+    report = format_grid("title", [("k=1", summary), ("k=22", summary)])
+    lines = report.splitlines()
+    assert lines[0] == "title"
+    assert lines[1].split() == [
+        "setting", "trades", "win", "exp", "R", "return", "max", "DD", "streak", "limit", "days"
+    ]  # fmt: skip
+    assert lines[2].split() == ["k=1", "1", "0.0%", "-1.000", "-1.0%", "1.0%", "1", "0"]
+    assert lines[3].startswith("  k=22 ")
 
 
 # Market entries are unchanged by the limit entry model (D-45)

@@ -19,6 +19,7 @@ from quantdeck_engine.backtest.run import (
     fetch_market,
     leverage_for,
     run_backtest,
+    strategies_for,
 )
 from quantdeck_engine.backtest.simulator import Costs
 from quantdeck_engine.binance.rest import REQUEST_ERRORS, UnknownSymbol
@@ -28,12 +29,7 @@ from quantdeck_engine.lock import EngineAlreadyRunning
 from quantdeck_engine.logs import setup_logging
 from quantdeck_engine.run import RunFailed, run_engine
 from quantdeck_engine.startup import StartupFailed
-from quantdeck_engine.strategy.registry import (
-    STRATEGIES,
-    StrategyError,
-    make_strategy,
-    parse_parameters,
-)
+from quantdeck_engine.strategy.registry import STRATEGIES, StrategyError
 from quantdeck_engine.symbols import SymbolStore, load_symbols
 from quantdeck_engine.trading.executor import OrderOutcomeUnclear, TradingHalted
 from quantdeck_engine.trading.halt import HaltStore
@@ -73,7 +69,12 @@ def main() -> None:
     backtest.add_argument("--start", type=date.fromisoformat, default=date(2020, 1, 1))
     backtest.add_argument("--end", type=date.fromisoformat, default=yesterday)
     backtest.add_argument(
-        "--param", action="append", default=[], metavar="KEY=VALUE", help="strategy parameter"
+        "--param",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="strategy parameter; values separated by commas run every combination, "
+        "one line each, over the same data",
     )
     backtest.add_argument("--balance", type=Decimal, default=Decimal(5000), help="USDT")
     backtest.add_argument("--fee", type=Decimal, default=Decimal("0.0005"), help="taker fee")
@@ -134,15 +135,14 @@ def main() -> None:
     if args.command == "backtest":
         symbol = args.symbol.upper()
         try:
-            params = parse_parameters(args.strategy, args.param)
-            strategy = make_strategy(args.strategy, args.interval, params)
+            strategies = strategies_for(args.strategy, args.interval, args.param)
             # Read only: a backtest never creates symbols.json (D-47).
             symbols = load_symbols(SymbolStore(), trading, create=False)
             leverage = leverage_for(symbols, symbol, args.leverage)
             market = asyncio.run(fetch_market(settings, symbol, leverage))
             costs = Costs(args.fee, args.slippage, args.stop_slippage, args.maker_fee)
             report = run_backtest(
-                strategy,
+                strategies,
                 symbol,
                 args.start,
                 args.end,

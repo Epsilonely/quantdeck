@@ -17,9 +17,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from decimal import Decimal
 
-from quantdeck_engine.binance.streams import INTERVAL_MS, Kline
+from quantdeck_engine.binance.streams import Kline
 from quantdeck_engine.strategy.base import Action, ChartLine, Enter, Exit, Position, parameter
-from quantdeck_engine.times import DAY_MS
+from quantdeck_engine.strategy.indicators import BarBuilder, mean_and_deviation
 from quantdeck_engine.trading.rules import Side
 
 
@@ -38,30 +38,19 @@ class MoveFade:
         "봉이 마감하면 청산합니다.",
     )
     lookback: int = parameter(120, "σ(묶음 봉 수익률의 표준편차)를 계산하는 직전 묶음 봉의 개수.")
-    _step: int = field(init=False, repr=False)
-    _bar_ms: int = field(init=False, repr=False)
+    _builder: BarBuilder = field(init=False, repr=False)
     _returns: deque[Decimal] = field(init=False, repr=False)
-    _bar_start: int | None = field(init=False, repr=False, default=None)
-    _bar_open: Decimal | None = field(init=False, repr=False, default=None)
-    _bar_count: int = field(init=False, repr=False, default=0)
 
     def __post_init__(self) -> None:
-        step = INTERVAL_MS.get(self.interval)
-        bar_ms = self.bar_minutes * 60_000
-        if step is None or bar_ms < step or bar_ms % step or DAY_MS % bar_ms:
-            raise ValueError(
-                "the move fade needs bars that are a whole number of candles and divide a day"
-            )
+        self._builder = BarBuilder(self.interval, self.bar_minutes)
         if self.k <= 0 or self.lookback < 2:
             raise ValueError("the move fade needs k > 0 and lookback >= 2")
-        self._step = step
-        self._bar_ms = bar_ms
         self._returns = deque(maxlen=self.lookback)
 
     @property
     def warmup(self) -> int:
         """The current bar and the `lookback` before it."""
-        return (self.lookback + 1) * self.bar_minutes * 60_000 // INTERVAL_MS[self.interval]
+        return (self.lookback + 1) * self._builder.size
 
     @property
     def limit_entries(self) -> bool:
@@ -76,18 +65,10 @@ class MoveFade:
         return {}
 
     def on_candle(self, candle: Kline, position: Position | None) -> Action | None:
-        bar_start = candle.open_time - candle.open_time % self._bar_ms
-        if bar_start != self._bar_start:
-            self._bar_start = bar_start
-            # A bar whose first candle is missing has no open and never counts.
-            self._bar_open = candle.open if candle.open_time == bar_start else None
-            self._bar_count = 0
-        self._bar_count += 1
-        if (candle.open_time + self._step) % self._bar_ms:
+        bar = self._builder.add(candle)
+        if bar is None:
             return None  # the bar is still open
-        r = None
-        if self._bar_open is not None and self._bar_count == self._bar_ms // self._step:
-            r = candle.close / self._bar_open - 1
+        r = candle.close / bar[0].open - 1 if bar else None
         history = list(self._returns)
         if r is not None:
             self._returns.append(r)
@@ -95,8 +76,7 @@ class MoveFade:
             return Exit()
         if r is None or len(history) < self.lookback:
             return None
-        mean = sum(history, Decimal(0)) / len(history)
-        sigma = (sum(((x - mean) ** 2 for x in history), Decimal(0)) / len(history)).sqrt()
+        _, sigma = mean_and_deviation(history)
         if sigma == 0:
             return None
         if r <= -self.k * sigma:

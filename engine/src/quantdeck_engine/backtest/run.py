@@ -2,12 +2,13 @@
 
 Sizing uses the configured network's current symbol rules and leverage brackets (testnet by
 default, so the same conditions as the forward test), and the risk settings in
-`engine/config.toml` (D-28, D-37). Prices come from mainnet history (D-38).
+`engine/config.toml` (D-28, D-37). Prices come from mainnet history (D-38). Several settings
+of the strategy run over the same data, read once.
 """
 
 import csv
 import logging
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from datetime import date
 from decimal import Decimal
 from pathlib import Path
@@ -15,11 +16,18 @@ from pathlib import Path
 import httpx
 
 from quantdeck_engine.backtest.data import HistoricalData
-from quantdeck_engine.backtest.report import format_report
-from quantdeck_engine.backtest.simulator import Costs, Market, Simulator, Trade
+from quantdeck_engine.backtest.report import format_grid, format_report, summarize
+from quantdeck_engine.backtest.simulator import Costs, Market, Result, Simulator, Trade
 from quantdeck_engine.binance.rest import BinanceRestClient
 from quantdeck_engine.config import MAX_LEVERAGE, Settings, SymbolConfig, TradingConfig
 from quantdeck_engine.strategy.base import Strategy
+from quantdeck_engine.strategy.registry import (
+    StrategyError,
+    make_strategy,
+    parameter_text,
+    parameters_of,
+    parse_parameter_grid,
+)
 from quantdeck_engine.times import utc_text
 from quantdeck_engine.trading.rules import SymbolRules
 from quantdeck_engine.trading.sizing import Bracket
@@ -51,8 +59,27 @@ def leverage_for(symbols: Mapping[str, SymbolConfig], symbol: str, override: int
     raise BacktestFailed(f"{symbol} is not one of the engine's symbols; pass --leverage")
 
 
+def strategies_for(name: str, interval: str, items: Sequence[str]) -> list[Strategy]:
+    """Strategy `name` with each setting the `--param` items give. Of several, a setting the
+    strategy refuses, such as an exit channel longer than its entry channel, is left out with
+    a warning."""
+    settings = parse_parameter_grid(name, items)
+    if len(settings) == 1:
+        return [make_strategy(name, interval, settings[0])]
+    strategies = []
+    for params in settings:
+        try:
+            strategies.append(make_strategy(name, interval, params))
+        except StrategyError as e:
+            text = " ".join(f"{key}={parameter_text(value)}" for key, value in params.items())
+            logger.warning("Leaving out %s: %s", text, e)
+    if not strategies:
+        raise BacktestFailed(f"{name} refused every setting")
+    return strategies
+
+
 def run_backtest(
-    strategy: Strategy,
+    strategies: Sequence[Strategy],
     symbol: str,
     start: date,
     end: date,
@@ -63,32 +90,66 @@ def run_backtest(
     *,
     trades_csv: Path | None = None,
 ) -> str:
+    """The report of one strategy, or a line for each of several settings of one strategy on
+    one interval."""
+    if trades_csv is not None and len(strategies) > 1:
+        raise BacktestFailed("--trades-csv takes a single setting")
+    interval = strategies[0].interval
     with httpx.Client() as http:
         data = HistoricalData(http)
-        candles = data.candles(symbol, strategy.interval, start, end)
-        marks = data.candles(symbol, strategy.interval, start, end, dataset="markPriceKlines")
+        candles = data.candles(symbol, interval, start, end)
+        marks = data.candles(symbol, interval, start, end, dataset="markPriceKlines")
         funding = data.funding_rates(symbol, start, end)
     logger.info(
-        "Backtesting %r on %s: %d candles, %d mark price candles, %d funding rates",
-        strategy,
+        "Backtesting on %s %s: %d candles, %d mark price candles, %d funding rates",
         symbol,
+        interval,
         len(candles.klines),
         len(marks.klines),
         len(funding),
     )
-    result = Simulator(strategy, market, trading, costs, balance).run(
-        candles.klines, marks.klines, funding
+
+    def run(strategy: Strategy) -> Result:
+        logger.info("Backtesting %r", strategy)
+        return Simulator(strategy, market, trading, costs, balance).run(
+            candles.klines, marks.klines, funding
+        )
+
+    def conditions(maker: bool) -> str:
+        maker_fee = f" (maker {costs.maker_fee * 100}%)" if maker else ""
+        return (
+            f"on {symbol}, {start} to {end}, leverage {market.leverage}x, "
+            f"risk {trading.risk_per_trade_percent}%/trade, daily limit "
+            f"{trading.daily_loss_limit_percent}%, fee {costs.taker_fee * 100}%{maker_fee}, "
+            f"slippage {costs.market_slippage * 100}% (stops {costs.stop_slippage * 100}%)"
+        )
+
+    if len(strategies) == 1:
+        result = run(strategies[0])
+        if trades_csv is not None:
+            write_trades_csv(trades_csv, result.trades)
+        return format_report(
+            f"{strategies[0]!r} {conditions(result.limit_entries.placed > 0)}", result
+        )
+    common, labels = _settings(strategies)
+    # Only the summary is kept: a result holds the equity at every candle.
+    rows = [(label, summarize(run(s))) for label, s in zip(labels, strategies, strict=True)]
+    title = f"{common} {conditions(any(s.limit_entries for s in strategies))}"
+    return format_grid(title, rows)
+
+
+def _settings(strategies: Sequence[Strategy]) -> tuple[str, list[str]]:
+    """The strategy with the parameters its settings share, and each setting by the ones
+    that differ."""
+    settings = [parameters_of(s) for s in strategies]
+    varying = [key for key in settings[0] if len({repr(p[key]) for p in settings}) > 1]
+    shared = ", ".join(
+        f"{key}={parameter_text(value)}" for key, value in settings[0].items() if key not in varying
     )
-    if trades_csv is not None:
-        write_trades_csv(trades_csv, result.trades)
-    maker = f" (maker {costs.maker_fee * 100}%)" if result.limit_entries.placed else ""
-    title = (
-        f"{strategy!r} on {symbol}, {start} to {end}, leverage {market.leverage}x, "
-        f"risk {trading.risk_per_trade_percent}%/trade, daily limit "
-        f"{trading.daily_loss_limit_percent}%, fee {costs.taker_fee * 100}%{maker}, slippage "
-        f"{costs.market_slippage * 100}% (stops {costs.stop_slippage * 100}%)"
-    )
-    return format_report(title, result)
+    first = strategies[0]
+    common = f"{type(first).__name__}({first.interval}" + (f", {shared})" if shared else ")")
+    labels = [" ".join(f"{key}={parameter_text(p[key])}" for key in varying) for p in settings]
+    return common, labels
 
 
 def write_trades_csv(path: Path, trades: list[Trade]) -> None:

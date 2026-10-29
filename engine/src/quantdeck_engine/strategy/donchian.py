@@ -27,19 +27,75 @@ class Channels:
     exit_low: Decimal
 
 
+class _Extreme:
+    """The highest or the lowest of the last `period` values added. A value that can no
+    longer be the extreme is dropped when a newer one arrives, so each costs O(1) on average
+    instead of a pass over the window. Of equal extremes the oldest is kept, as `max` and
+    `min` return the first."""
+
+    def __init__(self, period: int, *, highest: bool) -> None:
+        self._period = period
+        self._highest = highest
+        self._kept: deque[tuple[int, Decimal]] = deque()  # (index, value), the extreme first
+        self._added = 0
+
+    def add(self, value: Decimal) -> None:
+        kept = self._kept
+        if self._highest:
+            while kept and kept[-1][1] < value:
+                kept.pop()
+        else:
+            while kept and kept[-1][1] > value:
+                kept.pop()
+        kept.append((self._added, value))
+        self._added += 1
+        if kept[0][0] <= self._added - 1 - self._period:
+            kept.popleft()  # out of the window
+
+    @property
+    def value(self) -> Decimal:
+        return self._kept[0][1]
+
+
+class ChannelWindow:
+    """The channels of the candles added so far, kept up to date as each one arrives."""
+
+    def __init__(self, entry_period: int, exit_period: int) -> None:
+        self._entry_period = entry_period
+        self._added = 0
+        self._entry_high = _Extreme(entry_period, highest=True)
+        self._entry_low = _Extreme(entry_period, highest=False)
+        self._exit_high = _Extreme(exit_period, highest=True)
+        self._exit_low = _Extreme(exit_period, highest=False)
+
+    def add(self, candle: Kline) -> None:
+        self._added += 1
+        self._entry_high.add(candle.high)
+        self._entry_low.add(candle.low)
+        self._exit_high.add(candle.high)
+        self._exit_low.add(candle.low)
+
+    def channels(self) -> Channels | None:
+        """The channels over the last `entry_period` and `exit_period` candles added; None
+        with fewer than `entry_period` of them."""
+        if self._added < self._entry_period:
+            return None
+        return Channels(
+            entry_high=self._entry_high.value,
+            entry_low=self._entry_low.value,
+            exit_high=self._exit_high.value,
+            exit_low=self._exit_low.value,
+        )
+
+
 def channels(previous: Sequence[Kline], entry_period: int, exit_period: int) -> Channels | None:
     """The channels over the last `entry_period` and `exit_period` of `previous`; None with
-    fewer than `entry_period` of them."""
-    if len(previous) < entry_period:
-        return None
-    entry = previous[-entry_period:]
-    exit_ = previous[-exit_period:]
-    return Channels(
-        entry_high=max(k.high for k in entry),
-        entry_low=min(k.low for k in entry),
-        exit_high=max(k.high for k in exit_),
-        exit_low=min(k.low for k in exit_),
-    )
+    fewer than `entry_period` of them. Computed by the `ChannelWindow` a strategy decides
+    with, so a chart's levels are the ones decided by (D-56)."""
+    window = ChannelWindow(entry_period, exit_period)
+    for candle in previous[-entry_period:]:
+        window.add(candle)
+    return window.channels()
 
 
 def channel_lines(entry_period: int, exit_period: int) -> tuple[ChartLine, ...]:
@@ -67,12 +123,12 @@ class DonchianBreakout:
         "봉의 반대쪽 끝(롱이면 최저가)에 두고 옮기지 않으며, 종가가 이 채널을 포지션 반대쪽으로 "
         "벗어나면 청산합니다.",
     )
-    _previous: deque[Kline] = field(init=False, repr=False)
+    _window: ChannelWindow = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not 1 <= self.exit_period <= self.entry_period:
             raise ValueError("Donchian periods need 1 <= exit_period <= entry_period")
-        self._previous = deque(maxlen=self.entry_period)
+        self._window = ChannelWindow(self.entry_period, self.exit_period)
 
     @property
     def warmup(self) -> int:
@@ -94,10 +150,10 @@ class DonchianBreakout:
         try:
             return self._decide(candle, position)
         finally:
-            self._previous.append(candle)
+            self._window.add(candle)
 
     def _decide(self, candle: Kline, position: Position | None) -> Action | None:
-        found = channels(list(self._previous), self.entry_period, self.exit_period)
+        found = self._window.channels()
         if found is None:
             return None
         if position is not None:

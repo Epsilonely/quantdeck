@@ -10,7 +10,12 @@ from quantdeck_engine.strategy.daily_breakout import DailyOpenBreakout
 from quantdeck_engine.strategy.donchian import DonchianBreakout
 from quantdeck_engine.strategy.donchian_atr_adx import DonchianAtrAdx, adx
 from quantdeck_engine.strategy.move_fade import MoveFade
-from quantdeck_engine.strategy.registry import StrategyError, make_strategy, parse_parameters
+from quantdeck_engine.strategy.registry import (
+    StrategyError,
+    make_strategy,
+    parse_parameter_grid,
+    parse_parameters,
+)
 from quantdeck_engine.strategy.trend_pullback import TrendPullback
 from quantdeck_engine.trading.rules import Side
 
@@ -205,6 +210,19 @@ def test_command_line_parameters_are_typed_by_field() -> None:
         parse_parameters("donchian", ["entry_period=x"])
     with pytest.raises(StrategyError, match="no parameter 'entry_period'"):
         parse_parameters("donchian", ["entry_period"])
+
+
+def test_command_line_values_separated_by_commas_give_every_combination() -> None:
+    grid = parse_parameter_grid("donchian", ["entry_period=20,55", "exit_period=10,20"])
+    assert grid == [
+        {"entry_period": 20, "exit_period": 10},
+        {"entry_period": 20, "exit_period": 20},
+        {"entry_period": 55, "exit_period": 10},
+        {"entry_period": 55, "exit_period": 20},
+    ]
+    assert parse_parameter_grid("donchian", []) == [{}]
+    with pytest.raises(StrategyError, match="not a valid int"):
+        parse_parameter_grid("donchian", ["entry_period=20,"])
 
 
 def test_command_line_bools_are_true_or_false() -> None:

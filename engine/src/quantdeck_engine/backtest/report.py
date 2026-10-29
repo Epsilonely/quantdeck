@@ -122,6 +122,22 @@ def format_report(title: str, result: Result) -> str:
     return "\n".join(lines)
 
 
+def format_grid(title: str, rows: list[tuple[str, Summary]]) -> str:
+    """One line per setting, labelled by the parameters that differ between them."""
+    width = max(len("setting"), *(len(label) for label, _ in rows))
+    lines = [
+        title,
+        f"  {'setting':<{width}}  trades     win    exp R   return  max DD  streak  limit days",
+    ]
+    for label, s in rows:
+        lines.append(
+            f"  {label:<{width}}  {s.trades:6d}  {_percent(s.win_rate):>6}  "
+            f"{_amount(s.expectancy_r, 3):>7}  {s.return_percent:+6.1f}%  "
+            f"{s.max_drawdown_percent:5.1f}%  {s.longest_losing_streak:6d}  {s.kill_days:10d}"
+        )
+    return "\n".join(lines)
+
+
 def _mean(values: list[Decimal]) -> Decimal | None:
     return sum(values, Decimal(0)) / len(values) if values else None
 

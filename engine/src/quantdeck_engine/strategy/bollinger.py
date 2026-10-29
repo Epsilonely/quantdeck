@@ -17,6 +17,7 @@ from decimal import Decimal
 
 from quantdeck_engine.binance.streams import Kline
 from quantdeck_engine.strategy.base import Action, ChartLine, Enter, Exit, Position, parameter
+from quantdeck_engine.strategy.indicators import mean_and_deviation
 from quantdeck_engine.trading.rules import Side
 
 
@@ -112,9 +113,7 @@ class BollingerReversion:
         fewer."""
         if len(closes) < self.period:
             return None
-        window = closes[-self.period :]
-        mean = sum(window, Decimal(0)) / self.period
-        deviation = (sum(((c - mean) ** 2 for c in window), Decimal(0)) / self.period).sqrt()
+        mean, deviation = mean_and_deviation(closes[-self.period :])
         spread = self.width * deviation
         return Bands(mean, mean + spread, mean - spread, deviation)
 

@@ -8,6 +8,7 @@ with the same parameters (D-07, D-41).
 from collections.abc import Iterable, Mapping
 from dataclasses import fields
 from decimal import Decimal, InvalidOperation
+from itertools import product
 from typing import Any
 
 from quantdeck_engine.strategy.base import Strategy
@@ -82,6 +83,22 @@ def parse_parameters(name: str, items: Iterable[str]) -> dict[str, int | Decimal
             raise StrategyError(_no_parameter(name, key, parameter_types(name)))
         texts[key] = text
     return parse_parameter_texts(name, texts)
+
+
+def parse_parameter_grid(name: str, items: Iterable[str]) -> list[dict[str, int | Decimal | bool]]:
+    """`KEY=VALUE` strings as `parse_parameters` reads them, except that a value may list
+    several separated by commas (`entry_period=20,55`): every combination, in the order
+    given."""
+    choices: dict[str, list[str]] = {}
+    for item in items:
+        key, sep, text = item.partition("=")
+        if not sep:
+            raise StrategyError(_no_parameter(name, key, parameter_types(name)))
+        choices[key] = text.split(",")
+    return [
+        parse_parameter_texts(name, dict(zip(choices, combination, strict=True)))
+        for combination in product(*choices.values())
+    ]
 
 
 def parse_parameter_texts(

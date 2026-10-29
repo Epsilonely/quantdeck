@@ -14,7 +14,8 @@ breakout.
 Wilder's smoothing never forgets, so an ADX carried from the first candle would differ after
 a restart (D-36). It is computed afresh from the last `ADX_WINDOW_PERIODS` × `adx_period`
 candles whenever an entry needs it; by the window's end its starting values weigh about
-0.01%.
+0.01%. Only the smoothing is redone: each candle's directional movement is the same in every
+window, so it is computed once, as the candle arrives.
 """
 
 from collections import deque
@@ -25,7 +26,8 @@ from itertools import pairwise
 
 from quantdeck_engine.binance.streams import Kline
 from quantdeck_engine.strategy.base import Action, ChartLine, Enter, Exit, Position, parameter
-from quantdeck_engine.strategy.donchian import channel_lines, channels
+from quantdeck_engine.strategy.donchian import ChannelWindow, channel_lines, channels
+from quantdeck_engine.strategy.indicators import average_true_range
 from quantdeck_engine.trading.rules import Side
 
 ADX_WINDOW_PERIODS = 11
@@ -64,6 +66,10 @@ class DonchianAtrAdx:
         "청산은 기다리지 않습니다. 0이면 필터를 쓰지 않습니다.",
     )
     _previous: deque[Kline] = field(init=False, repr=False)
+    _window: ChannelWindow = field(init=False, repr=False)
+    # The directional movements between the candles in `_previous`, as many as the ADX window
+    # holds besides the current candle's.
+    _moves: deque[tuple[Decimal, Decimal]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if not 1 <= self.exit_period <= self.entry_period:
@@ -73,6 +79,8 @@ class DonchianAtrAdx:
         if self.adx_min < 0 or self.adx_period < 2:
             raise ValueError("the ADX filter needs adx_min >= 0 and adx_period >= 2")
         self._previous = deque(maxlen=self.warmup - 1)
+        self._window = ChannelWindow(self.entry_period, self.exit_period)
+        self._moves = deque(maxlen=ADX_WINDOW_PERIODS * self.adx_period - 2)
 
     @property
     def warmup(self) -> int:
@@ -110,13 +118,16 @@ class DonchianAtrAdx:
         try:
             return self._decide(candle, position)
         finally:
+            if self.adx_min and self._previous:
+                self._moves.append(directional_move(self._previous[-1], candle))
             self._previous.append(candle)
+            self._window.add(candle)
 
     def _decide(self, candle: Kline, position: Position | None) -> Action | None:
-        if len(self._previous) < (self._previous.maxlen or 0):
+        previous = self._previous
+        if len(previous) < (previous.maxlen or 0):
             return None
-        previous = list(self._previous)
-        found = channels(previous, self.entry_period, self.exit_period)
+        found = self._window.channels()
         assert found is not None  # the warm-up covers the entry channel
         if position is not None:
             if position.side is Side.LONG and candle.close < found.exit_low:
@@ -130,17 +141,14 @@ class DonchianAtrAdx:
             side, channel_stop = Side.SHORT, found.exit_high
         else:
             return None
-        candles = [*previous, candle]
         # Only on a breakout, since it reads the whole window; a chart asks for it every candle.
-        if self.adx_min and adx(self._adx_window(candles), self.adx_period) < self.adx_min:
-            return None
+        if self.adx_min:
+            moves = [*self._moves, directional_move(previous[-1], candle)]
+            if adx_of_moves(moves, self.adx_period) < self.adx_min:
+                return None
         if not self.stop_atr:
             return Enter(side, channel_stop)
-        ranges = [
-            max(k.high, before.close) - min(k.low, before.close)
-            for before, k in pairwise(candles[-(self.atr_period + 1) :])
-        ]
-        atr = sum(ranges, Decimal(0)) / len(ranges)
+        atr = average_true_range([*(previous[i] for i in range(-self.atr_period, 0)), candle])
         if not atr:
             return None
         return Enter(side, candle.close - side.sign * self.stop_atr * atr)
@@ -150,30 +158,41 @@ class DonchianAtrAdx:
         return candles[-ADX_WINDOW_PERIODS * self.adx_period :]
 
 
-def adx(candles: list[Kline], period: int) -> Decimal:
-    """Wilder's ADX at the last of `candles`, starting his smoothing at the first.
+def adx(candles: Sequence[Kline], period: int) -> Decimal:
+    """Wilder's ADX at the last of `candles`, starting his smoothing at the first."""
+    return adx_of_moves([directional_move(before, k) for before, k in pairwise(candles)], period)
+
+
+def directional_move(before: Kline, candle: Kline) -> tuple[Decimal, Decimal]:
+    """+DM and −DM from `before` to `candle`."""
+    up, down = candle.high - before.high, before.low - candle.low
+    return (
+        up if up > down and up > 0 else Decimal(0),
+        down if down > up and down > 0 else Decimal(0),
+    )
+
+
+def adx_of_moves(moves: Sequence[tuple[Decimal, Decimal]], period: int) -> Decimal:
+    """Wilder's ADX from the directional movements between consecutive candles, oldest
+    first, starting his smoothing at the first.
 
     +DI and −DI share the smoothed true range as their denominator, which cancels in DX, so
-    only the directional movements are smoothed.
+    only the directional movements are smoothed. The period is a Decimal once, so the loops
+    don't convert it at every step; the results are the same, since the conversion is exact.
     """
-    pluses: list[Decimal] = []
-    minuses: list[Decimal] = []
-    for before, k in pairwise(candles):
-        up, down = k.high - before.high, before.low - k.low
-        pluses.append(up if up > down and up > 0 else Decimal(0))
-        minuses.append(down if down > up and down > 0 else Decimal(0))
-    if len(pluses) < 2 * period - 1:
+    if len(moves) < 2 * period - 1:
         raise ValueError(f"ADX({period}) needs at least {2 * period} candles")
-    plus = sum(pluses[:period], Decimal(0))
-    minus = sum(minuses[:period], Decimal(0))
+    n, n_less_one = Decimal(period), Decimal(period - 1)
+    plus = sum((p for p, _ in moves[:period]), Decimal(0))
+    minus = sum((m for _, m in moves[:period]), Decimal(0))
     dxs = [_dx(plus, minus)]
-    for p, m in zip(pluses[period:], minuses[period:], strict=True):
-        plus += p - plus / period
-        minus += m - minus / period
+    for p, m in moves[period:]:
+        plus += p - plus / n
+        minus += m - minus / n
         dxs.append(_dx(plus, minus))
-    value = sum(dxs[:period], Decimal(0)) / period
+    value = sum(dxs[:period], Decimal(0)) / n
     for dx in dxs[period:]:
-        value = (value * (period - 1) + dx) / period
+        value = (value * n_less_one + dx) / n
     return value
 
 

@@ -19,6 +19,7 @@ Decisions about the backtest and the strategy search, with the evidence behind t
   - The zip files are kept as downloaded in `engine/data/` (gitignored) and read directly, with no conversion step. Parquet (D-04) waits until the data outgrows this, such as years of 1m candles or trade data.
 - **Why:** Testnet prices and volume differ from mainnet's, and there is no testnet archive (`binanceNotes.md`), so mainnet data is the closest to the market a strategy would eventually trade. The archive is free, needs no key, and comes with checksums; REST fills in the days not archived yet. Keeping the original files means they can always be re-verified against Binance's checksums. Seven years of BTCUSDT 1h candles is about 60,000 rows, small enough to read from the zips on every run, so Parquet would add a large dependency (pyarrow or similar) and a conversion step for no gain yet.
 - **Alternatives:** Parquet from the start (D-04); REST only (slow paging, rate limits, no checksums); testnet data.
+- **Note (2026-10-29, GitHub issue #40):** Reading and checking a coin's 15m history took 2.5–8.5 s, and a grid run as one backtest per setting repeated it for every setting. `--param` values separated by commas (`entry_period=20,55`) now run every combination over one read, a line each; a combination the strategy refuses is left out with a warning. A run over BTCUSDT's whole history still reads from REST the days its mark price archive lacks (`binanceNotes.md`).
 - **Date:** 2026-10-18
 
 ## D-39 The first strategy is picked by backtest
