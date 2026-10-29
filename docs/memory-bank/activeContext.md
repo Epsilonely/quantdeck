@@ -25,9 +25,8 @@ Merged work not yet seen against a real engine:
 - The in-app confirmation (#7, D-53) in the GUI itself: in `npm run dev`, where the page comes from the dev server; with a real mouse and keyboard, including that clicks don't reach the main page under it; and in a packaged build. Checked only in a test harness with the real overlay over a fake API.
 - Switching the Windows app mode while the GUI runs (D-35).
 - The log window (#35, D-55) in a packaged build. It has run in `npm run dev`.
-- The cleanup of #38 on a running engine and GUI: the chart's candles now reach the renderer one symbol at a time, so another symbol's closed candle mustn't redraw the chart while a reconnect still clears every list; and the chart's levels are filled in a worker thread at startup and on a strategy change. Checked only with tests and a build.
-- The cleanup after a closed position as a task of its own (#39, D-18 note): on testnet, a close by the engine, above all the kill switch, should leave no stop behind while other symbols' events keep arriving. Tested with fakes only.
-- From #40 on a running engine and GUI: today's loss showing right after a restart, from the startup check (D-30 note); the log window past 1000 records, now drawn by stable keys; the chart's fill dots and their hover details. Checked only with tests and a build.
+- The cleanup after a closed position as a task of its own (#39, D-18 note): on testnet, a close by the engine, above all the kill switch, should leave no stop behind while other symbols' events keep arriving. Tested with fakes only; no close by the engine has run on the new code yet.
+- The log window past 1000 records (#40), now drawn by stable keys. Checked only with tests and a build.
 
 Exchange behavior not yet seen is under To verify in `binanceNotes.md`.
 
