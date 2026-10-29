@@ -78,14 +78,6 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
-code {
-  font-family: var(--mono);
-  font-variant-ligatures: none;
-  background: var(--bg-raised);
-  padding: 1px 5px;
-  border-radius: 3px;
-}
-
 .app {
   display: flex;
   flex-direction: column;
@@ -161,10 +153,6 @@ h2 {
 
 .tag.danger {
   color: var(--danger);
-}
-
-.tag.muted {
-  color: var(--text-muted);
 }
 
 button {

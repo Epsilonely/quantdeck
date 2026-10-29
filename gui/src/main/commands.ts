@@ -14,6 +14,7 @@ import {
   type StrategySetting,
   type SymbolState
 } from '../shared/engine'
+import { paramsText, sameStrategy } from '../shared/strategy'
 
 // Shapes only; the engine checks the values. Text that goes into the confirmation is limited to
 // characters that can't break its lines or pass for other text.
@@ -292,17 +293,6 @@ function currentStrategy(symbol: SymbolState): StrategySetting | null {
   }
 }
 
-function sameStrategy(a: StrategySetting | null, b: StrategySetting | null): boolean {
-  if (!a || !b) return a === b
-  const keys = Object.keys(a.params)
-  return (
-    a.name === b.name &&
-    a.interval === b.interval &&
-    keys.length === Object.keys(b.params).length &&
-    keys.every((key) => a.params[key] === b.params[key])
-  )
-}
-
 function describeSetting(leverage: number | undefined, strategy: StrategySetting | null): string {
   return `${describeLeverage(leverage)} · ${describeStrategy(strategy)}`
 }
@@ -314,9 +304,7 @@ function describeLeverage(leverage: number | undefined): string {
 /** E.g. `donchian 4h (entry_period=55, exit_period=20)`, as the engine logs it. */
 function describeStrategy(strategy: StrategySetting | null): string {
   if (!strategy) return '전략 없음'
-  const params = Object.entries(strategy.params)
-    .map(([key, value]) => `${key}=${value}`)
-    .join(', ')
+  const params = paramsText(strategy.params)
   return `${strategy.name} ${strategy.interval}` + (params ? ` (${params})` : '')
 }
 

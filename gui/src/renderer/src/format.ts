@@ -7,19 +7,26 @@ function pad(value: number): string {
   return String(value).padStart(2, '0')
 }
 
+function datePart(time: Date): string {
+  return `${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())}`
+}
+
+function timePart(time: Date): string {
+  return `${pad(time.getHours())}:${pad(time.getMinutes())}:${pad(time.getSeconds())}`
+}
+
 /** `2026-10-16T07:41:50.908+00:00` → `16:41:50` in local time */
 export function clock(iso: string): string {
   const time = new Date(iso)
   if (Number.isNaN(time.getTime())) return iso
-  return `${pad(time.getHours())}:${pad(time.getMinutes())}:${pad(time.getSeconds())}`
+  return timePart(time)
 }
 
 /** `2026-10-16T07:41:50.908+00:00` → `2026-10-16 16:41:50` in local time */
 export function dateTime(iso: string): string {
   const time = new Date(iso)
   if (Number.isNaN(time.getTime())) return iso
-  const date = `${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())}`
-  return `${date} ${clock(iso)}`
+  return `${datePart(time)} ${timePart(time)}`
 }
 
 /** `2026-10-19T04:00:00+00:00` → `10-19 13:00` in local time, for candle times */
@@ -33,7 +40,7 @@ export function shortDateTime(iso: string): string {
 export function localDay(iso: string): string {
   const time = new Date(iso)
   if (Number.isNaN(time.getTime())) return iso
-  return `${time.getFullYear()}-${pad(time.getMonth() + 1)}-${pad(time.getDate())}`
+  return datePart(time)
 }
 
 const WEEKDAYS = ['일', '월', '화', '수', '목', '금', '토']

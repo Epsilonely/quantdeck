@@ -1,3 +1,4 @@
+import { memo } from 'react'
 import type { RecentTrades, TradeRow } from '../../../shared/engine'
 import {
   ROLE_LABELS,
@@ -109,4 +110,6 @@ function TradeList({ trades, connected }: Props): React.JSX.Element {
   )
 }
 
-export default TradeList
+// Drawn again only when its props change: the state comes about once a second, while the list
+// changes only with a trades message.
+export default memo(TradeList)

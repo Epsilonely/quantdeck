@@ -43,7 +43,7 @@ const engine = new EngineClient(CONNECTION_FILE, {
   logs: (update) => logWindow.logs(update),
   catalog: (catalog) => broadcast('engine:catalog', catalog),
   trades: (trades) => broadcast('engine:trades', trades),
-  candles: (candles) => broadcast('engine:candles', candles)
+  candles: (update) => broadcast('engine:candles', update)
 })
 
 function snapshot(): EngineSnapshot {
@@ -119,10 +119,7 @@ app.whenReady().then(() => {
     if (BrowserWindow.fromWebContents(event.sender)) logWindow.open()
   })
   ipcMain.handle('logs:unseen', () => logWindow.counts)
-  ipcMain.handle('logs:snapshot', (): LogSnapshot => {
-    const { status, logs } = engine.snapshot()
-    return { status, logs }
-  })
+  ipcMain.handle('logs:snapshot', (): LogSnapshot => engine.logSnapshot())
   ipcMain.handle('engine:command', async (event, value: unknown): Promise<CommandResult | null> => {
     const window = BrowserWindow.fromWebContents(event.sender)
     const command = parseCommand(value)

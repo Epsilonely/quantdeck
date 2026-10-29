@@ -8,6 +8,7 @@ import type {
   StrategySetting,
   SymbolState
 } from '../../../shared/engine'
+import { sameStrategy } from '../../../shared/strategy'
 import HelpTip from './HelpTip'
 
 // Adds a symbol or changes its leverage and strategy (D-47, D-48). The panel only builds the
@@ -53,17 +54,6 @@ function toArgs(draft: Draft): SetSymbolArgs {
       ? { name: draft.strategy, interval: draft.interval, params: { ...draft.params } }
       : null
   }
-}
-
-function sameStrategy(a: StrategySetting | null, b: StrategySetting | null): boolean {
-  if (!a || !b) return a === b
-  const keys = Object.keys(a.params)
-  return (
-    a.name === b.name &&
-    a.interval === b.interval &&
-    keys.length === Object.keys(b.params).length &&
-    keys.every((key) => a.params[key] === b.params[key])
-  )
 }
 
 interface Props {

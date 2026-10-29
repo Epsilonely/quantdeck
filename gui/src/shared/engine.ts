@@ -3,7 +3,7 @@
 // renderer.
 //
 // Amounts are strings in fixed-point notation, as the engine sends them. Show them as they are;
-// never parse them into numbers.
+// only the chart turns prices into numbers, to draw them (D-54).
 
 export interface HaltState {
   halted: boolean
@@ -270,7 +270,6 @@ export interface EngineSnapshot {
   status: ConnectionStatus
   launch: LaunchState
   state: EngineState | null // the last state received; stale while disconnected
-  logs: LogRecord[]
   catalog: StrategyCatalog | null // from the last welcome; null if that engine sent none
   trades: RecentTrades | null // null until this connection's engine sends them
   candles: Record<string, SymbolCandles> // by symbol; empty until this connection's engine sends them
@@ -287,5 +286,7 @@ export interface EngineApi {
   onLaunch(listener: (launch: LaunchState) => void): () => void
   onCatalog(listener: (catalog: StrategyCatalog | null) => void): () => void
   onTrades(listener: (trades: RecentTrades | null) => void): () => void
-  onCandles(listener: (candles: Record<string, SymbolCandles>) => void): () => void
+  // One symbol's new list, or null when a new connection forgets them all. Only the list that
+  // changed is sent, so the others keep their objects and a chart of one isn't drawn again.
+  onCandles(listener: (update: SymbolCandles | null) => void): () => void
 }

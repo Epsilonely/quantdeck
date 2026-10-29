@@ -1,5 +1,8 @@
 import type { ConnectionStatus, LogRecord, LogsUpdate } from './engine'
 
+// The records the main process keeps, and the log window shows.
+export const LOG_CAPACITY = 1000
+
 // The engine log's own window (D-55). Its page reads the records and the connection, which says
 // why no new records arrive; it has no other call.
 export interface LogSnapshot {

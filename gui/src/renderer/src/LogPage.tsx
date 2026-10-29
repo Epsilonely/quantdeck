@@ -1,10 +1,8 @@
 import { useEffect, useState } from 'react'
 import type { ConnectionStatus, LogRecord } from '../../shared/engine'
+import { LOG_CAPACITY } from '../../shared/logs'
 import LogView from './components/LogView'
 import { dateTime } from './format'
-
-// As many as the main process keeps.
-const LOG_CAPACITY = 1000
 
 // The engine log's own window (D-55). The main process sends it the engine's records and the
 // connection; the page has no other call.

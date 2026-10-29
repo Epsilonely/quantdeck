@@ -5,6 +5,7 @@ import type {
   SymbolState,
   SymbolStrategy
 } from '../../../shared/engine'
+import { paramsText } from '../../../shared/strategy'
 import { dateTime, isNegative, pnlClass, shortDateTime, signed } from '../format'
 
 // What a row's buttons send (D-50).
@@ -56,9 +57,7 @@ function carriedOut(signal: StrategySignal): boolean {
 // The symbol's leverage and strategy setting (D-47), with every parameter below it.
 function Setting({ symbol }: { symbol: SymbolState }): React.JSX.Element {
   const strategy = symbol.strategy
-  const params = Object.entries(strategy?.params ?? {})
-    .map(([key, value]) => `${key}=${value}`)
-    .join(', ')
+  const params = paramsText(strategy?.params ?? {})
   return (
     <>
       {symbol.leverage !== undefined && <div>{symbol.leverage}x</div>}

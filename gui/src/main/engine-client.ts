@@ -1,7 +1,8 @@
 // The GUI's connection to the engine (D-32): the main process reads the connection file, connects
 // with Node's built-in WebSocket (it sends no Origin header, so the engine accepts it), and keeps
-// reconnecting. The renderer never sees the token or the file; it gets status, state, and logs
-// through the callbacks below, which the main process relays over IPC.
+// reconnecting. The renderer never sees the token or the file; it gets what the callbacks below
+// report, which the main process relays over IPC: the logs to the log window (D-55), the rest to
+// the main window.
 
 import { readFile } from 'fs/promises'
 import type {
@@ -17,11 +18,11 @@ import type {
   StrategyCatalog,
   SymbolCandles
 } from '../shared/engine'
+import { LOG_CAPACITY, type LogSnapshot } from '../shared/logs'
 
 const PROTOCOL = 1
 const RETRY_DELAY_MS = 2000
 const COMMAND_TIMEOUT_MS = 60_000 // the kill switch retries for a while before it answers
-const LOG_CAPACITY = 1000
 
 export interface EngineClientEvents {
   status(status: ConnectionStatus): void
@@ -29,7 +30,7 @@ export interface EngineClientEvents {
   logs(update: LogsUpdate): void
   catalog(catalog: StrategyCatalog | null): void
   trades(trades: RecentTrades | null): void
-  candles(candles: Record<string, SymbolCandles>): void
+  candles(update: SymbolCandles | null): void // null: a new connection forgets every list
 }
 
 interface ConnectionInfo {
@@ -78,11 +79,14 @@ export class EngineClient {
     return {
       status: this.status,
       state: this.state,
-      logs: [...this.logs],
       catalog: this.catalog,
       trades: this.trades,
       candles: this.candles
     }
+  }
+
+  logSnapshot(): LogSnapshot {
+    return { status: this.status, logs: [...this.logs] }
   }
 
   /** The command as it is, so the caller must have checked it (main/commands.ts). */
@@ -151,7 +155,7 @@ export class EngineClient {
           this.trades = null
           this.events.trades(null)
           this.candles = {}
-          this.events.candles(this.candles)
+          this.events.candles(null)
           this.setStatus('connected', null)
           break
         case 'logs':
@@ -184,7 +188,7 @@ export class EngineClient {
           const candles = parseCandles(message)
           if (candles) {
             this.candles = { ...this.candles, [candles.symbol]: candles }
-            this.events.candles(this.candles)
+            this.events.candles(candles)
           }
           break
         }

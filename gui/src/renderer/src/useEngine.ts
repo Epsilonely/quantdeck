@@ -36,7 +36,9 @@ export function useEngine(): EngineView {
       engine.onLaunch(setLaunch),
       engine.onCatalog(setCatalog),
       engine.onTrades(setTrades),
-      engine.onCandles(setCandles)
+      engine.onCandles((update) =>
+        setCandles((current) => (update ? { ...current, [update.symbol]: update } : {}))
+      )
     ]
     let active = true
     engine.snapshot().then((snapshot) => {
