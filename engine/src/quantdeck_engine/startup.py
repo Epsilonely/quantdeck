@@ -30,7 +30,6 @@ class Account:
     """The traders for the configured symbols and the guard that covers them all (D-24).
     The base balance and order IDs are shared with traders added later (D-47)."""
 
-    rules: dict[str, SymbolRules]
     base: BaseBalance
     guard: RiskGuard
     ids: ClientIdFactory
@@ -52,10 +51,8 @@ async def build_account(
     if (await client.account_config())["dualSidePosition"]:
         raise StartupFailed("the account is in hedge mode; QuantDeck needs one-way mode")
     configs = list(symbols)
-    rules = {
-        config.symbol: SymbolRules.from_exchange_info(await client.symbol_info(config.symbol))
-        for config in configs
-    }
+    infos = await client.symbol_infos(c.symbol for c in configs) if configs else {}
+    rules = {symbol: SymbolRules.from_exchange_info(info) for symbol, info in infos.items()}
     for r in rules.values():
         if r.margin_asset != MARGIN_ASSET:
             raise StartupFailed(
@@ -70,4 +67,4 @@ async def build_account(
         for config in configs
     ]
     guard.attach(traders)
-    return Account(rules=rules, base=base, guard=guard, ids=ids, traders=traders)
+    return Account(base=base, guard=guard, ids=ids, traders=traders)

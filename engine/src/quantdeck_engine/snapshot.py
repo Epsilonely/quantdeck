@@ -7,6 +7,7 @@ The shape is recorded in docs/memory-bank/techContext.md.
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
+from quantdeck_engine.amounts import fixed_point
 from quantdeck_engine.chart import candle_values
 from quantdeck_engine.config import StrategyConfig
 from quantdeck_engine.times import iso_utc
@@ -18,11 +19,6 @@ if TYPE_CHECKING:
 
 
 CENT = Decimal("0.01")
-
-
-def fixed_point(amount: Decimal) -> str:
-    """Fixed-point text, never exponent notation such as `0E-8` (D-33)."""
-    return format(amount, "f")
 
 
 def engine_snapshot(engine: "Engine") -> dict[str, Any]:

@@ -18,9 +18,8 @@ from itertools import pairwise
 
 from quantdeck_engine.binance.streams import INTERVAL_MS, Kline
 from quantdeck_engine.strategy.base import Action, ChartLine, Enter, Exit, Position, parameter
+from quantdeck_engine.times import DAY_MS
 from quantdeck_engine.trading.rules import Side
-
-DAY_MS = 24 * 60 * 60 * 1000
 
 
 @dataclass(frozen=True)

@@ -1,4 +1,4 @@
-"""Bollinger Band mean reversion: the counter-trend candidate for the first strategy (D-39).
+"""Bollinger Band mean reversion: counter-trend, dropped as the first strategy (D-39, D-41).
 
 Enters against a candle that closes outside the bands (the mean of the last `period`
 closes, the current one included, ± `width` standard deviations), expecting a return to

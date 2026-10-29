@@ -281,11 +281,11 @@ class SymbolTrader:
             return None
         return plan
 
-    async def close_position(self, role: Role = Role.EXIT) -> ExchangePosition | None:
+    async def close_position(self) -> ExchangePosition | None:
         """Close the whole position with reduceOnly market orders, then cancel its stop.
         Returns the position it closed, or None if there was none."""
         async with self._lock:
-            return await self._close(role)
+            return await self._close(Role.EXIT)
 
     async def on_position_closed(self) -> None:
         """A user data event says the position closed: cancel its leftover stop (D-18)."""

@@ -12,6 +12,7 @@ import pytest
 from fake_exchange import SETTINGS, SYMBOLS, TRADING, FakeExchange, open_long
 from websockets.asyncio.client import connect
 
+from quantdeck_engine.amounts import fixed_point
 from quantdeck_engine.binance.rest import UnknownSymbol
 from quantdeck_engine.binance.streams import kline_from_row
 from quantdeck_engine.binance.user_stream import (
@@ -24,7 +25,6 @@ from quantdeck_engine.config import ConfigError, SymbolConfig, parse_settings, s
 from quantdeck_engine.lock import EngineAlreadyRunning, InstanceLock
 from quantdeck_engine.run import Engine, RunFailed, run_engine, start_engine
 from quantdeck_engine.server import ClientServer, ConnectionFile, LogBuffer
-from quantdeck_engine.snapshot import fixed_point
 from quantdeck_engine.startup import StartupFailed
 from quantdeck_engine.symbols import PauseNotSaved, SymbolChangeRefused, SymbolStore
 from quantdeck_engine.times import iso_utc
@@ -134,6 +134,20 @@ async def test_unknown_symbol_is_refused(store: HaltStore, symbol_store: SymbolS
     symbols = {"ETHUSDT": SymbolConfig("ETHUSDT", 5)}
     with pytest.raises(UnknownSymbol, match="ETHUSDT is not in exchangeInfo"):
         await start(FakeExchange(), store, symbol_store, symbols)
+
+
+async def test_rules_for_every_symbol_come_from_one_request(
+    store: HaltStore, symbol_store: SymbolStore
+) -> None:
+    exchange = FakeExchange(other_symbols={"ETHUSDT": 3, "XRPUSDT": 3})
+    symbols = {
+        **SYMBOLS,
+        "ETHUSDT": SymbolConfig("ETHUSDT", 3),
+        "XRPUSDT": SymbolConfig("XRPUSDT", 3),
+    }
+    engine = await start(exchange, store, symbol_store, symbols)
+    assert list(engine.traders) == ["BTCUSDT", "ETHUSDT", "XRPUSDT"]
+    assert len(exchange.calls("GET", "/fapi/v1/exchangeInfo")) == 1
 
 
 async def test_symbol_margined_in_another_asset_is_refused(

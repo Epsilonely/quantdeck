@@ -28,6 +28,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from quantdeck_engine.amounts import fixed_point
 from quantdeck_engine.binance.candle_feed import ClosedCandleFeed
 from quantdeck_engine.binance.rest import REQUEST_ERRORS, BinanceRestClient, UnknownSymbol
 from quantdeck_engine.binance.streams import mark_price_stream
@@ -48,7 +49,7 @@ from quantdeck_engine.config import (
 from quantdeck_engine.lock import InstanceLock
 from quantdeck_engine.paths import FORWARD_DIR
 from quantdeck_engine.server import ClientServer, LogBuffer
-from quantdeck_engine.snapshot import engine_snapshot, fixed_point
+from quantdeck_engine.snapshot import engine_snapshot
 from quantdeck_engine.startup import Account, build_account
 from quantdeck_engine.symbols import (
     PauseNotSaved,
@@ -100,8 +101,6 @@ class Engine:
         runners: Mapping[str, StrategyRunner] | None = None,
         paused: Mapping[str, str] | None = None,
         forward_dir: Path = FORWARD_DIR,
-        checker: RiskChecker | None = None,
-        time_sync_interval: float = TIME_SYNC_INTERVAL,
     ) -> None:
         self._client = client
         self._ws_root = ws_root
@@ -110,14 +109,13 @@ class Engine:
         self._ids = account.ids
         self._store = symbol_store
         self._forward_dir = forward_dir
-        self._time_sync_interval = time_sync_interval
         self.testnet = testnet
         self.asset = account.base.asset  # the margin asset the daily loss limit covers (D-23)
         self.symbols = dict(symbols)  # as saved in symbols.json (D-47)
         self.traders = {t.symbol: t for t in account.traders}
         self.guard = account.guard
         self.runners = dict(runners or {})  # symbols with a strategy (D-43)
-        self.checker = checker or RiskChecker(self.guard)
+        self.checker = RiskChecker(self.guard)
         self.state = AccountState(list(self.traders))
         self.mark_prices: dict[str, Decimal] = {}  # for display only (D-33)
         self.history = TradeHistory(client, lambda: list(self.traders), self.asset)  # D-51
@@ -473,7 +471,7 @@ class Engine:
 
     async def _sync_time(self) -> None:
         while True:
-            await asyncio.sleep(self._time_sync_interval)
+            await asyncio.sleep(TIME_SYNC_INTERVAL)
             try:
                 offset = await self._client.sync_time()
             except REQUEST_ERRORS as e:

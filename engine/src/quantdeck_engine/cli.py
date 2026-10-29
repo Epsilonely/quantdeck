@@ -82,7 +82,7 @@ def main() -> None:
     )
     backtest.add_argument("--slippage", type=Decimal, default=Decimal("0.0002"))
     backtest.add_argument("--stop-slippage", type=Decimal, default=Decimal("0.0005"))
-    backtest.add_argument("--leverage", type=int, help="default: the symbol's in config.toml")
+    backtest.add_argument("--leverage", type=int, help="default: the symbol's in symbols.json")
     backtest.add_argument("--trades-csv", type=Path, help="write every trade to this file")
     args = parser.parse_args()
     if args.command is None:

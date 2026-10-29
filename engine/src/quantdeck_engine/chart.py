@@ -21,6 +21,7 @@ from collections.abc import Callable, Iterable
 from decimal import Decimal
 from typing import Any
 
+from quantdeck_engine.amounts import fixed_point
 from quantdeck_engine.binance.streams import Kline
 from quantdeck_engine.strategy.base import Strategy
 from quantdeck_engine.times import iso_utc
@@ -38,10 +39,10 @@ def candle_values(candle: Kline) -> dict[str, str]:
     """A candle as clients get it; prices are fixed-point strings (D-33)."""
     return {
         "open_time": iso_utc(candle.open_time / 1000),
-        "open": _text(candle.open),
-        "high": _text(candle.high),
-        "low": _text(candle.low),
-        "close": _text(candle.close),
+        "open": fixed_point(candle.open),
+        "high": fixed_point(candle.high),
+        "low": fixed_point(candle.low),
+        "close": fixed_point(candle.close),
     }
 
 
@@ -142,9 +143,4 @@ class CandleChart:
 
 
 def _level(value: Decimal | None) -> str | None:
-    return None if value is None else _text(value.quantize(LEVEL_PLACES).normalize())
-
-
-def _text(amount: Decimal) -> str:
-    """Fixed-point, never exponent notation."""
-    return format(amount, "f")
+    return None if value is None else fixed_point(value.quantize(LEVEL_PLACES).normalize())

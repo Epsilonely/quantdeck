@@ -527,6 +527,6 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
   - Stretches of past positions show the current state's lines too.
   - Stops placed once at entry (the ATR stop, Bollinger's stop width) show only as the stop line.
   - The levels come from last-price candles, while stops trigger on the mark price (D-18).
-  - With the ADX filter on, filling 300 candles' levels takes about 0.2 s on the development PC, on the event loop, at startup and whenever the symbol's strategy is set; the other strategies take about 10 ms.
+  - With the ADX filter on, filling 300 candles' levels takes about 0.1–0.2 s on the development PC at the default `adx_period` 14 and about 0.9 s at 90, the most the engine allows (measured 2026-10-29); the other strategies take about 10 ms. It happens at startup and whenever the symbol's strategy is set, in a worker thread since GitHub issue #38 so the event loop keeps running, though Python's GIL still shares the CPU with it.
 - **Alternatives:** the GUI computing the indicators; switching lines at the entry candle; every line in every state; smooth lines.
 - **Date:** 2026-10-28

@@ -17,7 +17,6 @@ from quantdeck_engine.backtest.simulator import Result, Trade
 class Summary:
     trades: int
     wins: int
-    net: Decimal
     fees: Decimal
     funding: Decimal
     expectancy: Decimal | None  # USDT per trade
@@ -41,7 +40,6 @@ def summarize(result: Result) -> Summary:
     return Summary(
         trades=len(trades),
         wins=len(wins),
-        net=sum((t.net for t in trades), Decimal(0)),
         fees=sum((t.fees for t in trades), Decimal(0)),
         funding=sum((t.funding for t in trades), Decimal(0)),
         expectancy=_mean([t.net for t in trades]),

@@ -264,8 +264,10 @@ async def user_data_stream(
 
 def _parse_or_raw(data: dict[str, Any]) -> UserEvent:
     event_type = data.get("e", "")
-    # Payloads as received, for checking them against the docs (binanceNotes.md).
-    logger.debug("User data event: %s", json.dumps(data, separators=(",", ":")))
+    # Payloads as received, for checking them against the docs (binanceNotes.md). Encoded only
+    # when DEBUG is on, since every event passes here.
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug("User data event: %s", json.dumps(data, separators=(",", ":")))
     if event_type == "MARGIN_CALL":
         logger.warning("MARGIN_CALL: %s", data)
     try:

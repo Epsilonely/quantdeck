@@ -30,6 +30,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
+from quantdeck_engine.amounts import fixed_point
 from quantdeck_engine.binance.rest import REQUEST_ERRORS
 from quantdeck_engine.binance.streams import Kline
 from quantdeck_engine.chart import CandleChart
@@ -133,16 +134,16 @@ class ForwardRecord:
         row = [
             candle.open_time,
             utc_text(candle.open_time),
-            _text(candle.open),
-            _text(candle.high),
-            _text(candle.low),
-            _text(candle.close),
-            _text(candle.volume),
+            fixed_point(candle.open),
+            fixed_point(candle.high),
+            fixed_point(candle.low),
+            fixed_point(candle.close),
+            fixed_point(candle.volume),
             "" if position is None else position.side,
-            "" if position is None else _text(position.quantity),
-            "" if position is None else _text(position.entry_price),
+            "" if position is None else fixed_point(position.quantity),
+            "" if position is None else fixed_point(position.entry_price),
             "" if action is None else action_name(action),
-            _text(action.stop_price) if isinstance(action, Enter) else "",
+            fixed_point(action.stop_price) if isinstance(action, Enter) else "",
             outcome,
             iso_utc(self._clock()),
         ]
@@ -230,7 +231,8 @@ class StrategyRunner:
             # The config check refuses such a strategy at startup; this is the backstop. It
             # stops this symbol's strategy, never the engine (D-43).
             raise UnsupportedAction(
-                f"limit entry at {_text(action.limit_price)}: the engine places market entries only"
+                f"limit entry at {fixed_point(action.limit_price)}: "
+                "the engine places market entries only"
             )
         self.last_candle = candle
         logger.info(
@@ -238,7 +240,7 @@ class StrategyRunner:
             self.symbol,
             candle.interval,
             utc_text(candle.open_time),
-            _text(candle.close),
+            fixed_point(candle.close),
             "no signal" if action is None else _describe(action),
         )
         outcome = ""
@@ -306,7 +308,7 @@ class StrategyRunner:
                 return SignalResult.NOT_ENTERED, "not entered; see the log"
             return (
                 SignalResult.ENTERED,
-                f"entered {_text(plan.quantity)} at ~{_text(plan.reference_price)}",
+                f"entered {fixed_point(plan.quantity)} at ~{fixed_point(plan.reference_price)}",
             )
         except (*REQUEST_ERRORS, OrderOutcomeUnclear) as e:
             logger.error(
@@ -321,9 +323,4 @@ class StrategyRunner:
 def _describe(action: Action) -> str:
     if isinstance(action, Exit):
         return "exit"
-    return f"enter {action.side}, stop {_text(action.stop_price)}"
-
-
-def _text(amount: Decimal) -> str:
-    """Fixed-point, never exponent notation."""
-    return format(amount, "f")
+    return f"enter {action.side}, stop {fixed_point(action.stop_price)}"

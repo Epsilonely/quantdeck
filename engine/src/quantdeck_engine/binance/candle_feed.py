@@ -103,7 +103,11 @@ class ClosedCandleFeed:
         server_ms = await self._client.server_time()
         settled = settled_klines(rows, self.symbol, self.interval, server_ms)
         if self._chart is not None:
-            self._chart.reset(settled)  # it keeps what it needs
+            # It keeps what it needs. Its levels take up to about a second with the ADX
+            # filter on (D-56), so they are computed off the event loop: a chart reaches
+            # clients only once its runner has warmed up, and `levels` reads nothing but its
+            # arguments.
+            await asyncio.to_thread(self._chart.reset, settled)
         candles = settled[-count:]
         self._log_gaps(candles)
         if len(candles) < count:

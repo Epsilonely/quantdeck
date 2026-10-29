@@ -13,7 +13,7 @@ ENGINE_DIR = Path(__file__).resolve().parents[2]
 REPO_ROOT = ENGINE_DIR.parent
 
 ENV_FILE = REPO_ROOT / ".env"  # secrets and the network (techContext.md)
-CONFIG_FILE = ENGINE_DIR / "config.toml"  # strategy and risk settings (D-28)
+CONFIG_FILE = ENGINE_DIR / "config.toml"  # risk settings (D-28); first fills symbols.json (D-47)
 LOG_DIR = ENGINE_DIR / "logs"  # rolling log files (D-12)
 DATA_DIR = ENGINE_DIR / "data"  # historical candles for backtests (D-38)
 FORWARD_DIR = DATA_DIR / "forward"  # what the strategy decided in `run`, per symbol (D-43)

@@ -1,4 +1,4 @@
-"""Donchian channel breakout: the trend-following candidate for the first strategy (D-39).
+"""Donchian channel breakout: trend following, chosen as the first strategy (D-39, D-41).
 
 Enters when a candle closes beyond the extreme of the previous `entry_period` candles, with
 the stop at the opposite extreme of the previous `exit_period` candles. Exits when a candle

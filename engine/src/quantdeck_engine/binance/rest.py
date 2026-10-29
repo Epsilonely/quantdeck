@@ -10,7 +10,7 @@ import hashlib
 import hmac
 import logging
 import time
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from decimal import Decimal
 from typing import Any, Self
 from urllib.parse import urlencode
@@ -124,10 +124,18 @@ class BinanceRestClient:
     async def symbol_info(self, symbol: str) -> dict[str, Any]:
         """The symbol's `exchangeInfo` entry: status, margin asset, filters. Raises
         `UnknownSymbol` if the exchange doesn't list it."""
-        for entry in (await self.exchange_info())["symbols"]:
-            if entry["symbol"] == symbol:
-                return entry
-        raise UnknownSymbol(f"{symbol} is not in exchangeInfo")
+        return (await self.symbol_infos([symbol]))[symbol]
+
+    async def symbol_infos(self, symbols: Iterable[str]) -> dict[str, dict[str, Any]]:
+        """Each symbol's `exchangeInfo` entry, from one request: the endpoint lists every
+        symbol whatever is asked. Raises `UnknownSymbol` if the exchange doesn't list one."""
+        listed = {entry["symbol"]: entry for entry in (await self.exchange_info())["symbols"]}
+        found = {}
+        for symbol in symbols:
+            if symbol not in listed:
+                raise UnknownSymbol(f"{symbol} is not in exchangeInfo")
+            found[symbol] = listed[symbol]
+        return found
 
     async def klines(
         self,

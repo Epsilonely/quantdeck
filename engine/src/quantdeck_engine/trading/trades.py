@@ -27,8 +27,8 @@ from decimal import Decimal
 from enum import StrEnum
 from typing import Any
 
+from quantdeck_engine.amounts import fixed_point
 from quantdeck_engine.binance.rest import REQUEST_ERRORS, BinanceRestClient
-from quantdeck_engine.snapshot import fixed_point
 from quantdeck_engine.times import DAY_MS, iso_utc
 from quantdeck_engine.trading.balance import fetch_income
 from quantdeck_engine.trading.order_ids import Role, parse_client_id

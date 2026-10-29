@@ -289,8 +289,8 @@ class ClientServer:
             "emergency_close": lambda _: self._emergency_close(),
             "lift_halt": lambda _: self._lift_halt(),
             "stop_engine": lambda _: self._stop_engine(),
-            "set_symbol": self._set_symbol,
-            "remove_symbol": self._remove_symbol,
+            "set_symbol": self._symbol_command("change", self._engine.set_symbol),
+            "remove_symbol": self._symbol_command("removal", self._engine.remove_symbol),
             "pause_symbol": self._symbol_command("pause", self._engine.pause_symbol),
             "close_symbol": self._symbol_command("close and pause", self._engine.close_symbol),
             "resume_symbol": self._symbol_command("resume", self._engine.resume_symbol),
@@ -325,14 +325,6 @@ class ClientServer:
         logger.warning("Engine stop requested by a client")
         await self._engine.stop()
         return True, "engine stopping; exchange-side stops keep protecting open positions"
-
-    async def _set_symbol(self, args: dict[str, Any]) -> tuple[bool, str]:
-        logger.info("Symbol change requested by a client: %s", json.dumps(args))
-        return True, await self._engine.set_symbol(args)
-
-    async def _remove_symbol(self, args: dict[str, Any]) -> tuple[bool, str]:
-        logger.info("Symbol removal requested by a client: %s", json.dumps(args))
-        return True, await self._engine.remove_symbol(args)
 
     def _symbol_command(
         self, what: str, run: Callable[[dict[str, Any]], Awaitable[str]]

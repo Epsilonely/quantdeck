@@ -48,8 +48,6 @@ class DataError(Exception):
 
 @dataclass(frozen=True)
 class Candles:
-    symbol: str
-    interval: str
     klines: list[Kline]  # closed, oldest first, no duplicates
     gaps: list[tuple[int, int]]  # open times (ms) of the candles on either side of each gap
 
@@ -188,7 +186,7 @@ class HistoricalData:
             )
         if len(gaps) > MAX_GAPS_LOGGED:
             logger.warning("%s: %d more gaps", label, len(gaps) - MAX_GAPS_LOGGED)
-        return Candles(symbol=symbol, interval=interval, klines=klines, gaps=gaps)
+        return Candles(klines=klines, gaps=gaps)
 
     def funding_rates(
         self, symbol: str, start: date, end: date, *, today: date | None = None

@@ -12,13 +12,12 @@ import logging
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
 from quantdeck_engine.binance.rest import REQUEST_ERRORS, BinanceRestClient
 from quantdeck_engine.config import TradingConfig
-from quantdeck_engine.times import day_start_ms
+from quantdeck_engine.times import day_start_ms, iso_utc
 from quantdeck_engine.trading.balance import BaseBalance, fetch_income
 from quantdeck_engine.trading.executor import (
     OrderOutcomeUnclear,
@@ -263,9 +262,7 @@ class RiskGuard:
         async with self._kill_lock:
             if self.halt_reason is None:
                 self.halt_reason = reason
-                self.halted_at = datetime.fromtimestamp(self._clock(), UTC).isoformat(
-                    timespec="seconds"
-                )
+                self.halted_at = iso_utc(self._clock())
             logger.error(
                 "KILL SWITCH: %s. Closing every position and cancelling every order; "
                 "trading stays halted until `quantdeck-engine lift-halt`.",
