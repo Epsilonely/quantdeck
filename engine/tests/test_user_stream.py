@@ -16,6 +16,7 @@ from quantdeck_engine.binance import streams
 from quantdeck_engine.binance.rest import BinanceRestClient
 from quantdeck_engine.binance.user_stream import (
     AccountUpdate,
+    AlgoUpdate,
     OrderUpdate,
     RawEvent,
     UserEvent,
@@ -108,45 +109,39 @@ def expired(key: str) -> dict[str, Any]:
 def test_parse_order_update() -> None:
     event = parse_user_event(ORDER_SAMPLE)
     assert isinstance(event, OrderUpdate)
-    assert event.event_time == 1568879465651
-    assert (event.symbol, event.order_id, event.client_order_id) == ("BTCUSDT", 8886774, "TEST")
-    assert (event.side, event.order_type, event.position_side) == (
-        "SELL",
-        "TRAILING_STOP_MARKET",
-        "LONG",
-    )
+    assert (event.symbol, event.client_order_id) == ("BTCUSDT", "TEST")
+    assert (event.side, event.order_type) == ("SELL", "TRAILING_STOP_MARKET")
     assert (event.execution_type, event.status) == ("NEW", "NEW")
     assert event.quantity == Decimal("0.001")
-    assert event.stop_price == Decimal("7103.04")
-    assert event.filled_quantity == Decimal("0")
-    assert (event.commission, event.commission_asset) == (Decimal("0"), "USDT")
-    assert event.realized_profit == Decimal("0")
-    assert (event.reduce_only, event.close_position) == (False, False)
-    assert (event.trade_id, event.trade_time) == (0, 1568879465650)
+    assert (event.average_price, event.filled_quantity) == (Decimal("0"), Decimal("0"))
+    assert event.reduce_only is False
 
 
-def test_parse_order_update_without_commission_fields() -> None:
-    order = {k: v for k, v in ORDER_SAMPLE["o"].items() if k not in ("N", "n")}
-    event = parse_user_event({**ORDER_SAMPLE, "o": order})
-    assert isinstance(event, OrderUpdate)
-    assert (event.commission, event.commission_asset) == (Decimal("0"), None)
+def test_events_need_only_the_fields_the_engine_reads() -> None:
+    # A field nothing reads can go missing without losing the event.
+    order = {"s": "BTCUSDT", "c": "TEST", "S": "SELL", "o": "MARKET", "x": "TRADE", "X": "FILLED"}
+    order |= {"R": True, "q": "0.083", "ap": "59400", "z": "0.083"}
+    assert isinstance(parse_user_event({"e": "ORDER_TRADE_UPDATE", "o": order}), OrderUpdate)
+    account = {
+        "m": "ORDER",
+        "B": [{"a": "USDT", "wb": "4990"}],
+        "P": [{"s": "BTCUSDT", "pa": "0", "ep": "0", "ps": "BOTH"}],
+    }
+    assert isinstance(parse_user_event({"e": "ACCOUNT_UPDATE", "a": account}), AccountUpdate)
+    algo = {"s": "BTCUSDT", "caid": "qd_s_BTCUSDT_1_00", "o": "STOP_MARKET", "S": "SELL"}
+    algo |= {"X": "NEW", "tp": "59400", "cp": True}
+    assert isinstance(parse_user_event({"e": "ALGO_UPDATE", "o": algo}), AlgoUpdate)
 
 
 def test_parse_account_update() -> None:
     event = parse_user_event(ACCOUNT_SAMPLE)
     assert isinstance(event, AccountUpdate)
-    assert (event.event_time, event.reason) == (1564745798939, "ORDER")
+    assert event.reason == "ORDER"
     (balance,) = event.balances
     assert balance.asset == "USDT"
     assert balance.wallet_balance == Decimal("122624.12345678")
-    assert balance.cross_wallet_balance == Decimal("100.12345678")
-    assert balance.balance_change == Decimal("50.12345678")
     (position,) = event.positions
-    assert (position.symbol, position.margin_type, position.position_side) == (
-        "BTCUSDT",
-        "isolated",
-        "BOTH",
-    )
+    assert (position.symbol, position.position_side) == ("BTCUSDT", "BOTH")
     assert position.amount == Decimal("0")
     assert position.entry_price == Decimal("0.00000")
 

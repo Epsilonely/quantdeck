@@ -170,7 +170,6 @@ async def kline_stream(
 class MarkPrice:
     symbol: str
     price: Decimal
-    event_time: int  # ms
 
 
 def mark_price_stream_url(ws_root: str, symbols: Iterable[str]) -> str:
@@ -181,7 +180,7 @@ def mark_price_stream_url(ws_root: str, symbols: Iterable[str]) -> str:
 def parse_mark_price(message: str | bytes) -> MarkPrice:
     """One `markPriceUpdate` from a combined stream (`{"stream": ..., "data": ...}`)."""
     data = json.loads(message)["data"]
-    return MarkPrice(symbol=data["s"], price=Decimal(data["p"]), event_time=data["E"])
+    return MarkPrice(symbol=data["s"], price=Decimal(data["p"]))
 
 
 async def mark_price_stream(ws_root: str, symbols: Iterable[str]) -> AsyncIterator[MarkPrice]:

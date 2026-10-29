@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 import pytest
-from fake_exchange import SETTINGS, SYMBOLS, TRADING, FakeExchange, open_long
+from fake_exchange import SETTINGS, SYMBOLS, TRADING, Failure, FakeExchange, open_long
 from websockets.asyncio.client import connect
 
 from quantdeck_engine.amounts import fixed_point
@@ -205,9 +205,9 @@ async def test_reconnect_and_funding_request_a_check(
     store: HaltStore, symbol_store: SymbolStore
 ) -> None:
     engine = await start(FakeExchange(), store, symbol_store)
-    engine.on_event(AccountUpdate(event_time=0, reason="ORDER", balances=(), positions=()))
+    engine.on_event(AccountUpdate(reason="ORDER", balances=(), positions=()))
     assert not engine.checker.requested
-    engine.on_event(AccountUpdate(event_time=0, reason="FUNDING_FEE", balances=(), positions=()))
+    engine.on_event(AccountUpdate(reason="FUNDING_FEE", balances=(), positions=()))
     assert engine.checker.requested
 
     engine = await start(FakeExchange(), store, symbol_store)
@@ -245,6 +245,33 @@ async def test_closed_position_requests_a_check_and_cancels_its_stop(
     await engine.on_change(PositionClosed("BTCUSDT"))
     assert engine.checker.requested
     assert exchange.algo_orders == []
+
+
+async def test_a_close_in_progress_holds_back_no_events(
+    store: HaltStore, symbol_store: SymbolStore
+) -> None:
+    exchange = FakeExchange()
+    engine = await start(exchange, store, symbol_store)
+    exchange.add_stop("SELL", "59400")
+    async with asyncio.TaskGroup() as tasks:
+        engine._tasks = tasks  # as while running
+        # The engine closing the position itself holds the symbol's lock.
+        async with engine.traders["BTCUSDT"]._lock:
+            await asyncio.wait_for(engine.on_change(PositionClosed("BTCUSDT")), 1)
+            await asyncio.sleep(0.01)
+            assert exchange.algo_orders != []  # waits for the close to finish
+        await until(lambda: exchange.algo_orders == [])
+
+
+async def test_a_failed_cleanup_is_logged(
+    store: HaltStore, symbol_store: SymbolStore, caplog: pytest.LogCaptureFixture
+) -> None:
+    exchange = FakeExchange()
+    engine = await start(exchange, store, symbol_store)
+    exchange.fail("GET", "/fapi/v3/positionRisk", Failure(httpx.ConnectError("down")))
+    with caplog.at_level(logging.ERROR):
+        await engine.on_change(PositionClosed("BTCUSDT"))
+    assert "BTCUSDT: cancelling leftover orders failed" in caplog.text
 
 
 # The risk checker (D-30)

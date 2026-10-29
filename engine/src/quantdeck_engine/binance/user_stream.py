@@ -9,6 +9,10 @@ Behavior verified on testnet is recorded in docs/memory-bank/binanceNotes.md. In
   a key fetched right before it.
 - Events sent while disconnected are lost. Every (re)connect yields `UserStreamConnected`,
   and the consumer must then refresh positions, balances, and open orders from REST.
+
+Only the fields the engine reads are parsed. Each is required, and a missing one turns the
+whole event into a `RawEvent` that changes no state, so parsing a field nothing reads would
+only add ways to lose an event.
 """
 
 import asyncio
@@ -40,37 +44,22 @@ class UserStreamConnected:
 class OrderUpdate:
     """`ORDER_TRADE_UPDATE`: an order was created or its status changed."""
 
-    event_time: int  # ms
     symbol: str
-    order_id: int
     client_order_id: str
     side: str  # BUY, SELL
     order_type: str  # LIMIT, MARKET, STOP_MARKET, ..., LIQUIDATION
     execution_type: str  # NEW, TRADE, CANCELED, EXPIRED, CALCULATED, AMENDMENT
     status: str  # NEW, PARTIALLY_FILLED, FILLED, CANCELED, EXPIRED, EXPIRED_IN_MATCH
-    position_side: str
     reduce_only: bool
-    close_position: bool  # a close-all conditional order
     quantity: Decimal
-    price: Decimal
-    stop_price: Decimal
     average_price: Decimal
-    last_filled_quantity: Decimal
-    last_filled_price: Decimal
     filled_quantity: Decimal  # accumulated
-    commission: Decimal
-    commission_asset: str | None
-    realized_profit: Decimal
-    trade_id: int
-    trade_time: int  # ms
 
 
 @dataclass(frozen=True)
 class BalanceChange:
     asset: str
     wallet_balance: Decimal
-    cross_wallet_balance: Decimal
-    balance_change: Decimal  # excluding PnL and commission
 
 
 @dataclass(frozen=True)
@@ -78,8 +67,6 @@ class PositionChange:
     symbol: str
     amount: Decimal  # negative for a short position
     entry_price: Decimal
-    unrealized_pnl: Decimal
-    margin_type: str
     position_side: str
 
 
@@ -87,7 +74,6 @@ class PositionChange:
 class AccountUpdate:
     """`ACCOUNT_UPDATE`: balances or positions changed."""
 
-    event_time: int  # ms
     reason: str  # ORDER, FUNDING_FEE, DEPOSIT, ...
     balances: tuple[BalanceChange, ...]
     positions: tuple[PositionChange, ...]  # only symbols whose position changed
@@ -102,19 +88,13 @@ class AlgoUpdate:
     REJECTED, EXPIRED.
     """
 
-    event_time: int  # ms
     symbol: str
-    algo_id: int
     client_algo_id: str
     order_type: str  # STOP_MARKET, TAKE_PROFIT, ...
     side: str
-    position_side: str
     status: str
     trigger_price: Decimal
     close_position: bool
-    reduce_only: bool
-    working_type: str
-    actual_order_id: str  # the matching-engine orderId once triggered, else ""
     reject_reason: str  # why the algo order failed, if it did
 
 
@@ -132,44 +112,27 @@ UserEvent = UserStreamConnected | OrderUpdate | AccountUpdate | AlgoUpdate | Raw
 def parse_order_update(data: dict[str, Any]) -> OrderUpdate:
     o = data["o"]
     return OrderUpdate(
-        event_time=data["E"],
         symbol=o["s"],
-        order_id=o["i"],
         client_order_id=o["c"],
         side=o["S"],
         order_type=o["o"],
         execution_type=o["x"],
         status=o["X"],
-        position_side=o["ps"],
         reduce_only=o["R"],
-        close_position=o.get("cp", False),
         quantity=Decimal(o["q"]),
-        price=Decimal(o["p"]),
-        stop_price=Decimal(o["sp"]),
         average_price=Decimal(o["ap"]),
-        last_filled_quantity=Decimal(o["l"]),
-        last_filled_price=Decimal(o["L"]),
         filled_quantity=Decimal(o["z"]),
-        # Older docs say these two are left out when there is no commission.
-        commission=Decimal(o.get("n", "0")),
-        commission_asset=o.get("N"),
-        realized_profit=Decimal(o["rp"]),
-        trade_id=o["t"],
-        trade_time=o["T"],
     )
 
 
 def parse_account_update(data: dict[str, Any]) -> AccountUpdate:
     a = data["a"]
     return AccountUpdate(
-        event_time=data["E"],
         reason=a["m"],
         balances=tuple(
             BalanceChange(
                 asset=b["a"],
                 wallet_balance=Decimal(b["wb"]),
-                cross_wallet_balance=Decimal(b["cw"]),
-                balance_change=Decimal(b["bc"]),
             )
             for b in a.get("B", [])
         ),
@@ -178,8 +141,6 @@ def parse_account_update(data: dict[str, Any]) -> AccountUpdate:
                 symbol=p["s"],
                 amount=Decimal(p["pa"]),
                 entry_price=Decimal(p["ep"]),
-                unrealized_pnl=Decimal(p["up"]),
-                margin_type=p["mt"],
                 position_side=p["ps"],
             )
             for p in a.get("P", [])
@@ -190,19 +151,13 @@ def parse_account_update(data: dict[str, Any]) -> AccountUpdate:
 def parse_algo_update(data: dict[str, Any]) -> AlgoUpdate:
     o = data["o"]
     return AlgoUpdate(
-        event_time=data["E"],
         symbol=o["s"],
-        algo_id=o["aid"],
         client_algo_id=o["caid"],
         order_type=o["o"],
         side=o["S"],
-        position_side=o["ps"],
         status=o["X"],
         trigger_price=Decimal(o["tp"]),
         close_position=o["cp"],
-        reduce_only=o["R"],
-        working_type=o["wt"],
-        actual_order_id=o.get("ai", ""),
         reject_reason=o.get("rm", ""),
     )
 

@@ -128,6 +128,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Why:** `closePosition` closes whatever position exists when it triggers, so the stop never has to be resized when the position changes; a quantity-based `reduceOnly` stop leaves part of the position unprotected until it is updated. Mark price is what liquidation uses, so "the stop fires before liquidation" (D-16) can be checked in a single price type, and mark price ignores short wicks in the last price. `priceProtect` can block the trigger when mark and last price diverge, which is exactly when a stop matters.
 - **Trade-off:** A mark-price stop can fire later than a last-price stop when the last price moves first, so fills can be worse than the trigger price.
 - **Note:** Binance itself expires a `closePosition` stop once its position is gone (testnet, 2026-10-10), so the engine's cancel is a backstop.
+- **Note (2026-10-29, GitHub issue #39):** The cancel that follows a closed position on the user data stream runs as a task of its own. When the engine closes the position itself, the close still holds the symbol's lock, and awaiting the cancel there had held back every symbol's events until the close ended (most of a kill switch). The cancel still checks under the lock that the symbol is flat, so an entry made meanwhile keeps its stop.
 - **Date:** 2026-10-03
 
 ## D-19 Never leave a position without an exchange-side stop

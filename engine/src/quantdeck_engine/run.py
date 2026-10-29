@@ -331,8 +331,16 @@ class Engine:
             case PositionClosed(symbol):
                 logger.info("%s: position closed", symbol)
                 self.checker.request()
-                if (trader := self.traders.get(symbol)) is not None:
-                    await trader.on_position_closed()
+                if (trader := self.traders.get(symbol)) is None:
+                    return
+                # Not awaited while running: when the engine closes the position itself (a
+                # strategy exit, the user's close, the kill switch), the close still holds the
+                # symbol's lock, and the stream would hold back every symbol's events until it
+                # ended.
+                if self._tasks is not None:
+                    self._tasks.create_task(self._clear_leftovers(trader))
+                else:
+                    await self._clear_leftovers(trader)
             case PositionOpened(symbol, amount):
                 logger.info("%s: position opened: %s", symbol, amount)
 
@@ -447,6 +455,15 @@ class Engine:
         """Run a strategy; before `run`, it starts with the others."""
         if self._tasks is not None:
             self._runner_tasks[runner.symbol] = self._tasks.create_task(runner.run())
+
+    async def _clear_leftovers(self, trader: SymbolTrader) -> None:
+        """Cancel what a closed position left on the exchange (D-18). The trader checks under
+        its lock that the symbol is still flat, so an entry made meanwhile keeps its stop."""
+        try:
+            await trader.on_position_closed()
+        except REQUEST_ERRORS:
+            # A backstop: Binance itself expires a closePosition stop once its position is gone.
+            logger.exception("%s: cancelling leftover orders failed", trader.symbol)
 
     async def _stop_runner(self, symbol: str) -> None:
         self.runners.pop(symbol, None)

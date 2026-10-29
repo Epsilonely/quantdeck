@@ -57,7 +57,7 @@ Source: [Connect](https://developers.binance.com/en/docs/products/derivatives-tr
 Source: testnet response
 
 - `<symbol>@markPrice@1s` works on the `/market` route as a combined stream: `wss://demo-fstream.binance.com/market/stream?streams=btcusdt@markPrice@1s` delivered one update a second.
-- Combined-stream messages wrap the payload as `{"stream": ..., "data": {...}}`. The engine reads `data.s` (symbol), `data.p` (mark price, a string), and `data.E` (event time, ms); the other fields are unchecked.
+- Combined-stream messages wrap the payload as `{"stream": ..., "data": {...}}`. The engine reads `data.s` (symbol) and `data.p` (mark price, a string); the other fields are unchecked.
 
 ### Signed requests (2026-10-02)
 
@@ -128,7 +128,7 @@ Source: [User Data Streams](https://developers.binance.com/en/docs/products/deri
 - Event types: `ORDER_TRADE_UPDATE`, `ACCOUNT_UPDATE`, `ALGO_UPDATE` (algo/conditional orders), `ACCOUNT_CONFIG_UPDATE`, `MARGIN_CALL`, `TRADE_LITE`, `CONDITIONAL_ORDER_TRIGGER_REJECT`, `STRATEGY_UPDATE`, `GRID_UPDATE` (deprecated), `listenKeyExpired`.
 - Ordering: on one connection, events of the same type are strictly ordered by `T` and `E`; across types, order by `E`.
 - `ACCOUNT_UPDATE` is pushed only when balances, positions, or margin type change (not for unfilled or cancelled orders), with only the changed symbols in `P`. `a.m` gives the reason (`ORDER`, `FUNDING_FEE`, `MARGIN_TYPE_CHANGE`, ...).
-- Seen on testnet (2026-10-10): a market order produces `TRADE_LITE`, then `ORDER_TRADE_UPDATE` (`x`/`X` `NEW`), `ACCOUNT_UPDATE` (`m: "ORDER"`), and `ORDER_TRADE_UPDATE` (`TRADE`/`FILLED`). `n` and `N` were present even at zero commission (older docs said they could be left out; the parser tolerates both).
+- Seen on testnet (2026-10-10): a market order produces `TRADE_LITE`, then `ORDER_TRADE_UPDATE` (`x`/`X` `NEW`), `ACCOUNT_UPDATE` (`m: "ORDER"`), and `ORDER_TRADE_UPDATE` (`TRADE`/`FILLED`). `n` and `N` were present even at zero commission (older docs said they could be left out; the engine doesn't read them).
 - `ACCOUNT_UPDATE` `P` entries also carry `cr`, `iw` (isolated wallet), `ma` (margin asset), and `bep`. `mt` is lowercase (`isolated`), unlike REST's `ISOLATED`. Right after an entry, `iw` was exactly the initial margin (notional ÷ leverage) minus the opening commission.
 - `CONDITIONAL_ORDER_TRIGGER_REJECT` is deprecated since 2025-12-15 (Change Log); rejection reasons come in `ALGO_UPDATE` `rm`.
 - Orders the exchange places itself (docs, 2026-10-22): a liquidation's `ORDER_TRADE_UPDATE` has `c` `autoclose-XXX`, an ADL's `adl_autoclose`.
@@ -258,7 +258,7 @@ Check each item while implementing the related feature:
 - [ ] Exchange-side stops: the error a `STOP_MARKET` gets when its trigger is already crossed (`-2021` or `-4142`), and whether a `closePosition` stop can be placed with no open position.
 - [ ] A stop that triggers: the `ALGO_UPDATE` sequence (`TRIGGERING` → `TRIGGERED` → `FINISHED`?), which the engine doesn't log at INFO. The order it places is under Algo orders above.
 - [ ] Trade history reads (D-51): whether `userTrades` with `startTime` returns the oldest fills first (the engine pages forward by time past 1000), whether `allOrders` with `orderId` alone reaches back only 7 days, and which time `allAlgoOrders`' `startTime`/`endTime` filter (creation or update).
-- [ ] `GET /fapi/v1/openOrders` with a non-empty result (the engine reads `clientOrderId`, `orderId`, `side`, `type`, `origQty`, `reduceOnly`).
+- [ ] `GET /fapi/v1/openOrders` with a non-empty result (the engine reads `clientOrderId`, `side`, `type`, `origQty`, `reduceOnly`).
 - [ ] Margin type and leverage: the errors when changing them with a position or open orders (docs: `-4047`, `-4048`, `-4161`).
 - [ ] Income history paging past 1000 records within one day.
 - [ ] Income history delay: how soon `REALIZED_PNL` and `COMMISSION` appear after a fill (D-30). The `trial` prints it. Its first run (2026-10-16) queried from a mid-second start time and missed the records. After the fix, the second run (2026-10-16) saw the close 1.1 s after the kill switch finished, on the second read. Only one sample on testnet; repeat it, and check mainnet before relying on it.

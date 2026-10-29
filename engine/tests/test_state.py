@@ -110,13 +110,10 @@ def test_parse_algo_update_sample() -> None:
     event = parse_user_event(ALGO_SAMPLE)
     assert isinstance(event, AlgoUpdate)
     assert event.client_algo_id == "Q5xaq5EGKgXXa0fD7fs0Ip"
-    assert event.algo_id == 2148719
     assert event.order_type == "TAKE_PROFIT"
     assert event.status == "CANCELED"
     assert event.trigger_price == D(750)
     assert event.close_position is False
-    assert event.working_type == "CONTRACT_PRICE"
-    assert event.actual_order_id == ""
     assert event.reject_reason == "Reduce Only reject"
 
 

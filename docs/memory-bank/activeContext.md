@@ -26,6 +26,7 @@ Merged work not yet seen against a real engine:
 - Switching the Windows app mode while the GUI runs (D-35).
 - The log window (#35, D-55) in a packaged build. It has run in `npm run dev`.
 - The cleanup of #38 on a running engine and GUI: the chart's candles now reach the renderer one symbol at a time, so another symbol's closed candle mustn't redraw the chart while a reconnect still clears every list; and the chart's levels are filled in a worker thread at startup and on a strategy change. Checked only with tests and a build.
+- The cleanup after a closed position as a task of its own (#39, D-18 note): on testnet, a close by the engine, above all the kill switch, should leave no stop behind while other symbols' events keep arriving. Tested with fakes only.
 
 Exchange behavior not yet seen is under To verify in `binanceNotes.md`.
 

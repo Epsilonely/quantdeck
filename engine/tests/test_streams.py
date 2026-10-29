@@ -163,8 +163,4 @@ def test_mark_price_url_combines_symbols_on_the_market_route() -> None:
 
 def test_parse_mark_price() -> None:
     update = parse_mark_price(json.dumps(MARK_PRICE))
-    assert (update.symbol, update.price, update.event_time) == (
-        "BTCUSDT",
-        Decimal("11794.15000000"),
-        1562305380000,
-    )
+    assert (update.symbol, update.price) == ("BTCUSDT", Decimal("11794.15000000"))

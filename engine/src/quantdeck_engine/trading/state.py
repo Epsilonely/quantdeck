@@ -35,7 +35,6 @@ OPEN_ALGO_STATUSES = {"NEW"}
 @dataclass(frozen=True)
 class OpenOrder:
     client_id: str
-    order_id: int
     side: str
     order_type: str
     quantity: Decimal
@@ -45,7 +44,6 @@ class OpenOrder:
 @dataclass(frozen=True)
 class OpenAlgoOrder:
     client_algo_id: str
-    algo_id: int
     side: str
     order_type: str
     trigger_price: Decimal
@@ -124,7 +122,6 @@ class AccountState:
             if state is not None:
                 state.orders[o["clientOrderId"]] = OpenOrder(
                     client_id=o["clientOrderId"],
-                    order_id=o["orderId"],
                     side=o["side"],
                     order_type=o["type"],
                     quantity=Decimal(o["origQty"]),
@@ -135,7 +132,6 @@ class AccountState:
             if state is not None:
                 state.algo_orders[a["clientAlgoId"]] = OpenAlgoOrder(
                     client_algo_id=a["clientAlgoId"],
-                    algo_id=a["algoId"],
                     side=a["side"],
                     order_type=a["orderType"],
                     trigger_price=Decimal(a["triggerPrice"]),
@@ -154,7 +150,6 @@ class AccountState:
         if event.status in OPEN_ORDER_STATUSES:
             state.orders[event.client_order_id] = OpenOrder(
                 client_id=event.client_order_id,
-                order_id=event.order_id,
                 side=event.side,
                 order_type=event.order_type,
                 quantity=event.quantity,
@@ -170,7 +165,6 @@ class AccountState:
         if event.status in OPEN_ALGO_STATUSES:
             state.algo_orders[event.client_algo_id] = OpenAlgoOrder(
                 client_algo_id=event.client_algo_id,
-                algo_id=event.algo_id,
                 side=event.side,
                 order_type=event.order_type,
                 trigger_price=event.trigger_price,
