@@ -145,3 +145,22 @@ Decisions about the backtest and the strategy search, with the evidence behind t
 - **Also seen:** the plain 55/20 does best on 4h. On 1h it is near zero on BTCUSDT (+0.005 R on 2020–2023, +0.027 R from 2024), and on 1d at 2× it barely trades, so the original turtle scale doesn't fit this leverage on altcoins.
 - **ADX live:** Wilder's smoothing never forgets, so the ADX is recomputed from the last 11 × `adx_period` candles whenever an entry needs it, and a restart gives the same value (D-36); the window's starting values weigh about 0.01%. With the filter on, the warm-up is 154 candles on the default period.
 - **Date:** 2026-10-22
+- **Note (2026-10-29):** On 15m no ADX setting made the strategy positive (D-57).
+
+## D-57 No ADX setting rescues `donchian-atr-adx` on 15m
+
+- **Decision:** On 15m, `donchian-atr-adx` with a 1.5 ATR(20) stop loses after costs on channels 55/20, 12/10, and 12/5, whatever its `adx_period` and `adx_min`. No ADX setting is recommended for 15m, and the grid isn't widened. ADX on 15m changes how often the strategy trades, not whether it loses.
+- **How it was tested** (GitHub issue #37; rules fixed in the issue before each run; 2×, D-40 costs with SOLUSDT and XRPUSDT at 0.04% slippage and 0.10% on stops, testnet risk values; BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT; 2020–2023 to select, 2024-01-01 to 2026-10-28 to check):
+  - For each channel, `adx_period` {14, 28, 56, 90} × `adx_min` {15, 20, 25, 30, 40} against the filter off. 90 is the most the engine allows (warm-up 11 × 90 = 990 of the 1000-candle bound), so 4h ADX(14)'s 56-hour span (224 candles) can't be set.
+  - The pass rules were #26's: positive expectancy on BTCUSDT and two of the other three with at least 30 trades each, and expectancy and return above the filter-off control on the same.
+  - 55/20 is the strategy's default and was run first. 12/10 and 12/5 were added because they are what the user had set on ETHUSDT and XRPUSDT (2026-10-29).
+- **Results:**
+  - Nothing passed in 2020–2023 on any channel. Every control lost on every coin: 33–100% on 55/20 and at least 97% on the 12-candle channels.
+  - On 55/20 the control made about 2,000 trades per coin, 20–24% of them winners, and about 70% of exits came at the stop. BTCUSDT's fees came to about the 5000 USDT starting balance, and the daily limit was hit on 84–128 days per coin.
+  - Stricter filters lost less only by trading less; expectancy stayed negative in nearly every cell. The few positive cells were scattered, with t under 0.7. Longer periods did worse, mostly −0.2 to −0.7 R.
+  - On the 12-candle channels, ADX 14/20 kept about 90% of the trades and left expectancy the same or worse (12/5 from 2024: −0.382 R against the control's −0.365 R).
+  - The settings exactly as set (XRPUSDT 12/5 at 3×, ETHUSDT 12/10 at 5×, both ADX 14/20) lost nearly the whole balance in both periods. From 2024 they hit the daily limit on 153 and 193 days, about 4.5 and 5.7 times a month.
+  - From 2024, run for reference only: 55/20's pick, 56/40, traded 4–16 times per coin. 12/5's pick, 14/40, lost on every coin. 12/10's pick, 90/30, met both rules (+0.010 to +0.218 R on three coins, t 0.02–0.59, 44–90 trades), but it had lost on three of four coins in 2020–2023, so its sign flips with the period and it isn't adopted.
+- **Lesson for future rules:** a pick that breaks ties by mean return ÷ drawdown favors a setting that hardly trades, since it hardly loses. Any pick by a ratio needs the trade minimum too; the 12-candle runs applied it.
+- **For the engine exercises:** any of these settings on an exercise symbol would hit the daily limit several times a month in the backtest, and the kill switch would halt the BTCUSDT forward test with it.
+- **Date:** 2026-10-29

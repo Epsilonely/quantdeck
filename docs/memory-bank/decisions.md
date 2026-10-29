@@ -2,7 +2,7 @@
 
 Design decisions and why they were made. Add new entries at the bottom. When a decision is reversed, mark the old entry `Superseded by D-XX` instead of deleting it.
 
-The backtest and the strategy search (D-37 to D-41, D-44 to D-46, D-52) are in `strategyResearch.md`. The two files share one numbering: a new entry takes the next number after the highest in either file and goes at the bottom of the file for its area.
+The backtest and the strategy search (D-37 to D-41, D-44 to D-46, D-52, D-57) are in `strategyResearch.md`. The two files share one numbering: a new entry takes the next number after the highest in either file and goes at the bottom of the file for its area.
 
 Safety rules (`reduceOnly`, exchange-side stops, kill switch, key handling, …) live in CLAUDE.md, not here.
 
