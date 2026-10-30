@@ -10,6 +10,33 @@ import { clock } from './format'
 // The same popup coming again within this long chimes once.
 const SOUND_GAP_MS = 1500
 
+// The bundled fonts the popup draws with. They load with font-display: swap, and each popup is a
+// page of its own that loads them again, so the window waits for them: shown earlier, its text
+// changed font, and moved, once on screen (#45). A font that doesn't load holds it back this long
+// at most, and the popup shows in the fallback font.
+const FONTS = [
+  '600 14px "Pretendard Variable"',
+  '400 13px "Pretendard Variable"',
+  '12px "JetBrains Mono Variable"'
+]
+const FONT_WAIT_MS = 1500
+
+/** Resolves once the popup's fonts have loaded and a frame has been painted with them. */
+function whenDrawn(): Promise<void> {
+  const fonts = Promise.all(FONTS.map((font) => document.fonts.load(font))).then(
+    () => document.fonts.ready
+  )
+  const capped = Promise.race([fonts, new Promise((resolve) => setTimeout(resolve, FONT_WAIT_MS))])
+  return capped.then(
+    () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+        // In case frames don't run while the window is hidden.
+        setTimeout(resolve, 100)
+      })
+  )
+}
+
 // Each tone's notes, in Hz: rising for news, level for a warning, falling and rising for danger.
 const CHIMES: Record<PopupTone, number[]> = {
   info: [660, 880],
@@ -42,9 +69,10 @@ function chime(tone: PopupTone): void {
 function PopupPage(): React.JSX.Element | null {
   const [popup, setPopup] = useState<Popup | null>(null)
   const [hovered, setHovered] = useState(false)
+  const [onScreen, setOnScreen] = useState(false) // the main process has been told to show it
   const remaining = useRef(0) // ms left before it closes, while the pointer is away
   const lastSound = useRef(-Infinity)
-  const drawn = useRef(false)
+  const told = useRef(false)
 
   useEffect(() => {
     const { popupApi } = window
@@ -60,33 +88,37 @@ function PopupPage(): React.JSX.Element | null {
     }
   }, [])
 
-  // The window stays hidden until the popup is on the page, so it never shows empty (#43).
+  // The window stays hidden until the popup is drawn in its own fonts, so it never shows empty
+  // (#43) or changes font on screen (#45).
   useEffect(() => {
-    if (!popup || drawn.current) return
-    drawn.current = true
-    window.popupApi.ready()
+    if (!popup || told.current) return
+    told.current = true
+    void whenDrawn().then(() => {
+      window.popupApi.ready()
+      setOnScreen(true)
+    })
   }, [popup])
 
-  // A new or updated popup gets its whole time again, and its sound.
+  // A new or updated popup on screen gets its whole time again, and its sound.
   useEffect(() => {
-    if (!popup) return
+    if (!popup || !onScreen) return
     remaining.current = popup.seconds * 1000
     const now = performance.now()
     if (popup.sound && now - lastSound.current >= SOUND_GAP_MS) {
       lastSound.current = now
       chime(popup.tone)
     }
-  }, [popup])
+  }, [popup, onScreen])
 
   useEffect(() => {
-    if (!popup || popup.seconds === 0 || hovered) return
+    if (!popup || !onScreen || popup.seconds === 0 || hovered) return
     const started = performance.now()
     const timer = window.setTimeout(() => window.popupApi.close(), remaining.current)
     return () => {
       window.clearTimeout(timer)
       remaining.current -= performance.now() - started
     }
-  }, [popup, hovered])
+  }, [popup, onScreen, hovered])
 
   if (!popup) return null
   const lines = popup.body.split('\n').filter((line) => line !== '')
@@ -138,7 +170,7 @@ function PopupPage(): React.JSX.Element | null {
           <path d="M18 6 6 18M6 6l12 12" />
         </svg>
       </button>
-      {popup.seconds > 0 && (
+      {popup.seconds > 0 && onScreen && (
         // Restarted by each update, as the time is; it only shows the time left.
         <div
           key={`${popup.count}:${popup.time}`}
