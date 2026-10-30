@@ -506,6 +506,7 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Limitations:** a log window that is open but behind other windows counts as seen. Its size and place aren't remembered between openings.
 - **Alternatives:** a panel laid over the main window; showing and hiding the log section like the trades panel; counting in the main window's page; counting the backlog.
 - **Date:** 2026-10-28
+- **Note (2026-10-30):** Closing the main window now hides it in the tray (D-58), and the log window stays open; quitting the GUI from the tray closes both.
 
 ## D-56 The chart draws the levels a strategy decides by in the position's current state, computed by the strategy's own code
 
@@ -533,3 +534,23 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Alternatives:** the GUI computing the indicators; switching lines at the entry candle; every line in every state; smooth lines.
 - **Note (2026-10-29, GitHub issue #40):** The Donchian channels are now kept by a window updated as each candle arrives, rather than found by a pass over the channel every candle; the chart's levels run the same window over the candles before each one, so they still come from the code decisions use. The ADX keeps each candle's directional movement and redoes only the smoothing. Backtests are unchanged: before and after, 17 runs on BTCUSDT 15m, 1h, and 4h and ETHUSDT 15m across every strategy gave the same trades, balances, and equity, and the same decisions at random positions and chart levels over 40,000 candles. Donchian 880/320 on BTCUSDT 15m from 2020 went from 110 s to 3 s, 55/20 from 8 s to 3 s, and `donchian-atr-adx` at its defaults from 11 s to 5 s; with `adx_period` 90, still mostly smoothing, from 136 s to 85 s.
 - **Date:** 2026-10-28
+
+## D-58 Alarms show as popups the GUI draws itself, decided in the main process; the GUI stays in the tray
+
+- **Decision:**
+  - **Popups:** small windows of the GUI's own in the bottom-right corner of the primary screen, newest at the bottom, at most four (a fifth closes the oldest), which never take the focus (GitHub issue #42). Each has a tone (its color), an icon for its kind, a title, two lines, and the time. They stay 5, 10, or 30 s, or until closed, with the countdown paused while the pointer is over them; a click opens the main window. The same alarm coming again while shown (engine errors, a price alarm) updates that popup with a count. The sound is made with Web Audio, a few notes per tone. Each page runs sandboxed with a preload that can only read its popup and say it was clicked or is done.
+  - **What can fire:** fills from the last 7 days' trades (D-51), by role: entry; exit (strategy exits, the user's close, and other); stop; kill switch, liquidation, or ADL. From the state: the account halt, a symbol's halt, and a strategy that stopped. A lost connection, except within 60 s after the user confirmed `stop_engine`. ERROR and CRITICAL log records. Today's loss reaching a set percent of the limit, once until it falls back below. Price alarms on the display-only mark price (D-33) of the engine's symbols: a one-time alarm fires whenever its condition holds and then turns itself off; a repeating one fires each time the price moves into its condition. More than three new fills at once show as one popup.
+  - **Starting point:** what already holds when the GUI starts, or when the settings are saved, fires nothing, except a one-time price alarm. The last state and trades are kept across a lost connection, so a fill or halt that came meanwhile fires once the GUI reconnects.
+  - **Settings:** a header button opens a dialog in the main window; the main process saves them as `alarms.json` in the userData folder, like the theme (D-35), checks every value it saves or loads, and fills fields a newer version added from the defaults. By default every event is on and the loss warning is at 70%. Amounts are compared as exact decimals, never floats (D-33).
+  - **Tray:** closing the main window hides it in the tray; the tray's menu opens the window, turns every popup on or off, and quits the GUI. Only one GUI runs at a time; a second one brings up the first one's window and quits.
+  - The engine and the protocol are unchanged.
+- **Why:**
+  - The user asked (2026-10-30) for popups in the corner like KakaoTalk's, settings changed in a dialog from a header button, and a design of the app's own, like KakaoTalk's or Discord's. Windows notifications fix their colors, fonts, and layout, so the user chose popups the GUI draws. They would also have needed an AppUserModelID matching a Start Menu shortcut, and the GUI's (`com.electron`) differs from electron-builder's `appId` (`com.electron.app`).
+  - In the main process, from what it already receives: the GUI makes no exchange calls (D-08), and the engine needed no change. Alarms only display.
+  - Never taking the focus: a popup that shows while the user types elsewhere must not take the keys.
+  - The starting point: the engine sends whole lists and states (D-33, D-51), so without one a GUI restart, including the start that also starts the engine (D-34), would replay the week's fills.
+  - A plain dialog rather than the confirmation page: the settings never reach the engine, so D-53's reason (a renderer bug must not send a command) doesn't apply. The main process still checks what it saves.
+  - The tray: closing the window would otherwise end the alarms. It was proposed with the popups and taken with them.
+- **Limitations:** popups come only while the GUI runs; away from the PC that is the Discord bot's job. They don't reach Windows' notification center and don't follow its do-not-disturb setting; the dialog's and the tray's switch turn them off. A price alarm only works on the engine's symbols, on the testnet mark price (up to about 0.1% from mainnet's, `binanceNotes.md`), checked at each state (about once a second). An order whose role isn't read yet shows as other (D-51 Limitations). The primary display only.
+- **Alternatives:** Windows notifications (Electron's `Notification`, with `toastXml` for buttons and images); one window for the whole stack; alarms decided in the engine; confirming alarm settings like commands; closing the window quitting the GUI, as before.
+- **Date:** 2026-10-30

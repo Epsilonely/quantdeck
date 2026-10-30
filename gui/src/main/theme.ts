@@ -9,6 +9,8 @@ import { THEME_SOURCES, type ThemeSource } from '../shared/theme'
 
 // The window's background before the page paints; matches --bg in main.css.
 const BACKGROUND = { dark: '#15171c', light: '#f4f5f7' }
+// The same for the alarm popups, which are cards: --bg-raised.
+const RAISED = { dark: '#1e2128', light: '#ffffff' }
 
 function themeFile(): string {
   return join(app.getPath('userData'), 'theme.json')
@@ -42,4 +44,8 @@ export function setTheme(source: ThemeSource): void {
 
 export function themeBackground(): string {
   return nativeTheme.shouldUseDarkColors ? BACKGROUND.dark : BACKGROUND.light
+}
+
+export function themeRaised(): string {
+  return nativeTheme.shouldUseDarkColors ? RAISED.dark : RAISED.light
 }

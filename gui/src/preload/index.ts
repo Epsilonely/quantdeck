@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import type { AlarmApi } from '../shared/alarms'
 import type { EngineApi } from '../shared/engine'
 import type { LogWindowApi } from '../shared/logs'
 import type { ThemeApi } from '../shared/theme'
@@ -37,4 +38,12 @@ const logWindow: LogWindowApi = {
   onUnseen: (listener) => subscribe('logs:unseen', listener)
 }
 
-contextBridge.exposeInMainWorld('api', { engine, theme, logWindow })
+// The alarm settings (#42); the popups are windows of their own with their own preload.
+const alarms: AlarmApi = {
+  get: () => ipcRenderer.invoke('alarms:get'),
+  set: (settings) => ipcRenderer.invoke('alarms:set', settings),
+  test: (preview) => ipcRenderer.invoke('alarms:test', preview),
+  onChange: (listener) => subscribe('alarms:settings', listener)
+}
+
+contextBridge.exposeInMainWorld('api', { engine, theme, logWindow, alarms })

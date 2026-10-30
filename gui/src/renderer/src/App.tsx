@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { CommandName, CommandResult, EngineCommand } from '../../shared/engine'
+import AlarmButton from './components/AlarmButton'
 import ChartPanel from './components/ChartPanel'
 import LogButton from './components/LogButton'
 import SymbolEditor, { type EditTarget } from './components/SymbolEditor'
@@ -170,6 +171,7 @@ function App(): React.JSX.Element {
           거래 기록
         </button>
         <LogButton />
+        <AlarmButton symbols={state?.symbols ?? []} />
         <ThemeSwitch />
         {connected ? (
           <button disabled={busy !== null} onClick={() => run({ name: 'stop_engine' })}>

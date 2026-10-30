@@ -58,14 +58,6 @@
   min-width: 84px;
 }
 
-/* --bg as the text color keeps it above 4.5:1 on --info in both themes. */
-button.primary {
-  background: var(--info);
-  border-color: var(--info);
-  color: var(--bg);
-  font-weight: 600;
-}
-
 @media (prefers-color-scheme: light) {
   .confirm-backdrop {
     background: rgb(20 24 31 / 0.35);
