@@ -44,6 +44,7 @@ function PopupPage(): React.JSX.Element | null {
   const [hovered, setHovered] = useState(false)
   const remaining = useRef(0) // ms left before it closes, while the pointer is away
   const lastSound = useRef(-Infinity)
+  const drawn = useRef(false)
 
   useEffect(() => {
     const { popupApi } = window
@@ -58,6 +59,13 @@ function PopupPage(): React.JSX.Element | null {
       stop()
     }
   }, [])
+
+  // The window stays hidden until the popup is on the page, so it never shows empty (#43).
+  useEffect(() => {
+    if (!popup || drawn.current) return
+    drawn.current = true
+    window.popupApi.ready()
+  }, [popup])
 
   // A new or updated popup gets its whole time again, and its sound.
   useEffect(() => {

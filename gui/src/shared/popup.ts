@@ -21,6 +21,7 @@ export interface Popup {
 export interface PopupApi {
   popup(): Promise<Popup | null>
   onUpdate(listener: (popup: Popup) => void): () => void
+  ready(): void // the popup is drawn: the main process shows the window (#43)
   open(): void // clicked: bring up the main window
   close(): void // dismissed, or its time is up
 }
