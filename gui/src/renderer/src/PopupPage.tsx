@@ -10,10 +10,10 @@ import { clock } from './format'
 // The same popup coming again within this long chimes once.
 const SOUND_GAP_MS = 1500
 
-// The bundled fonts the popup draws with. They load with font-display: swap, and each popup is a
-// page of its own that loads them again, so the window waits for them: shown earlier, its text
-// changed font, and moved, once on screen (#45). A font that doesn't load holds it back this long
-// at most, and the popup shows in the fallback font.
+// The bundled fonts the popup draws with. They load with font-display: swap, so a popup, and each
+// update of it, shows once the fonts for its text have loaded: shown earlier, its text changed
+// font, and moved, on screen (#45). A window loads them while it waits for its popup (#46). A font
+// that doesn't load holds it back this long at most, and the popup shows in the fallback font.
 const FONTS = [
   '600 14px "Pretendard Variable"',
   '400 13px "Pretendard Variable"',
@@ -21,20 +21,13 @@ const FONTS = [
 ]
 const FONT_WAIT_MS = 1500
 
-/** Resolves once the popup's fonts have loaded and a frame has been painted with them. */
-function whenDrawn(): Promise<void> {
-  const fonts = Promise.all(FONTS.map((font) => document.fonts.load(font))).then(
+/** Resolves once the fonts for everything `popup` shows have loaded. */
+function fontsFor(popup: Popup): Promise<unknown> {
+  const text = `${popup.title}×${popup.count}${clock(popup.time)}${popup.body}`
+  const fonts = Promise.all(FONTS.map((font) => document.fonts.load(font, text))).then(
     () => document.fonts.ready
   )
-  const capped = Promise.race([fonts, new Promise((resolve) => setTimeout(resolve, FONT_WAIT_MS))])
-  return capped.then(
-    () =>
-      new Promise<void>((resolve) => {
-        requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
-        // In case frames don't run while the window is hidden.
-        setTimeout(resolve, 100)
-      })
-  )
+  return Promise.race([fonts, new Promise((resolve) => setTimeout(resolve, FONT_WAIT_MS))])
 }
 
 // Each tone's notes, in Hz: rising for news, level for a warning, falling and rising for danger.
@@ -69,35 +62,48 @@ function chime(tone: PopupTone): void {
 function PopupPage(): React.JSX.Element | null {
   const [popup, setPopup] = useState<Popup | null>(null)
   const [hovered, setHovered] = useState(false)
-  const [onScreen, setOnScreen] = useState(false) // the main process has been told to show it
+  const [onScreen, setOnScreen] = useState(false) // its window is shown, still see-through at first
   const remaining = useRef(0) // ms left before it closes, while the pointer is away
   const lastSound = useRef(-Infinity)
   const told = useRef(false)
 
   useEffect(() => {
+    // A window waits hidden for its popup (main/popups.ts), so it loads the fonts meanwhile.
+    for (const font of FONTS) void document.fonts.load(font)
     const { popupApi } = window
-    // Subscribe before asking, as the other pages do; whichever answer comes last is the newest.
-    const stop = popupApi.onUpdate(setPopup)
     let active = true
-    popupApi.popup().then((shown) => {
-      if (active && shown) setPopup(shown)
-    })
+    let latest = 0
+    // Each popup shows once its fonts have loaded, so of those that came meanwhile, the last.
+    const take = (next: Popup | null): void => {
+      if (!next) return
+      const turn = ++latest
+      void fontsFor(next).then(() => {
+        if (active && turn === latest) setPopup(next)
+      })
+    }
+    // Subscribe before asking, as the other pages do; whichever answer comes last is the newest.
+    const stop = popupApi.onUpdate(take)
+    popupApi.popup().then(take)
     return () => {
       active = false
       stop()
     }
   }, [])
 
-  // The window stays hidden until the popup is drawn in its own fonts, so it never shows empty
-  // (#43) or changes font on screen (#45).
+  // Drawn in its own fonts, the window shows see-through and comes into view once a frame of the
+  // popup is on screen, so it never shows empty (#43) or changes font on screen (#45). A hidden
+  // window paints no frames, so the page can't wait for one before it is shown.
   useEffect(() => {
     if (!popup || told.current) return
     told.current = true
-    void whenDrawn().then(() => {
-      window.popupApi.ready()
-      setOnScreen(true)
-    })
+    void window.popupApi.ready().then(() => setOnScreen(true))
   }, [popup])
+
+  // Its countdown drawn too, the second frame from here comes after one that holds all of it.
+  useEffect(() => {
+    if (!onScreen) return
+    requestAnimationFrame(() => requestAnimationFrame(() => window.popupApi.painted()))
+  }, [onScreen])
 
   // A new or updated popup on screen gets its whole time again, and its sound.
   useEffect(() => {

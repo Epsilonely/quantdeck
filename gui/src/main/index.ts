@@ -257,6 +257,7 @@ app.whenReady().then(() => {
 
   engine.start()
   createWindow()
+  popups.prepare()
 
   app.on('activate', function () {
     // On macOS it's common to re-create a window in the app when the

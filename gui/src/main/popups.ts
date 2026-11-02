@@ -8,6 +8,11 @@
 // until the page caught up. It then fades in as it rises from a little below its place, while the
 // popups above glide up to make room, and they glide down again when one closes (#44). The windows
 // move as a whole, since anything animated inside a page would run in a box already on screen.
+//
+// One hidden window waits with its page and fonts loaded, and the next popup is handed to it (#46):
+// a new window took about 0.15 s to start its page and 0.1 s more for its fonts before it could
+// draw. Once a popup takes it, another is made a little later, so a burst of popups waits for new
+// windows only past the first.
 
 import { BrowserWindow, screen, systemPreferences } from 'electron'
 import { join } from 'path'
@@ -26,11 +31,15 @@ const RISE = 40 // px below its place a new popup rises from
 // Windows wakes timers on its 15.6 ms tick: a 16 ms interval waited two ticks, about 30 frames a
 // second, while a shorter one runs on every tick (scratch app, 2026-10-30).
 const FRAME_MS = 10
-// Shown at opacity 0, the window waits this long before it rises, so the drawn page has reached
-// the screen and no earlier frame of it shows.
-const PAINT_DELAY_MS = 32
+// A window is shown at opacity 0 and rises once its page has painted a frame on screen, so no
+// frame from before it drew shows. A hidden window paints no frames, so its page can't wait for one
+// before it is shown. It rises after this long if the page never says.
+const PAINT_TIMEOUT_MS = 100
 // A page that hasn't drawn its popup by then is closed instead of shown empty.
 const DRAW_TIMEOUT_MS = 5000
+// The waiting window is made this long after the app is ready or a popup took the last one, so
+// making it doesn't hold up the main window's start or a popup's rise.
+const SPARE_DELAY_MS = 1000
 
 interface Motion {
   fromY: number
@@ -41,17 +50,23 @@ interface Motion {
 
 interface Shown {
   window: BrowserWindow
-  popup: Popup
+  popup: Popup | null // null while the window waits for one
   key: string | null
+  loaded: boolean // the page has loaded
+  drawn: (() => void) | null // the page has drawn its popup: tells it once the window is shown
   revealed: boolean // drawn and on screen; only these take a place in the stack
+  painted: boolean // a frame of it has been painted on screen; until then it is see-through
   y: number // where the window is now
   opacity: number
   motion: Motion | null
   drawTimer: NodeJS.Timeout | undefined
+  paintTimer: NodeJS.Timeout | undefined
 }
 
 export class PopupStack {
   private shown: Shown[] = [] // revealed oldest first, then the ones still being drawn
+  private spare: Shown | undefined // the hidden window waiting for the next popup
+  private spareTimer: NodeJS.Timeout | undefined
   private stopped = false
   private watchingScreen = false
   private ticker: NodeJS.Timeout | undefined
@@ -60,7 +75,12 @@ export class PopupStack {
   constructor(private readonly onOpen: () => void) {}
 
   owns(window: BrowserWindow): boolean {
-    return this.shown.some((entry) => entry.window === window)
+    return this.spare?.window === window || this.shown.some((entry) => entry.window === window)
+  }
+
+  /** Makes the window the first popup takes. Call once the app is ready. */
+  prepare(): void {
+    this.prepareSoon()
   }
 
   /** Shows `popup`. A popup with the same `key` still showing is updated instead, with its count
@@ -68,7 +88,7 @@ export class PopupStack {
   show(popup: Popup, key: string | null = null): void {
     if (this.stopped) return
     const same = key === null ? undefined : this.shown.find((entry) => entry.key === key)
-    if (same) {
+    if (same?.popup) {
       same.popup = { ...popup, count: same.popup.count + popup.count }
       same.window.webContents.send('popup:update', same.popup)
       return
@@ -80,6 +100,39 @@ export class PopupStack {
       screen.on('display-metrics-changed', () => this.place())
     }
 
+    const entry = this.spare ?? this.open()
+    this.spare = undefined
+    entry.popup = popup
+    entry.key = key
+    entry.drawTimer = setTimeout(() => this.dismiss(entry), DRAW_TIMEOUT_MS)
+    this.shown.push(entry)
+    this.place()
+    // A waiting page draws it at once; a new one asks for it once it has loaded.
+    entry.window.webContents.send('popup:update', popup)
+    this.prepareSoon()
+  }
+
+  /** Closes every popup and shows no more: the app is quitting. */
+  stop(): void {
+    this.stopped = true
+    clearTimeout(this.spareTimer)
+    if (this.spare) this.drop(this.spare)
+    for (const entry of [...this.shown]) this.dismiss(entry)
+    clearInterval(this.ticker)
+  }
+
+  /** Makes the waiting window a little later, unless one is waiting or about to be made. */
+  private prepareSoon(): void {
+    if (this.stopped || this.spare || this.spareTimer) return
+    this.spareTimer = setTimeout(() => {
+      this.spareTimer = undefined
+      if (!this.stopped && !this.spare) this.spare = this.open()
+    }, SPARE_DELAY_MS)
+  }
+
+  /** A hidden window loading the popup page, which shows once it is given a popup and has drawn
+   * it. */
+  private open(): Shown {
     const window = new BrowserWindow({
       width: WIDTH,
       height: HEIGHT,
@@ -103,38 +156,42 @@ export class PopupStack {
     })
     const entry: Shown = {
       window,
-      popup,
-      key,
+      popup: null,
+      key: null,
+      loaded: false,
+      drawn: null,
       revealed: false,
+      painted: false,
       y: 0,
       opacity: 1,
       motion: null,
-      drawTimer: setTimeout(() => this.dismiss(entry), DRAW_TIMEOUT_MS)
+      drawTimer: undefined,
+      paintTimer: undefined
     }
-    this.shown.push(entry)
-    this.place()
-
-    let loaded = false
-    let drawn = false
     const revealOnce = (): void => {
-      if (loaded && drawn) this.reveal(entry)
+      if (entry.loaded && entry.drawn) this.reveal(entry)
     }
     window.once('ready-to-show', () => {
-      loaded = true
+      entry.loaded = true
       revealOnce()
     })
-    window.on('closed', () => this.dismiss(entry))
+    window.on('closed', () => this.drop(entry))
     const contents = window.webContents
     contents.setWindowOpenHandler(() => ({ action: 'deny' }))
     contents.on('will-navigate', (event) => event.preventDefault())
     // A page that can't show its popup would stay as an empty box: close it instead.
-    contents.on('did-fail-load', () => this.dismiss(entry))
-    contents.on('render-process-gone', () => this.dismiss(entry))
+    contents.on('did-fail-load', () => this.drop(entry))
+    contents.on('render-process-gone', () => this.drop(entry))
     contents.ipc.handle('popup:get', () => entry.popup)
-    contents.ipc.once('popup:ready', () => {
-      drawn = true
-      revealOnce()
-    })
+    contents.ipc.handle(
+      'popup:ready',
+      () =>
+        new Promise<void>((resolve) => {
+          entry.drawn = resolve
+          revealOnce()
+        })
+    )
+    contents.ipc.once('popup:painted', () => this.painted(entry))
     contents.ipc.on('popup:open', () => {
       this.onOpen()
       this.dismiss(entry)
@@ -143,41 +200,46 @@ export class PopupStack {
     const url = process.env['ELECTRON_RENDERER_URL']
     if (is.dev && url) window.loadURL(`${url}/popup.html`)
     else window.loadFile(join(__dirname, '../renderer/popup.html'))
+    return entry
   }
 
-  /** Closes every popup and shows no more: the app is quitting. */
-  stop(): void {
-    this.stopped = true
-    for (const entry of [...this.shown]) this.dismiss(entry)
-    clearInterval(this.ticker)
+  /** A window that closed or failed: a popup's is dismissed; the waiting one is let go, and the
+   * next popup makes another. */
+  private drop(entry: Shown): void {
+    if (entry !== this.spare) {
+      this.dismiss(entry)
+      return
+    }
+    this.spare = undefined
+    if (!entry.window.isDestroyed()) entry.window.close()
   }
 
-  /** Shows a popup whose page has drawn it, as the newest: it takes the bottom place, rising into
-   * it, or appears there at once when Windows is set to show fewer animations. */
+  /** Shows a popup whose page has drawn it, as the newest: it takes the bottom place, see-through
+   * until its page says a frame of it is on screen. */
   private reveal(entry: Shown): void {
     clearTimeout(entry.drawTimer)
     const { window } = entry
-    if (window.isDestroyed()) return
+    // Dismissed meanwhile: a closing window isn't destroyed at once.
+    if (window.isDestroyed() || !this.shown.includes(entry)) return
     // The newest is the one shown last, whichever was asked for first.
     this.shown.splice(this.shown.indexOf(entry), 1)
     this.shown.splice(this.revealedCount(), 0, entry)
     entry.revealed = true
-    const rise = !reducedMotion()
-    const place = this.places().get(entry)!
-    if (rise) {
-      entry.y = place + RISE
-      entry.opacity = 0
-      window.setOpacity(0)
-      this.setY(entry)
-    }
-    window.showInactive()
-    if (rise) {
-      // Timed from here: making the first window see-through took about 30 ms (scratch app,
-      // 2026-10-30), which would otherwise use up the wait for the page to reach the screen.
-      const start = Date.now() + PAINT_DELAY_MS
-      entry.motion = { fromY: entry.y, toY: place, fromOpacity: 0, start }
-    }
+    entry.opacity = 0
+    window.setOpacity(0)
     this.place() // the others make room
+    window.showInactive()
+    entry.drawn?.()
+    entry.paintTimer = setTimeout(() => this.painted(entry), PAINT_TIMEOUT_MS)
+  }
+
+  /** A frame of the popup has been painted on screen: it fades in as it rises into its place, or
+   * appears there at once when Windows is set to show fewer animations. */
+  private painted(entry: Shown): void {
+    clearTimeout(entry.paintTimer)
+    if (entry.painted || !entry.revealed || !this.shown.includes(entry)) return
+    entry.painted = true
+    this.place()
   }
 
   private dismiss(entry: Shown): void {
@@ -185,6 +247,7 @@ export class PopupStack {
     if (at < 0) return
     this.shown.splice(at, 1)
     clearTimeout(entry.drawTimer)
+    clearTimeout(entry.paintTimer)
     if (!entry.window.isDestroyed()) entry.window.close()
     this.place()
   }
@@ -208,11 +271,16 @@ export class PopupStack {
   }
 
   /** Sends every popup to its place: gliding there if it is on screen, at once if it is hidden
-   * or Windows is set to show fewer animations. */
+   * or Windows is set to show fewer animations. One still see-through waits below its place, to
+   * rise into it. */
   private place(): void {
     const reduced = reducedMotion()
     for (const [entry, place] of this.places()) {
-      if (!entry.revealed || reduced) {
+      if (entry.revealed && !entry.painted) {
+        entry.motion = null
+        entry.y = reduced ? place : place + RISE
+        this.setY(entry)
+      } else if (!entry.revealed || reduced) {
         entry.motion = null
         entry.y = place
         if (entry.opacity < 1 && entry.revealed) {
