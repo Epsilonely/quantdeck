@@ -167,9 +167,18 @@ async def kline_stream(
 
 
 @dataclass(frozen=True)
+class FundingRate:
+    """The funding rate the next settlement is to use so far, and when it settles."""
+
+    rate: Decimal  # longs pay shorts when positive
+    next_time: int  # ms
+
+
+@dataclass(frozen=True)
 class MarkPrice:
     symbol: str
     price: Decimal
+    funding: FundingRate | None = None  # None if the message carries none
 
 
 def mark_price_stream_url(ws_root: str, symbols: Iterable[str]) -> str:
@@ -180,11 +189,14 @@ def mark_price_stream_url(ws_root: str, symbols: Iterable[str]) -> str:
 def parse_mark_price(message: str | bytes) -> MarkPrice:
     """One `markPriceUpdate` from a combined stream (`{"stream": ..., "data": ...}`)."""
     data = json.loads(message)["data"]
-    return MarkPrice(symbol=data["s"], price=Decimal(data["p"]))
+    rate, next_time = data.get("r"), data.get("T")
+    funding = None if not rate or not next_time else FundingRate(Decimal(rate), int(next_time))
+    return MarkPrice(symbol=data["s"], price=Decimal(data["p"]), funding=funding)
 
 
 async def mark_price_stream(ws_root: str, symbols: Iterable[str]) -> AsyncIterator[MarkPrice]:
-    """Yield each symbol's mark price once a second, forever, reconnecting as needed.
+    """Yield each symbol's mark price and funding rate once a second, forever, reconnecting as
+    needed.
 
     For display only: risk checks don't use the mark price (D-24). A message that can't be
     parsed is logged and skipped. Wrap the call in `contextlib.aclosing`.

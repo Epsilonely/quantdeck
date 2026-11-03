@@ -21,6 +21,16 @@ export interface DailyLoss {
   // them.
   unrealized_pnl?: string | null
   loss_with_unrealized?: string | null
+  // Display only: what the loss is made of, signed as the exchange signs it (a gain positive), so
+  // the loss is their sum negated. Engines before 2026-11-03 don't send it.
+  income?: IncomeParts | null
+}
+
+export interface IncomeParts {
+  realized_pnl: string
+  commission: string
+  funding: string
+  other: string // liquidation clearance and position limit fees
 }
 
 export interface Position {
@@ -30,6 +40,10 @@ export interface Position {
   // Display only: unrealized_pnl as a percent of the initial margin at entry (the price move
   // times the leverage). Null with unrealized_pnl; engines before 2026-10-26 don't send it.
   roi_pct?: string | null
+  // Display only: what the next funding would pay this position (positive) or take from it
+  // (negative) at the mark price and rate now. Null before both are in; engines before
+  // 2026-11-03 don't send it.
+  next_funding?: string | null
 }
 
 export interface OpenOrder {
@@ -100,6 +114,10 @@ export interface SymbolState {
   leverage?: number // engines before 2026-10-20 don't send it
   strategy: SymbolStrategy | null // null without a strategy: no entries
   mark_price: string | null
+  // The next funding's rate so far, as a percent (longs pay shorts when positive), and when it
+  // settles. Null before the stream sends them; engines before 2026-11-03 don't send them.
+  funding_rate_pct?: string | null
+  next_funding_time?: string | null
   position: Position | null
   orders: OpenOrder[]
   stops: Stop[]
@@ -141,13 +159,32 @@ export interface TradeRow {
   fills: number
 }
 
+// One funding settlement on one symbol: received if positive.
+export interface FundingPayment {
+  time: string
+  symbol: string
+  asset: string
+  amount: string
+}
+
 // The `trades` message (D-51): every order filled in the last `window_days` days, newest first.
 // Engines before 2026-10-22 never send it.
 export interface RecentTrades {
   window_days: number
   asset: string // the margin asset, which realized PnL is in
-  totals: { realized_pnl: string; fees: Record<string, string> }
+  totals: {
+    realized_pnl: string
+    fees: Record<string, string> // positive when paid
+    // The funding received, by asset, and the margin asset's realized PnL less fees plus funding.
+    // Null while the funding hasn't been read, the net also while a fee or funding is in another
+    // asset; engines before 2026-11-03 don't send them.
+    funding?: Record<string, string> | null
+    net?: string | null
+  }
   trades: TradeRow[]
+  // The same days' funding payments, newest first. Null while not read yet; engines before
+  // 2026-11-03 don't send it.
+  funding?: FundingPayment[] | null
 }
 
 // The position states a strategy decides in: flat for entries, long or short for exits.

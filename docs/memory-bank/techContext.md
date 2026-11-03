@@ -6,7 +6,7 @@ Build and run commands are in CLAUDE.md. Exact package versions are in `gui/pack
 
 | Component | Technology | Status |
 |---|---|---|
-| GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the commands after an in-app confirmation (D-53); starts the engine when none is running (D-34); symbol settings panel (D-48); the last 7 days' trades (D-51); a chart of each strategy's candles (D-54) with the levels it decides by (D-56); the engine log in a window of its own (D-55); alarm popups it draws itself, set in a dialog, and a tray icon (D-58); light/dark theme (D-35) |
+| GUI | Electron, React, TypeScript, electron-vite, electron-builder | Connects to the engine (D-32) and shows its state and logs; sends the commands after an in-app confirmation (D-53); starts the engine when none is running (D-34); symbol settings panel (D-48); the last 7 days' trades and funding, the next funding's estimate, and today's loss by part (D-51, D-59); a chart of each strategy's candles (D-54) with the levels it decides by (D-56); the engine log in a window of its own (D-55); alarm popups it draws itself, set in a dialog, and a tray icon (D-58); light/dark theme (D-35) |
 | Fonts | Pretendard, JetBrains Mono, bundled from npm (D-49) | In use |
 | Charts | lightweight-charts, bundled in the renderer (D-54) | In use |
 | Engine | Python 3.12+ (3.13 pinned locally), uv, pytest, ruff (D-09) | Settings, logging, order execution with exchange-side stops, daily loss limit and kill switch, `run` (D-31) with a strategy per symbol (D-43, D-47) serving clients (D-32, D-33), backtests (D-37 to D-40, D-45) |
@@ -79,7 +79,8 @@ network      "testnet" | "mainnet"
 started_at   when this engine started; the GUI shows the engine's uptime from it
 halt         {halted: bool, reason: str | null, since: str | null}
 daily_loss   null until the first check, then {asset, base, loss, limit,
-               unrealized_pnl: str | null, loss_with_unrealized: str | null}
+               unrealized_pnl: str | null, loss_with_unrealized: str | null,
+               income: null | {realized_pnl, commission, funding, other}}
 balances     {asset: wallet balance}, nonzero only
 symbols      [{symbol, halted: str | null (the engine's own halt of it, D-16/D-19/D-20),
                paused_at: str | null (the user's pause, D-50),
@@ -91,13 +92,14 @@ symbols      [{symbol, halted: str | null (the engine's own halt of it, D-16/D-1
                                  stopped: str | null,
                                  forming_candle: null | {open_time, open, high, low, close}},
                mark_price: str | null,
+               funding_rate_pct: str | null, next_funding_time: str | null,
                position: null | {amount (negative = short), entry_price, unrealized_pnl: str | null,
-                                 roi_pct: str | null},
+                                 roi_pct: str | null, next_funding: str | null},
                orders: [{client_id, side, type, quantity, reduce_only}],
                stops:  [{client_algo_id, side, type, trigger_price, close_position}]}]
 ```
 
-Strategy fields (D-43, D-47): `params` holds every parameter, as strings like amounts. `action` is `enter_long`, `enter_short`, or `exit`. `stop_price` is an entry's stop as the trader places it, rounded to the tick toward the entry; the forward record keeps the strategy's own. `result` says what came of the signal: `entered`, `closed`, `skipped_paused` (the user's pause), `skipped_halted` (the engine's halt of the symbol, or the kill switch), `ignored`, `not_entered`, or `failed`; only the first two carried the signal out, and the GUI colors only those. `outcome` is the engine's text for the same, as in the forward record, and `stopped` says why this symbol's strategy stopped. `forming_candle` is the chart's candle still forming on the strategy's interval (D-54), the kline stream's latest update at most a second old; null before the stream sends one, once the stream stops, and once that candle is among the closed ones in `candles`. `unrealized_pnl` is every open position's unrealized PnL at the display-only mark prices, before closing fees, and `loss_with_unrealized` is `loss` minus it, both rounded to 0.01; they are null with no position open or before every position's mark price has arrived, since a partial total would mislead, and only the GUI uses them (D-24 note of 2026-10-22). A symbol's `mark_price` is rounded to its tick, since the stream sends more digits, and its position's `unrealized_pnl` to 0.01; both are computed from the unrounded mark price. `roi_pct` is that unrealized PnL as a percent of the initial margin at entry, |amount| × entry price ÷ the symbol's set leverage (the price move times the leverage), rounded to 0.01 and null with `unrealized_pnl`; display only, like the unrealized fields. Fields are added without changing the protocol version (the strategy fields, `leverage`, `paused_at`, the unrealized fields, `started_at`, `result`, `roi_pct`, and `forming_candle` all were), so a client must accept any of them missing from an older engine; the GUI takes a missing `paused_at` to mean the engine can't pause a symbol, a missing `forming_candle` to mean it sends no chart candles, and shows a signal without `result` as it did before.
+Strategy fields (D-43, D-47): `params` holds every parameter, as strings like amounts. `action` is `enter_long`, `enter_short`, or `exit`. `stop_price` is an entry's stop as the trader places it, rounded to the tick toward the entry; the forward record keeps the strategy's own. `result` says what came of the signal: `entered`, `closed`, `skipped_paused` (the user's pause), `skipped_halted` (the engine's halt of the symbol, or the kill switch), `ignored`, `not_entered`, or `failed`; only the first two carried the signal out, and the GUI colors only those. `outcome` is the engine's text for the same, as in the forward record, and `stopped` says why this symbol's strategy stopped. `forming_candle` is the chart's candle still forming on the strategy's interval (D-54), the kline stream's latest update at most a second old; null before the stream sends one, once the stream stops, and once that candle is among the closed ones in `candles`. `unrealized_pnl` is every open position's unrealized PnL at the display-only mark prices, before closing fees, and `loss_with_unrealized` is `loss` minus it, both rounded to 0.01; they are null with no position open or before every position's mark price has arrived, since a partial total would mislead, and only the GUI uses them (D-24 note of 2026-10-22). A symbol's `mark_price` is rounded to its tick, since the stream sends more digits, and its position's `unrealized_pnl` to 0.01; both are computed from the unrounded mark price. `roi_pct` is that unrealized PnL as a percent of the initial margin at entry, |amount| × entry price ÷ the symbol's set leverage (the price move times the leverage), rounded to 0.01 and null with `unrealized_pnl`; display only, like the unrealized fields. The funding fields are display only too (D-59). `funding_rate_pct` is the mark price stream's funding rate as a percent, to 0.0001, and `next_funding_time` is when it settles; both are null before the stream sends them. `next_funding` is what the next funding would pay the position (positive) or take from it, at the unrounded mark price and rate, to 0.0001; it is null until both are in. `income` holds the counted income behind `loss`, by part, signed as the exchange signs it, so `loss` is its sum negated; `other` is liquidation clearance and position limit fees. It is null only for a `daily_loss` that didn't come from income history. Fields are added without changing the protocol version (the strategy fields, `leverage`, `paused_at`, the unrealized fields, `started_at`, `result`, `roi_pct`, `forming_candle`, the funding fields, and `income` all were), so a client must accept any of them missing from an older engine; the GUI takes a missing `paused_at` to mean the engine can't pause a symbol, a missing `forming_candle` to mean it sends no chart candles, and shows a signal without `result` as it did before.
 
 **Catalog** (D-48). What `set_symbol` accepts, built from the strategy registry. Like the state's added fields, `catalog` and `description` may be missing from an older engine; the GUI then turns the settings off or shows no `?`.
 
@@ -113,15 +115,18 @@ strategies    [{name, interval (its default), params: [{name, type: "int" | "dec
 ```
 window_days  7
 asset        the margin asset, which realized_pnl is in
-totals       {realized_pnl, fees: {asset: amount}}  over every row
+totals       {realized_pnl, fees: {asset: amount}, funding: null | {asset: amount},
+              net: str | null}  over every row and payment
 trades       [{time (the first fill), symbol, order_id: int,
                client_id: str | null (the order's, or for a stop's fill its clientAlgoId),
                role: "entry" | "exit" | "stop" | "kill" | "liquidation" | "adl" | "other",
                side: "BUY" | "SELL", quantity, price (average), realized_pnl,
                fees: {asset: amount}, fills: int}]  one per order, newest first
+funding      null | [{time, symbol, asset, amount}]  the window's funding payments (D-59),
+               newest first
 ```
 
-An engine before 2026-10-22 never sends `trades`; the GUI then says so in the panel. The GUI forgets a list when it connects to an engine, since that engine sends its own.
+Fees are positive when paid, as `userTrades` sends them. A funding `amount` is positive when received. `funding` and `totals.funding` are null until the funding has been read once. `net` is realized PnL − fees + funding, null while those are unread or while a fee or payment is in an asset other than `asset`. An engine before 2026-10-22 never sends `trades`; the GUI then says so in the panel. One before 2026-11-03 sends none of the funding fields or `net`. The GUI forgets a list when it connects to an engine, since that engine sends its own.
 
 **Candles** (D-54). Fields at the top level, beside `type`.
 

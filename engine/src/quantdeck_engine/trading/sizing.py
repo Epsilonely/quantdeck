@@ -5,6 +5,7 @@ Pure functions and values: callers fetch prices, balances, rules, and brackets a
 them in, so the backtest reuses all of it (D-37).
 """
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
@@ -223,6 +224,9 @@ class DailyLoss:
     base: Decimal
     loss: Decimal  # negative after a net gain
     limit: Decimal
+    # Display only: what the loss is made of, by part, as the exchange signs it (risk.py). None
+    # where nobody shows it, as in the backtest.
+    income: Mapping[str, Decimal] | None = None
 
     @property
     def room(self) -> Decimal:

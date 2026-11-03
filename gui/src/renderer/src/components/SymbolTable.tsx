@@ -7,7 +7,15 @@ import type {
   SymbolStrategy
 } from '../../../shared/engine'
 import { paramsText } from '../../../shared/strategy'
-import { dateTime, isNegative, pnlClass, shortDateTime, signed } from '../format'
+import {
+  dateTime,
+  fundingFlow,
+  hourMinute,
+  isNegative,
+  pnlClass,
+  shortDateTime,
+  signed
+} from '../format'
 import { Tip } from './HelpTip'
 
 // What a row's buttons send (D-50).
@@ -402,7 +410,18 @@ function SymbolTable({
                 변경
               </button>
             </td>
-            <td className="num">{s.mark_price ?? '—'}</td>
+            <td className="num">
+              {s.mark_price ?? '—'}
+              {s.funding_rate_pct && s.next_funding_time && (
+                <div
+                  className="sub muted funding-sub"
+                  title={`다음 펀딩(${hourMinute(s.next_funding_time)} 정산)에 쓰일 비율의 지금 값입니다. 양수면 롱이 숏에게, 음수면 숏이 롱에게 냅니다. 정산 때까지 바뀝니다`}
+                >
+                  <span>펀딩 {s.funding_rate_pct}%</span>{' '}
+                  <span>· {hourMinute(s.next_funding_time)}</span>
+                </div>
+              )}
+            </td>
             <td>
               {s.position ? (
                 <span className={isNegative(s.position.amount) ? 'loss' : 'profit'}>
@@ -422,6 +441,14 @@ function SymbolTable({
                   title={`진입 증거금(진입가 × 수량 ÷ 레버리지 ${s.leverage ?? '?'}x) 대비 수익률입니다. 가격 변동률 × 레버리지와 같고, 수수료와 펀딩은 빠져 있습니다`}
                 >
                   {signed(s.position.roi_pct)}%
+                </div>
+              )}
+              {s.position?.next_funding && (
+                <div
+                  className={`sub funding-sub ${pnlClass(s.position.next_funding)}`}
+                  title={`다음 펀딩${s.next_funding_time ? `(${hourMinute(s.next_funding_time)} 정산)` : ''}에서 이 포지션이 받거나 낼 예상 금액입니다. 지금의 마크 가격과 비율로 계산했고, 실제 금액은 정산 순간의 값으로 정해집니다. 미실현 손익에는 들어 있지 않습니다`}
+                >
+                  펀딩 <span>{fundingFlow(s.position.next_funding)}</span>
                 </div>
               )}
             </td>

@@ -28,6 +28,7 @@ Merged work not yet seen against a real engine:
 - The cleanup after a closed position as a task of its own (#39, D-18 note): on testnet, a close by the engine, above all the kill switch, should leave no stop behind while other symbols' events keep arriving. Tested with fakes only; no close by the engine has run on the new code yet.
 - The log window past 1000 records (#40), now drawn by stable keys. Checked only with tests and a build.
 - The alarms (#42, D-58) in the GUI itself: the tray and closing the window to it, the second GUI handing over to the first, each alarm against a running engine, and with a real mouse a popup's paused countdown and its click, and the sound. The test popup showed in `npm run dev`, coming up at once (#46); its entrance without the empty box (#43), the rising and gliding (#44), and the text no longer changing font after it shows (#45) haven't been seen there yet. Checked only in a scratch Electron app (popups on the desktop in both themes, none taking the focus), the rules with made-up states, and the dialog in the browser pane with a fake API.
+- The funding display (#47, D-59) on a running engine: each position's estimate against the settlement's actual record, the week's funding lines in the trades panel and their totals, and the loss card's parts after a settlement. Checked only with tests and a fake API in the browser pane; the testnet stream's `r` and `T` were read directly.
 
 Exchange behavior not yet seen is under To verify in `binanceNotes.md`.
 

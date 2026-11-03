@@ -20,7 +20,15 @@ from quantdeck_engine.trading.balance import BaseBalance
 from quantdeck_engine.trading.executor import SymbolTrader, TradingHalted
 from quantdeck_engine.trading.halt import HaltRecord, HaltStore
 from quantdeck_engine.trading.order_ids import ClientIdFactory, Role, parse_client_id
-from quantdeck_engine.trading.risk import KILL_ATTEMPTS, LiftRefused, RiskGuard, loss_from_income
+from quantdeck_engine.trading.risk import (
+    COUNTED_INCOME_TYPES,
+    INCOME_PARTS,
+    KILL_ATTEMPTS,
+    LiftRefused,
+    RiskGuard,
+    income_parts,
+    loss_from_income,
+)
 from quantdeck_engine.trading.rules import Side
 from quantdeck_engine.trading.sizing import EntryRejected
 
@@ -84,6 +92,46 @@ def test_loss_counts_pnl_fees_and_funding_net_of_gains() -> None:
         income("COMMISSION", "-0.1", asset="BNB"),  # another asset
     ]
     assert loss_from_income(incomes, "USDT") == D(101)
+
+
+def test_loss_parts_add_up_to_the_loss_with_funding_on_its_own() -> None:
+    incomes = [
+        income("REALIZED_PNL", "-120"),
+        income("REALIZED_PNL", "30"),
+        income("COMMISSION", "-5"),
+        income("FUNDING_FEE", "0.07"),  # received
+        income("SPECIAL_FUNDING_FEE", "-1"),
+        income("INSURANCE_CLEAR", "-3"),
+        income("POSITION_LIMIT_INCREASE_FEE", "-0.5"),
+        income("TRANSFER", "-1000"),
+        income("COMMISSION_REBATE", "4"),
+        income("COMMISSION", "-0.1", asset="BNB"),
+    ]
+    parts = income_parts(incomes, "USDT")
+    assert parts == {
+        "realized_pnl": D(-90),
+        "commission": D(-5),
+        "funding": D("-0.93"),
+        "other": D("-3.5"),
+    }
+    assert -sum(parts.values()) == loss_from_income(incomes, "USDT") == D("99.43")
+
+
+def test_every_counted_income_type_has_a_part() -> None:
+    assert set(INCOME_PARTS) == COUNTED_INCOME_TYPES
+
+
+async def test_the_guard_reads_the_loss_parts_with_the_loss(store: HaltStore) -> None:
+    exchange = FakeExchange()
+    exchange.incomes = [income("FUNDING_FEE", "0.07")]
+    daily = await make(exchange, store)[0].daily_loss()
+    assert daily.loss == D("-0.07")  # a day with only funding received is a net gain
+    assert daily.income == {
+        "realized_pnl": D(0),
+        "commission": D(0),
+        "funding": D("0.07"),
+        "other": D(0),
+    }
 
 
 def test_loss_is_negative_after_a_net_gain() -> None:

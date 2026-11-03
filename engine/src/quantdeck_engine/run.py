@@ -31,7 +31,7 @@ from typing import Any
 from quantdeck_engine.amounts import fixed_point
 from quantdeck_engine.binance.candle_feed import ClosedCandleFeed
 from quantdeck_engine.binance.rest import REQUEST_ERRORS, BinanceRestClient, UnknownSymbol
-from quantdeck_engine.binance.streams import mark_price_stream
+from quantdeck_engine.binance.streams import FundingRate, mark_price_stream
 from quantdeck_engine.binance.user_stream import (
     AccountUpdate,
     OrderUpdate,
@@ -118,6 +118,7 @@ class Engine:
         self.checker = RiskChecker(self.guard)
         self.state = AccountState(list(self.traders))
         self.mark_prices: dict[str, Decimal] = {}  # for display only (D-33)
+        self.funding_rates: dict[str, FundingRate] = {}  # from the same stream, display only
         self.history = TradeHistory(client, lambda: list(self.traders), self.asset)  # D-51
         self.started_at = time.time()  # clients show the engine's uptime from it
         self.stop_requested = asyncio.Event()
@@ -321,6 +322,8 @@ class Engine:
         ):
             self.checker.request()
         # The trades list reads the exchange again, as the risk check does (D-51).
+        if isinstance(event, AccountUpdate) and event.reason == "FUNDING_FEE":
+            self.history.request_funding()
         if isinstance(event, UserStreamConnected):
             self.history.request()
         elif isinstance(event, OrderUpdate) and event.execution_type == "TRADE":
@@ -478,6 +481,7 @@ class Engine:
             self._mark_task.cancel()
             self._mark_task = None
         self.mark_prices = {s: p for s, p in self.mark_prices.items() if s in self.traders}
+        self.funding_rates = {s: f for s, f in self.funding_rates.items() if s in self.traders}
         if self._tasks is not None and self.traders:
             self._mark_task = self._tasks.create_task(self._mark_prices(list(self.traders)))
 
@@ -485,6 +489,8 @@ class Engine:
         async with aclosing(mark_price_stream(self._ws_root, symbols)) as stream:
             async for update in stream:
                 self.mark_prices[update.symbol] = update.price
+                if update.funding is not None:
+                    self.funding_rates[update.symbol] = update.funding
 
     async def _sync_time(self) -> None:
         while True:

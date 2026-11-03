@@ -52,12 +52,13 @@ Source: [Connect](https://developers.binance.com/en/docs/products/derivatives-tr
 - Max 1024 streams per connection.
 - Observed on testnet: when the client closes a stream, the close handshake completes (code 1000, 2026-10-03), but the server keeps the TCP connection open for several seconds, and `websockets` waits for it to drop, up to its `close_timeout` (default 10 s). Timed on 2026-10-20 on the `/market` kline and mark price streams: with the default the connection dropped 5.2–9.5 s after a close (6 closes), never within 2 s, so with `close_timeout=2` every close ended at the timeout, in 2.0 s (8 closes). The `/private` user data stream wasn't timed.
 
-### Mark price stream (2026-10-16)
+### Mark price stream (2026-10-16, extended 2026-11-03)
 
-Source: testnet response
+Source: testnet response, the WebSocket streams' schema (`/en/docs/catalog/core-trading-derivatives-trading-usd-s-m-futures/api/ws-streams/1.0.0/schema.yaml`, read with a `fetch` from a page on developers.binance.com like the REST one; the old `.../websocket-market-streams/Mark-Price-Stream` page is a 404)
 
 - `<symbol>@markPrice@1s` works on the `/market` route as a combined stream: `wss://demo-fstream.binance.com/market/stream?streams=btcusdt@markPrice@1s` delivered one update a second.
-- Combined-stream messages wrap the payload as `{"stream": ..., "data": {...}}`. The engine reads `data.s` (symbol) and `data.p` (mark price, a string); the other fields are unchecked.
+- Combined-stream messages wrap the payload as `{"stream": ..., "data": {...}}`. The engine reads `data.s` (symbol), `data.p` (mark price), `data.r` (funding rate), and `data.T` (next funding time, ms).
+- Testnet payload keys (2026-11-03): `e`, `E`, `s`, `p`, `ap`, `P`, `i`, `r`, `T`, `st`. `r` was `"0.00010000"`, and `T` the next 08:00 UTC. The schema calls `P` the estimated settle price ("only useful in the last hour before the settlement starts"), `ap` a mark price moving average, and `st` the symbol type (1 = UM).
 
 ### Signed requests (2026-10-02)
 
@@ -90,7 +91,7 @@ Source: [Trade](https://developers.binance.com/en/docs/catalog/core-trading-deri
 | `PUT /fapi/v1/listenKey` | 1 | USER_STREAM. Response `{"listenKey": ...}`; `-1125` if no key is active |
 | `DELETE /fapi/v1/allOpenOrders` | 1 | `symbol` required. Docs response `{"code": 200, "msg": "The operation of cancel all open order is done."}`. Succeeded on testnet with no open orders (2026-10-16) |
 | `DELETE /fapi/v1/algoOpenOrders` | 1 | `symbol` required. Cancels every open algo order on the symbol, stops included. Same docs response as above. Succeeded on testnet with no open orders (2026-10-16) |
-| `GET /fapi/v1/userTrades` | 5 | Docs only (OpenAPI schema, 2026-10-22). `symbol` required. `startTime` and `endTime` at most 7 days apart; neither sent → the last 7 days; `fromId` can't be sent with them. `limit` default 500, max 1000. Only the last 3 months (6 until the Change Log of 2026-08-26). Rows: `id`, `orderId`, `side`, `price`, `qty`, `quoteQty`, `realizedPnl`, `commission`, `commissionAsset`, `time`, `buyer`, `maker`, `positionSide`, and no client order ID |
+| `GET /fapi/v1/userTrades` | 5 | Docs only (OpenAPI schema, 2026-10-22). `symbol` required. `startTime` and `endTime` at most 7 days apart; neither sent → the last 7 days; `fromId` can't be sent with them. `limit` default 500, max 1000. Only the last 3 months (6 until the Change Log of 2026-08-26). Rows: `id`, `orderId`, `side`, `price`, `qty`, `quoteQty`, `realizedPnl`, `commission`, `commissionAsset`, `time`, `buyer`, `maker`, `positionSide`, and no client order ID. `commission` is positive for a fee paid (testnet, 2026-11-03: every fee of a week's 33 orders; the schema's example is positive too) |
 | `GET /fapi/v1/allOrders` | 5 | Docs only (2026-10-22). `symbol` optional since 2026-08-25 (Change Log); the engine sends it. With `orderId`, orders from that ID on; otherwise the most recent. Period under 7 days, the last 7 by default. Gone: cancelled or expired orders without fills after 3 days, any order after 90 days. Rows carry `clientOrderId`, `orderId`, `type`, `origType`, `status`, `executedQty`, `avgPrice`, `reduceOnly`, `closePosition`, `time`, `updateTime` |
 | `GET /fapi/v1/allAlgoOrders` | 5 | Docs only (2026-10-22). `symbol` required; `algoId` (from that ID on), `startTime`/`endTime` (under 7 days apart, the last 7 by default), `limit` max 1000. Kept like `allOrders`. Rows carry `clientAlgoId`, `algoStatus`, `actualOrderId` (a string; the order a triggered one placed), `triggerPrice`, `createTime`, `updateTime`, `triggerTime` |
 
@@ -184,6 +185,14 @@ Source: Binance FAQ "How to Calculate Cost Required to Open a Position in Perpet
 - Initial margin = assumed price × quantity ÷ leverage. A market order's assumed price is the last price × (1 + 0.15%), long or short.
 - Open loss = quantity × |min(0, direction × (mark price − assumed price))|, direction 1 for a long and −1 for a short. A long's assumed price sits above the mark, so it has an open loss of about 0.15% of notional; a short's usually has none.
 - The FAQ's worked example is inconsistent (its short cost uses the last price, "after an update of the assuming price logic"), and it doesn't say whether the commission is counted. Sizing allows for both (D-25 note of 2026-10-26).
+
+### Funding (2026-11-03)
+
+Source: Binance FAQ "Introduction to Binance Futures Funding Rates". Docs only: no settlement has been compared with the engine's estimate yet.
+
+- Funding amount = the position's nominal value (mark price × size) × the funding rate. With a positive rate longs pay shorts; with a negative one shorts pay longs. Binance takes no fee on it.
+- Only a position held at the funding time pays or receives. The FAQ allows a 15-second deviation in the actual transfer time, so a position opened just after the funding time may still be charged.
+- The default interval is 8 hours, at 00:00, 08:00, and 16:00 UTC. Binance may shorten it when the rate reaches its cap or floor, and lengthen it again later (FAQ sections 8.1 and 8.2), so read the next time from `T` rather than assuming the schedule.
 
 ### Liquidation price (2026-10-10)
 

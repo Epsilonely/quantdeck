@@ -23,6 +23,7 @@ MINUTE = 60_000
 TRADES = ("GET", "/fapi/v1/userTrades")
 ORDERS = ("GET", "/fapi/v1/allOrders")
 ALGOS = ("GET", "/fapi/v1/allAlgoOrders")
+INCOME = ("GET", "/fapi/v1/income")
 
 
 def fill(
@@ -54,6 +55,20 @@ def fill(
         "buyer": side == "BUY",
         "maker": False,
         "positionSide": "BOTH",
+    }
+
+
+def funding(
+    amount: str, at: int, symbol: str = "BTCUSDT", kind: str = "FUNDING_FEE", tran_id: int = 1
+) -> dict[str, Any]:
+    """An income history record of a funding payment."""
+    return {
+        **income(kind, amount),
+        "symbol": symbol,
+        "time": at,
+        "tranId": tran_id,
+        "info": "",
+        "tradeId": "",
     }
 
 
@@ -148,7 +163,12 @@ async def test_fills_and_their_roles_from_the_exchange() -> None:
 
     assert rows(trades) == [("BTCUSDT", "exit", "SELL"), ("BTCUSDT", "entry", "BUY")]
     assert trades.payload is not None
-    assert trades.payload["totals"] == {"realized_pnl": "83", "fees": {"USDT": "3.984"}}
+    assert trades.payload["totals"] == {
+        "realized_pnl": "83",
+        "fees": {"USDT": "3.984"},
+        "funding": {},
+        "net": "79.016",  # 83 - 3.984
+    }
     assert (trades.payload["window_days"], trades.payload["asset"]) == (7, "USDT")
     (read,) = exchange.calls(*TRADES)
     assert int(read["endTime"]) - int(read["startTime"]) < 7 * DAY_MS
@@ -210,8 +230,7 @@ async def test_a_symbol_the_engine_no_longer_has_is_found_from_income() -> None:
     await trades.refresh()
 
     assert rows(trades) == [("ETHUSDT", "entry", "BUY")]
-    (records,) = exchange.calls("GET", "/fapi/v1/income")
-    assert records["incomeType"] == "COMMISSION"
+    assert [c["incomeType"] for c in exchange.calls(*INCOME)].count("COMMISSION") == 1
 
     exchange.user_trades = []  # its fills left the window: it isn't read any more
     await trades.refresh()
@@ -291,6 +310,136 @@ async def test_a_requested_symbol_is_read_after_a_delay() -> None:
     finally:
         task.cancel()
     assert [c["symbol"] for c in exchange.calls(*TRADES)] == ["BTCUSDT", "ETHUSDT", "BTCUSDT"]
+    assert delays == [3.0]
+
+
+# Funding payments
+
+
+async def test_funding_payments_go_with_the_list_and_into_the_net() -> None:
+    exchange = FakeExchange()
+    exchange.user_trades = [fill(1, 7, "SELL", "61000.0", pnl="10", fee="2", at=NOW_MS - DAY_MS)]
+    exchange.past_orders = [order(7, "qd_x_BTCUSDT_1759480000456_00")]
+    exchange.incomes = [
+        income("COMMISSION", "-2"),  # not funding
+        funding("0.07", NOW_MS - 2 * DAY_MS, tran_id=1),
+        funding("-0.5", NOW_MS - DAY_MS, "ETHUSDT", tran_id=2),
+        funding("0.01", NOW_MS - DAY_MS, kind="SPECIAL_FUNDING_FEE", tran_id=3),
+    ]
+    trades = history(exchange)
+    await trades.refresh()
+
+    assert trades.payload is not None
+    assert trades.payload["funding"] == [
+        {
+            "time": "2026-10-13T17:46:40+00:00",
+            "symbol": "ETHUSDT",
+            "asset": "USDT",
+            "amount": "-0.5",
+        },
+        {
+            "time": "2026-10-13T17:46:40+00:00",
+            "symbol": "BTCUSDT",
+            "asset": "USDT",
+            "amount": "0.01",
+        },
+        {
+            "time": "2026-10-12T17:46:40+00:00",
+            "symbol": "BTCUSDT",
+            "asset": "USDT",
+            "amount": "0.07",
+        },
+    ]
+    assert trades.payload["totals"]["funding"] == {"USDT": "-0.42"}
+    assert trades.payload["totals"]["net"] == "7.58"  # 10 - 2 - 0.42
+    kinds = [c["incomeType"] for c in exchange.calls(*INCOME)]
+    assert sorted(k for k in kinds if k != "COMMISSION") == ["FUNDING_FEE", "SPECIAL_FUNDING_FEE"]
+    (read, _) = (c for c in exchange.calls(*INCOME) if c["incomeType"] != "COMMISSION")
+    assert int(read["endTime"]) - int(read["startTime"]) == 7 * DAY_MS
+
+
+async def test_funding_leaves_the_list_as_the_window_moves() -> None:
+    exchange = FakeExchange()
+    exchange.incomes = [funding("0.07", NOW_MS - 6 * DAY_MS)]
+    now = [NOW_MS]
+    trades = TradeHistory(
+        exchange.client(), lambda: ["BTCUSDT"], "USDT", clock=lambda: now[0] / 1000
+    )
+    await trades.refresh()
+    assert trades.payload is not None and len(trades.payload["funding"]) == 1
+
+    now[0] += 2 * DAY_MS
+    await trades.refresh(["BTCUSDT"])  # funding isn't read again, but its payment is too old now
+    assert trades.payload["funding"] == []
+
+
+async def test_no_net_while_a_fee_is_in_another_asset() -> None:
+    exchange = FakeExchange()
+    exchange.user_trades = [fill(1, 7, fee="0.0001", fee_asset="BNB")]
+    exchange.past_orders = [order(7, "qd_e_BTCUSDT_1759480000123_00")]
+    trades = history(exchange)
+    await trades.refresh()
+    assert trades.payload is not None
+    assert trades.payload["totals"]["net"] is None
+
+
+async def test_funding_that_cant_be_read_never_holds_the_list_back() -> None:
+    exchange = FakeExchange()
+    exchange.user_trades = [fill(1, 7)]
+    exchange.past_orders = [order(7, "qd_e_BTCUSDT_1759480000123_00")]
+    exchange.incomes = [funding("0.07", NOW_MS - DAY_MS)]
+    trades = history(exchange)
+    trades._discovered = True  # so the only income reads are the funding's
+    exchange.fail(*INCOME, Failure(httpx.ConnectError("down")))
+    await trades.refresh()
+
+    assert rows(trades) == [("BTCUSDT", "entry", "BUY")]
+    assert trades.payload is not None
+    # Unread, not empty: an empty list would claim there was no funding.
+    assert trades.payload["funding"] is None
+    assert trades.payload["totals"]["funding"] is None and trades.payload["totals"]["net"] is None
+
+    await trades.refresh()
+    assert trades.payload["funding"] is not None and len(trades.payload["funding"]) == 1
+    exchange.fail(*INCOME, Failure(httpx.ConnectError("down")))
+    await trades.refresh()
+    assert len(trades.payload["funding"]) == 1  # the last ones stay
+
+
+async def test_a_funding_request_reads_only_the_funding() -> None:
+    exchange = FakeExchange()
+    delays: list[float] = []
+
+    async def sleep(seconds: float) -> None:
+        delays.append(seconds)
+
+    trades = TradeHistory(
+        exchange.client(),
+        lambda: ["BTCUSDT"],
+        "USDT",
+        clock=lambda: NOW_MS / 1000,
+        interval=60,
+        sleep=sleep,
+    )
+    funding_reads = lambda: [  # noqa: E731
+        c for c in exchange.calls(*INCOME) if c["incomeType"] == "FUNDING_FEE"
+    ]
+    task = asyncio.create_task(trades.run())
+    try:
+        for _ in range(1000):
+            if funding_reads():
+                break
+            await asyncio.sleep(0.001)
+        trades.request_funding()
+        for _ in range(1000):
+            if len(funding_reads()) == 2:
+                break
+            await asyncio.sleep(0.001)
+        await asyncio.sleep(0.01)
+    finally:
+        task.cancel()
+    assert len(funding_reads()) == 2
+    assert len(exchange.calls(*TRADES)) == 1  # the fills aren't read again
     assert delays == [3.0]
 
 

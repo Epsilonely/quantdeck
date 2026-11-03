@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 
 from quantdeck_engine.amounts import fixed_point
+from quantdeck_engine.binance.streams import FundingRate
 from quantdeck_engine.chart import candle_values
 from quantdeck_engine.config import StrategyConfig
 from quantdeck_engine.times import iso_utc
@@ -19,6 +20,8 @@ if TYPE_CHECKING:
 
 
 CENT = Decimal("0.01")
+# Funding on a small position is often under a cent.
+FUNDING_PLACES = Decimal("0.0001")
 
 
 def engine_snapshot(engine: "Engine") -> dict[str, Any]:
@@ -46,6 +49,10 @@ def engine_snapshot(engine: "Engine") -> dict[str, Any]:
             "loss_with_unrealized": None
             if unrealized is None
             else fixed_point((daily.loss - unrealized).quantize(CENT)),
+            # Display only: what the loss is made of, a gain positive.
+            "income": None
+            if daily.income is None
+            else {part: fixed_point(amount) for part, amount in daily.income.items()},
         },
         "balances": {
             asset: fixed_point(amount)
@@ -59,6 +66,13 @@ def engine_snapshot(engine: "Engine") -> dict[str, Any]:
 def _unrealized(state: SymbolState, mark: Decimal) -> Decimal:
     """A position's unrealized PnL at `mark`, before the fee to close it."""
     return state.position_amount * (mark - state.entry_price)
+
+
+def _next_funding(state: SymbolState, mark: Decimal, funding: FundingRate) -> Decimal:
+    """What the position gets (positive) or pays (negative) at the next funding: its notional
+    at `mark` times the rate so far, paid by longs to shorts when the rate is positive. The
+    settlement uses the mark price and rate of its own moment."""
+    return -state.position_amount * mark * funding.rate
 
 
 def _roi_pct(state: SymbolState, unrealized: Decimal, leverage: int) -> Decimal:
@@ -86,10 +100,14 @@ def _unrealized_total(engine: "Engine") -> Decimal | None:
 def _symbol_snapshot(engine: "Engine", symbol: str) -> dict[str, Any]:
     state = engine.state.symbols[symbol]
     mark = engine.mark_prices.get(symbol)
+    funding = engine.funding_rates.get(symbol)
     config = engine.symbols[symbol]
     position = None
     if state.position_amount != 0:
         unrealized = None if mark is None else _unrealized(state, mark)
+        next_funding = (
+            None if mark is None or funding is None else _next_funding(state, mark, funding)
+        )
         position = {
             "amount": fixed_point(state.position_amount),
             "entry_price": fixed_point(state.entry_price),
@@ -101,6 +119,10 @@ def _symbol_snapshot(engine: "Engine", symbol: str) -> dict[str, Any]:
             "roi_pct": None
             if unrealized is None
             else fixed_point(_roi_pct(state, unrealized, config.leverage).quantize(CENT)),
+            # Display only, like the unrealized PnL: positive is received.
+            "next_funding": None
+            if next_funding is None
+            else fixed_point(next_funding.quantize(FUNDING_PLACES)),
         }
     trader = engine.traders[symbol]
     return {
@@ -112,6 +134,11 @@ def _symbol_snapshot(engine: "Engine", symbol: str) -> dict[str, Any]:
         # The stream's mark price carries more digits than the symbol's prices; the
         # unrealized PnL above uses it unrounded.
         "mark_price": None if mark is None else fixed_point(trader.rules.nearest_price(mark)),
+        # As a percent, to four places as exchanges show it; the estimate above uses it whole.
+        "funding_rate_pct": None
+        if funding is None
+        else fixed_point((funding.rate * 100).quantize(FUNDING_PLACES)),
+        "next_funding_time": None if funding is None else iso_utc(funding.next_time / 1000),
         "position": position,
         "orders": [
             {

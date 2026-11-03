@@ -11,6 +11,7 @@ import {
   clock,
   dateTime,
   elapsed,
+  fundingFlow,
   isNegative,
   isZero,
   pnlClass,
@@ -148,6 +149,7 @@ function App(): React.JSX.Element {
     loss && !isZero(loss) && !isNegative(loss) ? 'loss' : ''
   const unrealized = state?.daily_loss?.unrealized_pnl
   const withUnrealized = state?.daily_loss?.loss_with_unrealized
+  const income = state?.daily_loss?.income
 
   return (
     <div className="app">
@@ -249,7 +251,10 @@ function App(): React.JSX.Element {
                   {state.daily_loss ? (
                     <>
                       <div className="value">
-                        <span className={lossClass(state.daily_loss.loss)}>
+                        <span
+                          className={lossClass(state.daily_loss.loss)}
+                          title={`매일 ${riskDayStart()}부터의 실현 손익, 수수료, 펀딩을 합친 손실입니다. 이익이 난 날은 음수입니다`}
+                        >
                           {state.daily_loss.loss}
                         </span>{' '}
                         / {state.daily_loss.limit} {state.daily_loss.asset}
@@ -265,6 +270,36 @@ function App(): React.JSX.Element {
                           미실현 <span className={pnlClass(unrealized)}>{signed(unrealized)}</span>{' '}
                           · 포함하면{' '}
                           <span className={lossClass(withUnrealized)}>{withUnrealized}</span>
+                        </div>
+                      )}
+                      {income && (
+                        <div
+                          className="sub"
+                          title={
+                            `오늘 ${riskDayStart()}부터 계정에 들어오고 나간 돈입니다. +는 들어온 돈, ` +
+                            '−는 나간 돈이고, 위의 손실은 이 합계의 부호를 바꾼 값입니다. 펀딩도 일일 ' +
+                            '손실 한도에 들어갑니다.'
+                          }
+                        >
+                          실현{' '}
+                          <span className={pnlClass(income.realized_pnl)}>
+                            {signed(income.realized_pnl)}
+                          </span>{' '}
+                          · 수수료{' '}
+                          <span className={pnlClass(income.commission)}>
+                            {signed(income.commission)}
+                          </span>{' '}
+                          · 펀딩{' '}
+                          <span className={pnlClass(income.funding)}>
+                            {fundingFlow(income.funding)}
+                          </span>
+                          {!isZero(income.other) && (
+                            <>
+                              {' '}
+                              · 기타{' '}
+                              <span className={pnlClass(income.other)}>{signed(income.other)}</span>
+                            </>
+                          )}
                         </div>
                       )}
                     </>

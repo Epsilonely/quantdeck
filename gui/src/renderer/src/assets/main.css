@@ -410,6 +410,12 @@ table.symbols .sub {
   font-size: 12px;
 }
 
+/* The funding rate under the mark price, and a position's next funding: one line where the
+   column is wide enough, otherwise broken only between their parts. */
+table.symbols .funding-sub span {
+  white-space: nowrap;
+}
+
 table.symbols td button.small {
   display: block;
   margin-top: 4px;
@@ -1097,6 +1103,17 @@ input.invalid {
 .trade-line.sub {
   color: var(--text-muted);
   font-size: 12px;
+}
+
+/* A funding payment between the trades: one quieter, smaller line. */
+.trade.funding {
+  padding: 3px 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.trade.funding .trade-symbol {
+  font-weight: 400;
 }
 
 /* A trade's role (D-21) as a small badge, colored by how it ended. */

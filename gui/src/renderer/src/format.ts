@@ -29,6 +29,13 @@ export function dateTime(iso: string): string {
   return `${datePart(time)} ${timePart(time)}`
 }
 
+/** `2026-11-03T08:00:00+00:00` → `17:00` in local time */
+export function hourMinute(iso: string): string {
+  const time = new Date(iso)
+  if (Number.isNaN(time.getTime())) return iso
+  return `${pad(time.getHours())}:${pad(time.getMinutes())}`
+}
+
 /** `2026-10-19T04:00:00+00:00` → `10-19 13:00` in local time, for candle times */
 export function shortDateTime(iso: string): string {
   const time = new Date(iso)
@@ -80,6 +87,13 @@ export function isZero(amount: string): boolean {
 /** `30.5` → `+30.5`, so a gain reads as one; zero and losses as they are. */
 export function signed(amount: string): string {
   return isZero(amount) || isNegative(amount) ? amount : `+${amount}`
+}
+
+/** A funding amount, positive when received, in words rather than a sign: `0.07` → `받음 0.07`,
+ * `-0.07` → `냄 0.07`. The loss card shows losses as positive, so a sign would read both ways. */
+export function fundingFlow(amount: string): string {
+  if (isZero(amount)) return '0'
+  return isNegative(amount) ? `냄 ${amount.slice(1)}` : `받음 ${amount}`
 }
 
 /** CSS class for a profit-or-loss amount. */

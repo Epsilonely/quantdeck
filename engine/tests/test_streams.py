@@ -9,6 +9,7 @@ from websockets.asyncio.server import ServerConnection, serve
 
 from quantdeck_engine.binance import streams
 from quantdeck_engine.binance.streams import (
+    FundingRate,
     kline_stream,
     kline_stream_url,
     mark_price_stream_url,
@@ -164,3 +165,12 @@ def test_mark_price_url_combines_symbols_on_the_market_route() -> None:
 def test_parse_mark_price() -> None:
     update = parse_mark_price(json.dumps(MARK_PRICE))
     assert (update.symbol, update.price) == ("BTCUSDT", Decimal("11794.15000000"))
+    assert update.funding == FundingRate(Decimal("0.00038167"), 1562306400000)
+
+
+@pytest.mark.parametrize("missing", ["r", "T"])
+def test_a_mark_price_without_funding_fields_still_has_its_price(missing: str) -> None:
+    message = json.loads(json.dumps(MARK_PRICE))
+    del message["data"][missing]
+    update = parse_mark_price(json.dumps(message))
+    assert (update.price, update.funding) == (Decimal("11794.15000000"), None)

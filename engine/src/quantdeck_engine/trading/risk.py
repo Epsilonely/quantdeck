@@ -72,6 +72,16 @@ UNCOUNTED_INCOME_TYPES = frozenset(
     }
 )
 
+FUNDING_INCOME_TYPES = frozenset({"FUNDING_FEE", "SPECIAL_FUNDING_FEE"})
+# The parts of today's loss clients see (display only), with every counted type in one of them.
+INCOME_PARTS = {
+    "REALIZED_PNL": "realized_pnl",
+    "COMMISSION": "commission",
+    **dict.fromkeys(FUNDING_INCOME_TYPES, "funding"),
+    "INSURANCE_CLEAR": "other",
+    "POSITION_LIMIT_INCREASE_FEE": "other",
+}
+
 KILL_ATTEMPTS = 3
 KILL_RETRY_DELAY = 2.0  # seconds
 CHECK_INTERVAL = 60.0  # seconds; D-30: "about once a minute"
@@ -99,6 +109,17 @@ def loss_from_income(incomes: Iterable[dict[str, Any]], asset: str) -> Decimal:
         ),
         Decimal(0),
     )
+
+
+def income_parts(incomes: Iterable[dict[str, Any]], asset: str) -> dict[str, Decimal]:
+    """The counted records for `asset` by part, signed as the exchange signs them (a gain is
+    positive): what today's loss is made of, for display. Their sum, negated, is the loss."""
+    parts = dict.fromkeys(("realized_pnl", "commission", "funding", "other"), Decimal(0))
+    for i in incomes:
+        part = INCOME_PARTS.get(i["incomeType"])
+        if i["asset"] == asset and part is not None:
+            parts[part] += Decimal(i["income"])
+    return parts
 
 
 class RiskGuard:
@@ -168,6 +189,7 @@ class RiskGuard:
             base=base,
             loss=loss_from_income(incomes, self._base.asset),
             limit=daily_limit(base, self._trading.daily_loss_limit_percent),
+            income=income_parts(incomes, self._base.asset),
         )
 
     async def check(self) -> DailyLoss:

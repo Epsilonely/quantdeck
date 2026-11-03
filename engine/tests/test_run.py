@@ -14,7 +14,7 @@ from websockets.asyncio.client import connect
 
 from quantdeck_engine.amounts import fixed_point
 from quantdeck_engine.binance.rest import UnknownSymbol
-from quantdeck_engine.binance.streams import kline_from_row
+from quantdeck_engine.binance.streams import FundingRate, kline_from_row
 from quantdeck_engine.binance.user_stream import (
     AccountUpdate,
     OrderUpdate,
@@ -377,7 +377,9 @@ async def test_snapshot_of_a_protected_position(
         "entry_price": "60000",
         "unrealized_pnl": "8.35",  # 8.34508643, from the unrounded mark price
         "roi_pct": "0.84",  # 8.34508643 on a margin of 0.083 × 60000 ÷ 5 = 996
+        "next_funding": None,  # no funding rate from the stream yet
     }
+    assert (symbol["funding_rate_pct"], symbol["next_funding_time"]) == (None, None)
     assert symbol["orders"] == []
     assert [(s["side"], s["trigger_price"], s["close_position"]) for s in symbol["stops"]] == [
         ("SELL", "59400", True)
@@ -391,6 +393,7 @@ async def test_snapshot_of_a_protected_position(
         "limit": "150",
         "unrealized_pnl": "8.35",
         "loss_with_unrealized": "-8.35",
+        "income": {"realized_pnl": "0", "commission": "0", "funding": "0", "other": "0"},
     }
 
 
@@ -429,6 +432,45 @@ async def test_daily_loss_shows_the_unrealized_total_for_display_only(
     assert daily["unrealized_pnl"] == "-6.66"  # -6.6585
     assert daily["loss_with_unrealized"] == "19.16"  # 12.5 + 6.6585
     assert daily["loss"] == "12.5"  # what the limit and the kill switch count (D-24)
+
+
+async def test_snapshot_shows_the_next_funding_for_display_only(
+    store: HaltStore, symbol_store: SymbolStore
+) -> None:
+    exchange = FakeExchange(other_symbols={"ETHUSDT": 3})
+    open_long(exchange)  # 0.083 at 60000
+    exchange.add_stop("SELL", "59400")
+    symbols = {**SYMBOLS, "ETHUSDT": SymbolConfig("ETHUSDT", 3)}
+    engine = await start(exchange, store, symbol_store, symbols)
+    await resync(exchange.client(), engine.state)
+    engine.mark_prices["BTCUSDT"] = D("60100.5")
+    eight_utc = 1_793_692_800_000  # 2026-11-03 08:00 UTC
+    engine.funding_rates["BTCUSDT"] = FundingRate(D("0.0001"), eight_utc)
+
+    btc, eth = engine.snapshot()["symbols"]
+    assert (btc["funding_rate_pct"], btc["next_funding_time"]) == (
+        "0.0100",
+        iso_utc(eight_utc / 1000),
+    )
+    # The long pays 0.083 × 60100.5 × 0.01% = 0.49883415 at a positive rate.
+    assert btc["position"]["next_funding"] == "-0.4988"
+    assert (eth["funding_rate_pct"], eth["next_funding_time"]) == (None, None)
+
+    engine.funding_rates["BTCUSDT"] = FundingRate(D("-0.00038167"), eight_utc)
+    (btc, _) = engine.snapshot()["symbols"]
+    assert btc["funding_rate_pct"] == "-0.0382"
+    assert btc["position"]["next_funding"] == "1.9039"  # and gets it at a negative one
+
+    # A short gets what a long pays.
+    exchange.add_position("ETHUSDT", "-1.5", "2500")
+    exchange.add_stop("BUY", "2600", "qd_s_ETHUSDT_1_00", symbol="ETHUSDT")
+    await resync(exchange.client(), engine.state)
+    engine.funding_rates["ETHUSDT"] = FundingRate(D("0.0001"), eight_utc)
+    (_, eth) = engine.snapshot()["symbols"]
+    assert eth["position"]["next_funding"] is None  # its mark price isn't in yet
+    engine.mark_prices["ETHUSDT"] = D("2510")
+    (_, eth) = engine.snapshot()["symbols"]
+    assert eth["position"]["next_funding"] == "0.3765"  # 1.5 × 2510 × 0.01%
 
 
 STEP = 4 * 60 * 60_000

@@ -16,6 +16,10 @@ since, D-47), found from income history at startup or from a fill on the user da
 A fill asks for its symbol to be read again a few seconds later, as a closed position asks
 for the risk check (D-30); every symbol is read again after a stream reconnect and every few
 minutes.
+
+The window's funding payments go with the list, from income history: they aren't orders, so
+they are a list of their own. They are read with every symbol, and a few seconds after the
+user data stream reports a funding.
 """
 
 import asyncio
@@ -32,6 +36,7 @@ from quantdeck_engine.binance.rest import REQUEST_ERRORS, BinanceRestClient
 from quantdeck_engine.times import DAY_MS, iso_utc
 from quantdeck_engine.trading.balance import fetch_income
 from quantdeck_engine.trading.order_ids import Role, parse_client_id
+from quantdeck_engine.trading.risk import FUNDING_INCOME_TYPES
 
 logger = logging.getLogger(__name__)
 
@@ -147,6 +152,35 @@ class OrderTrade:
         }
 
 
+@dataclass(frozen=True)
+class FundingPayment:
+    """One funding settlement on one symbol, an income history record: received if positive."""
+
+    symbol: str
+    amount: Decimal
+    asset: str
+    time_ms: int
+    tran_id: int
+
+    @classmethod
+    def from_income(cls, row: Mapping[str, Any]) -> "FundingPayment":
+        return cls(
+            symbol=row["symbol"],
+            amount=Decimal(row["income"]),
+            asset=row["asset"],
+            time_ms=int(row["time"]),
+            tran_id=int(row["tranId"]),
+        )
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "time": iso_utc(self.time_ms / 1000),
+            "symbol": self.symbol,
+            "asset": self.asset,
+            "amount": fixed_point(self.amount),
+        }
+
+
 def order_trades(
     fills: Iterable[Fill], roles: Mapping[tuple[str, int], OrderRole]
 ) -> list[OrderTrade]:
@@ -187,21 +221,41 @@ def _order_trade(fills: list[Fill], role: OrderRole) -> OrderTrade:
     )
 
 
-def trades_payload(rows: list[OrderTrade], asset: str) -> dict[str, Any]:
+def trades_payload(
+    rows: list[OrderTrade], asset: str, funding: list[FundingPayment] | None = None
+) -> dict[str, Any]:
     """What clients get in a `trades` message, totals included: the GUI never adds amounts
-    (D-33). Realized PnL is in the margin asset; fees in whatever asset paid them."""
+    (D-33). Realized PnL is in the margin asset; fees in whatever asset paid them, positive
+    when paid; funding as received, newest first, or None while it hasn't been read.
+
+    The net is realized PnL less fees plus funding, while all of them are in the margin asset.
+    """
     fees: dict[str, Decimal] = {}
     for row in rows:
         for fee_asset, amount in row.fees.items():
             fees[fee_asset] = fees.get(fee_asset, Decimal(0)) + amount
+    realized = sum((r.realized_pnl for r in rows), Decimal(0))
+    funded: dict[str, Decimal] | None = None
+    net: Decimal | None = None
+    if funding is not None:
+        funded = {}
+        for payment in funding:
+            funded[payment.asset] = funded.get(payment.asset, Decimal(0)) + payment.amount
+        if {a for a, v in [*fees.items(), *funded.items()] if v} <= {asset}:
+            net = realized - fees.get(asset, Decimal(0)) + funded.get(asset, Decimal(0))
     return {
         "window_days": WINDOW_DAYS,
         "asset": asset,
         "totals": {
-            "realized_pnl": fixed_point(sum((r.realized_pnl for r in rows), Decimal(0))),
+            "realized_pnl": fixed_point(realized),
             "fees": {fee_asset: fixed_point(amount) for fee_asset, amount in sorted(fees.items())},
+            "funding": None
+            if funded is None
+            else {a: fixed_point(amount) for a, amount in sorted(funded.items())},
+            "net": None if net is None else fixed_point(net),
         },
         "trades": [row.to_json() for row in rows],
+        "funding": None if funding is None else [payment.to_json() for payment in funding],
     }
 
 
@@ -227,10 +281,12 @@ class TradeHistory:
         self._fills: dict[str, list[Fill]] = {}  # each symbol's fills at its last read
         self._roles: dict[tuple[str, int], OrderRole] = {}  # found once per order
         self._others: set[str] = set()  # symbols to read that the engine doesn't have
+        self._funding: list[FundingPayment] | None = None  # at the last read, newest first
         self._discovered = False
         self._complete = False  # every symbol has been read once
         self._requested: set[str] = set()
         self._requested_all = False
+        self._requested_funding = False
         self._wake = asyncio.Event()
         # What clients get, None until every symbol has been read once; the same object until
         # the list changes, so the client server sends it only then.
@@ -244,14 +300,20 @@ class TradeHistory:
             self._requested.add(symbol)
         self._wake.set()
 
+    def request_funding(self) -> None:
+        """Read the funding payments again soon: a funding was settled."""
+        self._requested_funding = True
+        self._wake.set()
+
     async def run(self) -> None:
         """Read every symbol at once and every interval, and a requested one a few seconds
         after the request. Failures are logged; the next read tries again."""
         symbols: set[str] | None = None  # None: every symbol
+        funding: bool | None = None  # None: with every symbol
         while True:
             self._wake.clear()
             try:
-                await self.refresh(symbols)
+                await self.refresh(symbols, funding=funding)
             except Exception:
                 # Display only: a bug here must never stop the engine.
                 logger.exception("Recent trades could not be read; trying again at the next read")
@@ -259,15 +321,21 @@ class TradeHistory:
                 async with asyncio.timeout(self._interval):
                     await self._wake.wait()
             except TimeoutError:
-                symbols = None
+                symbols, funding = None, None
                 continue
             await self._sleep(self._delay)
             symbols = None if self._requested_all else set(self._requested)
+            funding = self._requested_all or self._requested_funding
             self._requested.clear()
             self._requested_all = False
+            self._requested_funding = False
 
-    async def refresh(self, symbols: Iterable[str] | None = None) -> None:
-        """Read `symbols` (every symbol if None) from the exchange and rebuild the payload."""
+    async def refresh(
+        self, symbols: Iterable[str] | None = None, *, funding: bool | None = None
+    ) -> None:
+        """Read `symbols` (every symbol if None) from the exchange and rebuild the payload,
+        reading the funding payments too if `funding`, which defaults to reading every symbol.
+        """
         now = int(self._clock() * 1000)
         own = set(self._symbols())
         if not self._discovered:
@@ -293,6 +361,10 @@ class TradeHistory:
             else:
                 self._fills.pop(symbol, None)
                 self._others.discard(symbol)
+        if funding is None:
+            funding = everything
+        if funding:
+            await self._read_funding(now)
         if everything and not failed:
             self._complete = True
         if self._complete:
@@ -304,9 +376,30 @@ class TradeHistory:
         # An order whose fills have all left the window won't be shown again.
         shown = {(f.symbol, f.order_id) for f in fills}
         self._roles = {key: role for key, role in self._roles.items() if key in shown}
-        payload = trades_payload(order_trades(fills, self._roles), self._asset)
+        funding = (
+            None
+            if self._funding is None
+            else [payment for payment in self._funding if payment.time_ms >= since]
+        )
+        payload = trades_payload(order_trades(fills, self._roles), self._asset, funding)
         if payload != self.payload:
             self.payload = payload
+
+    async def _read_funding(self, now: int) -> None:
+        """The window's funding payments on every symbol. A failed read keeps the last ones,
+        and never holds the list back: they are shown as unread until a read succeeds."""
+        try:
+            records = [
+                record
+                for income_type in sorted(FUNDING_INCOME_TYPES)
+                for record in await fetch_income(self._client, now - WINDOW_MS, now, income_type)
+            ]
+        except REQUEST_ERRORS as e:
+            logger.warning("Funding payments not read (%s); trying again at the next read", e)
+            return
+        payments = [FundingPayment.from_income(r) for r in records]
+        payments.sort(key=lambda p: (p.time_ms, p.symbol, p.tran_id), reverse=True)
+        self._funding = payments
 
     async def _discover(self, now: int, own: set[str]) -> None:
         """Other symbols traded in the window, such as one removed since (D-47): every fill

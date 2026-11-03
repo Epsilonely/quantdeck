@@ -305,16 +305,27 @@ function parseCatalog(value: unknown): StrategyCatalog | null {
 // Checked once here like the catalog, so a malformed list can't break the trades panel (D-51).
 // Only the shape is checked; amounts stay strings the renderer shows as they are.
 function parseTrades(message: Record<string, unknown>): RecentTrades | null {
-  const { window_days, asset, totals, trades } = message as unknown as RecentTrades
+  const { window_days, asset, totals, trades, funding } = message as unknown as RecentTrades
   const isAmounts = (value: unknown): boolean =>
     typeof value === 'object' &&
     value !== null &&
     Object.values(value).every((amount) => typeof amount === 'string')
+  // Missing from engines before 2026-11-03, null while their funding hasn't been read.
+  const absent = (value: unknown): boolean => value === undefined || value === null
   const valid =
     Number.isInteger(window_days) &&
     typeof asset === 'string' &&
     typeof totals?.realized_pnl === 'string' &&
     isAmounts(totals.fees) &&
+    (absent(totals.funding) || isAmounts(totals.funding)) &&
+    (absent(totals.net) || typeof totals.net === 'string') &&
+    (absent(funding) ||
+      (Array.isArray(funding) &&
+        funding.every((f) =>
+          ['time', 'symbol', 'asset', 'amount'].every(
+            (key) => typeof f?.[key as keyof typeof f] === 'string'
+          )
+        ))) &&
     Array.isArray(trades) &&
     trades.every(
       (t) =>
@@ -330,7 +341,7 @@ function parseTrades(message: Record<string, unknown>): RecentTrades | null {
     console.error('[engine] the trades message is malformed; ignored')
     return null
   }
-  return { window_days, asset, totals, trades }
+  return { window_days, asset, totals, trades, funding }
 }
 
 // Checked once here like the trades, so a malformed list can't break the chart (D-54).
