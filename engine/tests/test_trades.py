@@ -230,7 +230,7 @@ async def test_a_symbol_the_engine_no_longer_has_is_found_from_income() -> None:
     await trades.refresh()
 
     assert rows(trades) == [("ETHUSDT", "entry", "BUY")]
-    assert [c["incomeType"] for c in exchange.calls(*INCOME)].count("COMMISSION") == 1
+    assert [c.get("incomeType") for c in exchange.calls(*INCOME)].count("COMMISSION") == 1
 
     exchange.user_trades = []  # its fills left the window: it isn't read any more
     await trades.refresh()
@@ -352,9 +352,10 @@ async def test_funding_payments_go_with_the_list_and_into_the_net() -> None:
     ]
     assert trades.payload["totals"]["funding"] == {"USDT": "-0.42"}
     assert trades.payload["totals"]["net"] == "7.58"  # 10 - 2 - 0.42
-    kinds = [c["incomeType"] for c in exchange.calls(*INCOME)]
-    assert sorted(k for k in kinds if k != "COMMISSION") == ["FUNDING_FEE", "SPECIAL_FUNDING_FEE"]
-    (read, _) = (c for c in exchange.calls(*INCOME) if c["incomeType"] != "COMMISSION")
+    reads = exchange.calls(*INCOME)
+    # One read of every type: testnet refuses a query for SPECIAL_FUNDING_FEE.
+    assert {c.get("incomeType") for c in reads} == {"COMMISSION", None}
+    (read,) = (c for c in reads if "incomeType" not in c)
     assert int(read["endTime"]) - int(read["startTime"]) == 7 * DAY_MS
 
 
@@ -421,9 +422,7 @@ async def test_a_funding_request_reads_only_the_funding() -> None:
         interval=60,
         sleep=sleep,
     )
-    funding_reads = lambda: [  # noqa: E731
-        c for c in exchange.calls(*INCOME) if c["incomeType"] == "FUNDING_FEE"
-    ]
+    funding_reads = lambda: [c for c in exchange.calls(*INCOME) if "incomeType" not in c]  # noqa: E731
     task = asyncio.create_task(trades.run())
     try:
         for _ in range(1000):

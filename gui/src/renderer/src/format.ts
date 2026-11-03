@@ -96,6 +96,13 @@ export function fundingFlow(amount: string): string {
   return isNegative(amount) ? `냄 ${amount.slice(1)}` : `받음 ${amount}`
 }
 
+/** A funding estimate in the same words, as still to come: `0.07` → `받을 0.07`, `-0.07` →
+ * `낼 0.07`. Past tense would read as already settled; `받을 예정` is too wide for its column. */
+export function upcomingFundingFlow(amount: string): string {
+  if (isZero(amount)) return '0'
+  return isNegative(amount) ? `낼 ${amount.slice(1)}` : `받을 ${amount}`
+}
+
 /** CSS class for a profit-or-loss amount. */
 export function pnlClass(amount: string | null): string {
   if (amount === null || isZero(amount)) return ''

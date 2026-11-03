@@ -9,12 +9,12 @@ import type {
 import { paramsText } from '../../../shared/strategy'
 import {
   dateTime,
-  fundingFlow,
   hourMinute,
   isNegative,
   pnlClass,
   shortDateTime,
-  signed
+  signed,
+  upcomingFundingFlow
 } from '../format'
 import { Tip } from './HelpTip'
 
@@ -448,7 +448,7 @@ function SymbolTable({
                   className={`sub funding-sub ${pnlClass(s.position.next_funding)}`}
                   title={`다음 펀딩${s.next_funding_time ? `(${hourMinute(s.next_funding_time)} 정산)` : ''}에서 이 포지션이 받거나 낼 예상 금액입니다. 지금의 마크 가격과 비율로 계산했고, 실제 금액은 정산 순간의 값으로 정해집니다. 미실현 손익에는 들어 있지 않습니다`}
                 >
-                  펀딩 <span>{fundingFlow(s.position.next_funding)}</span>
+                  펀딩 <span>{upcomingFundingFlow(s.position.next_funding)}</span>
                 </div>
               )}
             </td>

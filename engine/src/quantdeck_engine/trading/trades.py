@@ -389,15 +389,16 @@ class TradeHistory:
         """The window's funding payments on every symbol. A failed read keeps the last ones,
         and never holds the list back: they are shown as unread until a read succeeds."""
         try:
-            records = [
-                record
-                for income_type in sorted(FUNDING_INCOME_TYPES)
-                for record in await fetch_income(self._client, now - WINDOW_MS, now, income_type)
-            ]
+            # Every type, picked out here: testnet refuses `incomeType=SPECIAL_FUNDING_FEE`.
+            records = await fetch_income(self._client, now - WINDOW_MS, now)
         except REQUEST_ERRORS as e:
             logger.warning("Funding payments not read (%s); trying again at the next read", e)
             return
-        payments = [FundingPayment.from_income(r) for r in records]
+        payments = [
+            FundingPayment.from_income(r)
+            for r in records
+            if r["incomeType"] in FUNDING_INCOME_TYPES
+        ]
         payments.sort(key=lambda p: (p.time_ms, p.symbol, p.tran_id), reverse=True)
         self._funding = payments
 
