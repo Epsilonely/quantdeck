@@ -70,7 +70,7 @@ Decisions about the backtest and the strategy search, with the evidence behind t
     - Donchian 55/20: −0.081 R (+0.014 R)
     - Bollinger: −1.008 R (+0.023 R)
 
-    A 15m decision with a tight stop can't carry about 0.1–0.16 R of costs per trade.
+    A 15m decision with a tight stop can't carry costs of about 0.1–0.16 R per trade (Donchian), let alone about 1 R (Bollinger).
   - **Selection,** 2020–2023 (SOLUSDT from 2020-10) on BTC, ETH, SOL, and XRP, with 7 settings. A setting passed with positive expectancy on BTC and on two of the other three coins, and at least 30 trades on each.
     - The move fade lost on every coin in all three settings, −0.03 to −0.11 R.
     - The daily breakout passed in three of its four settings. Long only with k = 0.8 had the best mean, +0.103 R: BTC +0.143, ETH +0.175, SOL +0.068, XRP +0.025, with 239–300 trades each.
@@ -147,6 +147,7 @@ Decisions about the backtest and the strategy search, with the evidence behind t
 - **ADX live:** Wilder's smoothing never forgets, so the ADX is recomputed from the last 11 × `adx_period` candles whenever an entry needs it, and a restart gives the same value (D-36); the window's starting values weigh about 0.01%. With the filter on, the warm-up is 154 candles on the default period.
 - **Date:** 2026-10-22
 - **Note (2026-10-29):** On 15m no ADX setting made the strategy positive (D-57).
+- **Note (2026-11-04):** On 15m no stop width made channels 12/10 positive (D-60).
 
 ## D-57 No ADX setting rescues `donchian-atr-adx` on 15m
 
@@ -165,3 +166,17 @@ Decisions about the backtest and the strategy search, with the evidence behind t
 - **Lesson for future rules:** a pick that breaks ties by mean return ÷ drawdown favors a setting that hardly trades, since it hardly loses. Any pick by a ratio needs the trade minimum too; the 12-candle runs applied it.
 - **For the engine exercises:** any of these settings on an exercise symbol would hit the daily limit several times a month in the backtest, and the kill switch would halt the BTCUSDT forward test with it.
 - **Date:** 2026-10-29
+
+## D-60 No stop width rescues `donchian-atr-adx` 12/10 on 15m; a wider stop cuts costs and daily limit hits, not the sign of the loss
+
+- **Decision:** On 15m, `donchian-atr-adx` with channels 12/10 and ADX 14/20 loses after costs at every `stop_atr` tested, on every coin, in both periods. Nothing is adopted, the grid isn't widened, and the BTCUSDT forward test stays as it is.
+- **Why it was tested:** both ETHUSDT trades on 2026-11-04 ended at the stop, one of them after reaching +3.4 R. A signal candle's median range is 1.6 ATR, about the 1.5 ATR stop, and #37 had left the stop width out.
+- **How it was tested** (GitHub issue #50; rules fixed in the issue before any run; 2×, D-40 costs with SOLUSDT and XRPUSDT at 0.04% slippage and 0.10% on stops, testnet risk values; BTCUSDT, ETHUSDT, SOLUSDT, XRPUSDT; 2020–2023 to select, 2024-01-01 to 2026-10-31 for reference): `stop_atr` {2, 3, 4, 6, 0} against 1.5, with #26's pass rules.
+- **Results:**
+  - Nothing passed in 2020–2023. Expectancy rose with the width, from −0.156 to −0.296 R at 1.5 to −0.042 to −0.091 R at 6; the channel stop (0) made −0.084 to −0.170 R. Returns at 6 were still −70.6% to −94.5%.
+  - Before costs the same widening lowered expectancy: at 1.5 and then 6, BTCUSDT +0.042 and +0.005 R, ETHUSDT +0.037 and −0.006 R, SOLUSDT +0.051 and −0.001 R, XRPUSDT −0.101 and −0.032 R. Costs fell from 0.20–0.28 R per trade to 0.04–0.08 R. A wider stop removes costs; it adds no edge.
+  - Days at the daily limit fell from 183–262 to 0–1 at 6 in 2020–2023.
+  - From 2024, for reference only: 6, picked by the rules, made −0.059 to −0.113 R (−76.3% to −93.5%, 0–1 days at the limit) against 1.5's −0.235 to −0.396 R (117–206 days, 3–6 a month).
+- **Diagnosis behind the next idea, not a test** (ETHUSDT, the same setting at 1.5 ATR, per trade in R of its own stop distance, last-price candles, no sizing or daily limit, 2020–2023 and 2024 onward): about 48% of trades reached +1 R and about half of those ended below zero after costs; about 30% reached +2 R, and 28–30% of those ended below zero; about 20% reached +3 R, and 13–16% of those did. The exit line often sits above the stop for the first candles, so nothing protects an open profit. A rule that moves the stop or takes profit would need the strategy interface to change (D-36) and a fill model, and has not been tested. A same-way entry within 4 candles of a stop is only about 2% of trades, so a cooldown would change little.
+- **For the engine exercises:** a wider stop is what keeps a 15m exercise off the daily limit, and so its losses from halting the BTCUSDT forward test. Whether to set one is the user's call; 5m wasn't tested.
+- **Date:** 2026-11-04
