@@ -580,3 +580,18 @@ Entries dated `initial` were carried over from README.md. Where README gives no 
 - **Alternatives:** taking funding out of today's loss; funding rows inside the trade rows with a role of their own; summing the estimates on the loss card (settlement times can differ by symbol); reading the rate from `GET /fapi/v1/premiumIndex`.
 - **Date:** 2026-11-03
 - **Note (2026-11-03, GitHub issue #48):** The week's payments are read with every income type and picked out by type. Testnet refuses a query filtered by `SPECIAL_FUNDING_FEE` (`binanceNotes.md`, Income history), which left the list unread from the first run. The estimate got its future-tense words after the user read 받음 under a position opened after the last settlement as funding already received.
+
+## D-61 The GUI's logo is a Q with a rising candle in it, set on the windows as well as the tray
+
+- **Decision** (GitHub issue #52):
+  - **Logo:** a light Q ring with one green candle inside, on a dark rounded square. Its source is `gui/build/icon.svg`, in colors copied from `main.css`'s dark theme, so the icon doesn't follow the theme (D-35). The PNG (512), ICO (16 to 128 as BMP and 256 as PNG, the template's layout), and ICNS (128, 256, 512) come from it, each size drawn from the vector.
+  - **Windows:** the main window and the log window set the icon on every platform. The template set it on Linux only. Popups stay out of the taskbar and need none.
+- **Why:**
+  - The user asked (2026-11-05) to replace the logo, which was still Electron's template image, and chose this one from four candidates.
+  - The tray shrinks the app icon to 16 px (D-58), so the mark has to hold at that size. This one was the clearest there, and reads both as the name's first letter and as a trading app.
+  - Left unset, a window on Windows shows the executable's icon, which under `npm run dev` is Electron's. Only a packaged executable carries `icon.ico`, and the GUI runs from source so far (`techContext.md`, GUI notes).
+  - The tail is short and overlaps the ring: the first draft, a ring with a long diagonal tail set apart from it, read as a magnifying glass.
+- **How the files were made:** a scratch Electron app drew the SVG on a canvas at each size and wrote the ICO and ICNS containers. It isn't kept, and no image converter was added as a dependency, so a new logo needs the same step.
+- **Left as they are:** the template's `productName: gui`, `appId`, and AppUserModelID, so the installer and its shortcut still say `gui`.
+- **Alternatives:** three rising candles (generic, and they blur at 16 px); an arrow breaking out of a channel (reads as a stock growth arrow, and goes muddy at 16 px); a Q drawn as a gauge with the needle as its tail (the ticks vanish when small).
+- **Date:** 2026-11-05

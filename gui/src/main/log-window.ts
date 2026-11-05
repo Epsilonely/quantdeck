@@ -6,6 +6,7 @@
 import { BrowserWindow, screen } from 'electron'
 import { join } from 'path'
 import { is } from '@electron-toolkit/utils'
+import icon from '../../resources/icon.png?asset'
 import type { ConnectionStatus, LogsUpdate } from '../shared/engine'
 import type { UnseenLogs } from '../shared/logs'
 import { themeBackground } from './theme'
@@ -43,6 +44,7 @@ export class LogWindow {
       autoHideMenuBar: true,
       title: 'QuantDeck 엔진 로그',
       backgroundColor: themeBackground(),
+      icon,
       webPreferences: { preload: join(__dirname, '../preload/logs.js'), sandbox: true }
     })
     this.window = window

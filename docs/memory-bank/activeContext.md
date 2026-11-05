@@ -1,6 +1,6 @@
 # Active Context
 
-_Last updated: 2026-11-04_
+_Last updated: 2026-11-05_
 
 ## Current focus
 
@@ -28,6 +28,7 @@ Merged work not yet seen against a real engine:
 - The log window past 1000 records (#40), now drawn by stable keys. Checked only with tests and a build.
 - The alarms (#42, D-58) in the GUI itself: the tray and closing the window to it, the second GUI handing over to the first, each alarm against a running engine, and with a real mouse a popup's paused countdown and its click, and the sound. The test popup showed in `npm run dev`, coming up at once (#46); its entrance without the empty box (#43), the rising and gliding (#44), and the text no longer changing font after it shows (#45) haven't been seen there yet. Checked only in a scratch Electron app (popups on the desktop in both themes, none taking the focus), the rules with made-up states, and the dialog in the browser pane with a fake API.
 - The funding display (#47, #48, D-59): each position's estimate against the settlement's actual record. The rates, the estimates, the loss card's parts, and the week's funding lines in the trades panel with their totals have shown from a running engine.
+- The logo (#52, D-61) in the GUI itself: the main and log windows' title bars and taskbar buttons and the tray icon in `npm run dev`, and the installer and its shortcut in a packaged build. Checked only in a scratch Electron app: a window given the icon reported it, and the tray's sizes were shrunk with the call the GUI uses. The ICNS hasn't been opened on a Mac.
 
 Exchange behavior not yet seen is under To verify in `binanceNotes.md`.
 

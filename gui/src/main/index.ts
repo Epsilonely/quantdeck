@@ -123,7 +123,8 @@ function createWindow(): void {
     autoHideMenuBar: true,
     title: 'QuantDeck',
     backgroundColor: themeBackground(),
-    ...(process.platform === 'linux' ? { icon } : {}),
+    // Left out, Windows shows the executable's icon, which under `npm run dev` is Electron's.
+    icon,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false
